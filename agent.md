@@ -183,6 +183,9 @@ Important schema decisions:
   - Internal imports: import time.
   - External tracks: file modification time.
   - Existing rows preserve it across rescans and tag edits.
+- Years are stored as integers, with 0 meaning unknown. UI displays years as plain
+  strings (no thousands separator) and omits them when 0. Get Info shows an empty
+  year field for unknown years; clearing a known year saves 0.
 - `Album.addedAt` is `max(song.dateAdded)` and drives the Recently Added order.
 - WAL is used while running. On normal termination, `closeForTermination()`
   checkpoints and switches the journal back to DELETE so `library.sqlite` is

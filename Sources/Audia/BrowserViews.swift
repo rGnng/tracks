@@ -395,6 +395,14 @@ private struct BrowserAlbumSection: View {
         .padding(.bottom, 14)
     }
 
+    private var albumInfo: String {
+        var parts: [String] = []
+        if !album.genre.isEmpty { parts.append(album.genre) }
+        if album.year > 0 { parts.append(String(album.year)) }
+        parts.append("\(album.songs.count) songs")
+        return parts.joined(separator: " · ")
+    }
+
     private func dragPayload(for song: Song) -> DragController.Payload? {
         let songs = selectedSongIDs.contains(song.id) && selectedSongIDs.count > 1
             ? selectedSongs
@@ -432,7 +440,7 @@ private struct BrowserAlbumSection: View {
                     .font(.system(size: 11))
                     .foregroundColor(Theme.secondaryText)
                     .lineLimit(1)
-                Text("\(album.genre) · \(album.year) · \(album.songs.count) songs")
+                Text(albumInfo)
                     .font(.system(size: 10.5))
                     .foregroundColor(Theme.secondaryText)
                     .lineLimit(1)

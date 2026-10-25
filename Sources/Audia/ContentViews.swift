@@ -475,7 +475,7 @@ private struct AlbumDetailView: View {
                             .lineLimit(2)
                         ArtistLinkText(name: album.artist)
                             .padding(.top, 2)
-                        Text("\(album.genre) · \(album.year) · \(album.songs.count) songs")
+                        Text(albumInfo)
                             .font(.system(size: 11))
                             .foregroundColor(Theme.secondaryText)
                             .padding(.top, 4)
@@ -606,6 +606,14 @@ private struct AlbumDetailView: View {
                      title: song.title,
                      subtitle: song.artist,
                      artwork: nil)
+    }
+
+    private var albumInfo: String {
+        var parts: [String] = []
+        if !album.genre.isEmpty { parts.append(album.genre) }
+        if album.year > 0 { parts.append(String(album.year)) }
+        parts.append("\(album.songs.count) songs")
+        return parts.joined(separator: " · ")
     }
 
     private func updateStatusBar() {
@@ -782,9 +790,11 @@ struct AlbumList: View {
                                         ArtistLinkText(name: album.artist, fontSize: 11, isSelected: selected)
                                     }
                                     Spacer()
-                                    Text("\(album.year)")
-                                        .font(.system(size: 11))
-                                        .foregroundColor(selected ? .white.opacity(0.85) : Theme.secondaryText)
+                                    if album.year > 0 {
+                                        Text(String(album.year))
+                                            .font(.system(size: 11))
+                                            .foregroundColor(selected ? .white.opacity(0.85) : Theme.secondaryText)
+                                    }
                                 }
                                 .padding(.horizontal, 14)
                                 .frame(height: 44)
