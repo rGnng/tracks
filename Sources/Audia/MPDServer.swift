@@ -413,9 +413,11 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
             Library.shared.rescanAll()
             return lines(["updating_db: 1"])
         case "listall":
-            return lines(librarySongs().map { "file: \($0.fileURL?.path ?? $0.title)" })
+            let songs = args.first.map { librarySongs(forPath: $0) } ?? librarySongs()
+            return lines(songs.map { "file: \($0.fileURL?.path ?? $0.title)" })
         case "listallinfo":
-            return lines(librarySongs().flatMap { songInfoLines($0) })
+            let songs = args.first.map { librarySongs(forPath: $0) } ?? librarySongs()
+            return lines(songs.flatMap { songInfoLines($0) })
         case "lsinfo":
             let directory = args.first ?? "/"
             return lines(lsinfoLines(directory: directory))
@@ -806,7 +808,7 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
         let prefix = directory.hasSuffix("/") ? directory : directory + "/"
         return songs
             .filter { ($0.fileURL?.path ?? "").hasPrefix(prefix) }
-            .map { "file: \($0.fileURL?.path ?? $0.title)" }
+            .flatMap { songInfoLines($0) }
     }
 
     // MARK: Library filtering

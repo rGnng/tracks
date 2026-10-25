@@ -287,7 +287,10 @@ Supported areas:
   `seekid`, `seekcur`, `setvol`, `volume`, `repeat`, `random`, `single`, `consume`,
   `toggle`.
 - Library queries: `listall`, `listallinfo`, `lsinfo`, `find`, `search`, `findadd`,
-  `searchadd`, `list`, `count`, `update`, `rescan`.
+  `searchadd`, `list`, `count`, `update`, `rescan`. `listall` and `listallinfo`
+  honor an optional directory URI. `lsinfo` on a directory returns full song
+  metadata including `Track`/`Disc`; the root `lsinfo` remains file-only plus
+  playlist entries to keep `mpc lsplaylists` fast.
 - Album art: `albumart`, `readpicture`, `binarylimit`. Responses use the 500x500
   JPEG cache, correct size/type, and JPEG magic. The default chunk size is
   262144 bytes so a typical cover fits in one response; clients can still request
