@@ -26,6 +26,14 @@ struct SidebarView: View {
                 ) {
                     selection = .library(section)
                 }
+                .contextMenu {
+                    if section == .albums || section == .recentlyAdded {
+                        Button("Play") { player.play(songs(for: section)) }
+                            .disabled(library.albums.isEmpty)
+                        Button("Shuffle") { player.playShuffled(songs(for: section)) }
+                            .disabled(library.albums.isEmpty)
+                    }
+                }
             }
 
             HStack(spacing: 4) {
@@ -152,6 +160,27 @@ struct SidebarView: View {
         }
         .onPreferenceChange(PlaylistFramesKey.self) { frames in
             drag.playlistFrames = frames
+        }
+    }
+
+    /// Whole-library Play/Shuffle targets for the sidebar sections. Recently
+    /// Added follows the same album order as its content view.
+    private func songs(for section: LibrarySection) -> [Song] {
+        switch section {
+        case .albums:
+            return library.allSongs
+        case .recentlyAdded:
+            let albums = library.albums.sorted {
+                let a = $0.addedAt
+                let b = $1.addedAt
+                if abs(a - b) < 0.5 {
+                    return $0.title.localizedStandardCompare($1.title) == .orderedAscending
+                }
+                return a > b
+            }
+            return albums.flatMap(\.songs)
+        default:
+            return []
         }
     }
 

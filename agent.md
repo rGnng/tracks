@@ -226,6 +226,9 @@ Important schema decisions:
   - Internal playlists can receive album/song drops.
 - Context menus include Play, Shuffle, Add to Playlist, Play Next, Play Later,
   Get Info, and the conditional Delete item.
+- Sidebar **Albums** and **Recently Added** also have Play and Shuffle context
+  menus. Albums uses the full library; Recently Added uses the same album order
+  as the Recently Added view. This is the app-level "shuffle all" entry point.
 - Add-to-Playlist submenu starts with **New Playlist**, then a divider, then the
   existing playlist names. New names auto-increment: New Playlist, New Playlist 2,
   etc.
