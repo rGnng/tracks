@@ -99,7 +99,7 @@ Sources/Audia/
   FLACLibrary.swift          FLAC/AVFoundation metadata readers and LibraryScanner
   MediaImporter.swift        Import into Internal Library with organizer naming
   TagWriter.swift            Tag/artwork writeback for supported formats
-  ArtworkCache.swift         500x500 JPEG disk cache, quality setting, rebuild
+  ArtworkCache.swift         500x500 JPEG disk cache, quality, size, rebuild
   MPDServer.swift            Custom MPD TCP server, queue/playlists/album art
   PlayerState.swift          AVPlayer engine, queue, history, shuffle/repeat
   AudioDevices.swift         Core Audio output device enumeration and selection
@@ -206,6 +206,9 @@ Important schema decisions:
   and `date_added`.
 - Get Info supports Mixed values with italic placeholders; submitting empty mixed
   fields preserves the underlying value.
+- Get Info Details fields use square AppKit-backed boxes. They remain selectable
+  and copyable when read-only (for example for External Library tracks); the
+  read-only state only disables editing, not text selection.
 
 ## 6. Playback, queue, and UI behavior
 
@@ -266,6 +269,10 @@ Important schema decisions:
 - `ArtworkCache` uses an in-memory cache plus disk cache. Scans write artwork
   directly into the cache. Rebuild Cache clears the disk cache and performs a
   forced rescan to regenerate it.
+- Settings shows the current cache size, calculated asynchronously from the
+  files under the Artwork cache directory.
+- The Internal Library header no longer shows a "Read & Write" label, and the
+  External Libraries section no longer lists supported formats.
 - JPEG quality control:
   - Plain SwiftUI `TextField`, digits only.
   - Accepted range 15-100, default 80.

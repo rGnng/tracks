@@ -13,6 +13,101 @@ final class InfoCenter: ObservableObject {
     @Published var target: Target?
 }
 
+/// Borderless AppKit text field used by the Details tab. Unlike a disabled
+/// SwiftUI TextField, a non-editable field remains selectable so values can be
+/// copied from read-only external libraries.
+private struct GetInfoTextField: NSViewRepresentable {
+    @Binding var text: String
+    let isEditable: Bool
+    let prompt: String
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    func makeNSView(context: Context) -> SelectableTextField {
+        let field = SelectableTextField()
+        field.delegate = context.coordinator
+        field.isBordered = false
+        field.isBezeled = false
+        field.drawsBackground = false
+        field.isSelectable = true
+        field.isEditable = isEditable
+        field.focusRingType = .default
+        field.font = .systemFont(ofSize: 12)
+        field.textColor = .labelColor
+        field.lineBreakMode = .byTruncatingTail
+        field.usesSingleLineMode = true
+        field.cell?.wraps = false
+        field.cell?.isScrollable = true
+        field.stringValue = text
+        applyPrompt(to: field)
+        return field
+    }
+
+    func updateNSView(_ field: SelectableTextField, context: Context) {
+        context.coordinator.parent = self
+        if field.currentEditor() == nil {
+            field.stringValue = text
+        }
+        field.isEditable = isEditable
+        field.isSelectable = true
+        applyPrompt(to: field)
+    }
+
+    private func applyPrompt(to field: NSTextField) {
+        guard !prompt.isEmpty else {
+            field.placeholderAttributedString = nil
+            return
+        }
+        let font = NSFontManager.shared.convert(.systemFont(ofSize: 12), toHaveTrait: .italicFontMask)
+        field.placeholderAttributedString = NSAttributedString(
+            string: prompt,
+            attributes: [
+                .font: font,
+                .foregroundColor: NSColor.secondaryLabelColor,
+            ]
+        )
+    }
+
+    final class Coordinator: NSObject, NSTextFieldDelegate {
+        var parent: GetInfoTextField
+
+        init(_ parent: GetInfoTextField) {
+            self.parent = parent
+        }
+
+        func controlTextDidChange(_ notification: Notification) {
+            guard let field = notification.object as? NSTextField else { return }
+            parent.text = field.stringValue
+        }
+    }
+}
+
+private final class SelectableTextField: NSTextField {
+    override var acceptsFirstResponder: Bool { true }
+
+    override func mouseDown(with event: NSEvent) {
+        // A borderless, non-editable NSTextField only starts a selection when
+        // the click lands on the text itself. Make the whole box interactive:
+        // clicking empty space focuses the field and selects its value.
+        guard !isEditable else {
+            super.mouseDown(with: event)
+            return
+        }
+        let point = convert(event.locationInWindow, from: nil)
+        let textRect = cell?.titleRect(forBounds: bounds) ?? bounds
+        if textRect.contains(point) {
+            super.mouseDown(with: event)
+            return
+        }
+        window?.makeFirstResponder(self)
+        if let editor = currentEditor() as? NSTextView {
+            editor.setSelectedRange(NSRange(location: 0, length: (stringValue as NSString).length))
+        }
+    }
+}
+
 /// Get Info window with the three tabs used by the player: Details, Artwork, File.
 struct GetInfoView: View {
     private enum Tab: String, CaseIterable, Identifiable {
@@ -240,15 +335,21 @@ struct GetInfoView: View {
                 Spacer(minLength: 0)
             }
             .padding(20)
-            .disabled(readOnly)
         }
     }
 
     private func detailTextField(_ text: Binding<String>, field: DetailField) -> some View {
         let prompt = mixedFields.contains(field) ? "Mixed" : ""
-        return TextField("", text: text, prompt: Text(prompt).font(.system(size: 12)).italic())
-            .textFieldStyle(.roundedBorder)
-            .font(.system(size: 12))
+        return GetInfoTextField(text: text, isEditable: !readOnly, prompt: prompt)
+            .frame(maxWidth: .infinity)
+            .frame(height: 22)
+            .padding(.horizontal, 6)
+            .background(Theme.controlBackground)
+            .overlay(
+                Rectangle()
+                    .strokeBorder(Theme.controlBorder, lineWidth: 0.5)
+                    .allowsHitTesting(false)
+            )
     }
 
     private func infoRow<Content: View>(_ label: String, @ViewBuilder content: () -> Content) -> some View {

@@ -242,6 +242,17 @@ struct SettingsView: View {
                             .foregroundColor(Theme.secondaryText)
                         Spacer(minLength: 0)
                     }
+
+                    HStack(spacing: 8) {
+                        Text("Cache size")
+                            .font(.system(size: 11))
+                            .foregroundColor(Theme.secondaryText)
+                            .frame(width: 84, alignment: .trailing)
+                        Text(artworkCacheSizeText)
+                            .font(.system(size: 11).monospacedDigit())
+                            .foregroundColor(Theme.primaryText)
+                        Spacer(minLength: 0)
+                    }
                 }
                 .padding(10)
                 .background(boxBackground)
@@ -257,6 +268,7 @@ struct SettingsView: View {
         .onAppear {
             artworkQualityText = "\(artworkQualityPercent)"
             starShortcut = KeyboardShortcutStore.load()
+            artworkCache.refreshCacheSize()
         }
         .onChange(of: artworkCacheJPEGQuality) { _, _ in
             if !artworkQualityFocused { artworkQualityText = "\(artworkQualityPercent)" }
@@ -404,6 +416,17 @@ struct SettingsView: View {
         Int((artworkCacheJPEGQuality * 100).rounded())
     }
 
+    private var artworkCacheSizeText: String {
+        if artworkCache.isCalculatingCacheSize && artworkCache.cacheSizeBytes == 0 {
+            return "Calculating…"
+        }
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .file
+        formatter.allowedUnits = [.useKB, .useMB, .useGB]
+        formatter.isAdaptive = true
+        return formatter.string(fromByteCount: artworkCache.cacheSizeBytes)
+    }
+
     private func commitArtworkQuality() {
         let trimmed = artworkQualityText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let number = Int(trimmed) else {
@@ -435,11 +458,6 @@ struct SettingsView: View {
                 Text("Internal Library")
                     .font(.system(size: 12, weight: .semibold))
                 Spacer()
-                if library.internalLibrary != nil {
-                    Text("Read & Write")
-                        .font(.system(size: 10.5))
-                        .foregroundColor(.secondary)
-                }
             }
 
             if let warning = library.openWarning {
@@ -566,9 +584,6 @@ struct SettingsView: View {
             }
 
             Text("Folders managed by iTunes or another music app. Tracks indexes them without modifying the files.")
-                .font(.system(size: 10.5))
-                .foregroundColor(Theme.secondaryText)
-            Text("Supported formats: FLAC · MP3 · M4A · WAV · AIFF · OGG")
                 .font(.system(size: 10.5))
                 .foregroundColor(Theme.secondaryText)
 

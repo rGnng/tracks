@@ -17,6 +17,9 @@ private struct SendableImage: @unchecked Sendable {
 final class ArtworkCache: ObservableObject {
     static let shared = ArtworkCache()
 
+    @Published private(set) var cacheSizeBytes: Int64 = 0
+    @Published private(set) var isCalculatingCacheSize = false
+
     private var databasePath: String?
     private let memory = NSCache<NSString, NSImage>()
 
@@ -42,6 +45,19 @@ final class ArtworkCache: ObservableObject {
         guard databasePath != path else { return }
         databasePath = path
         memory.removeAllObjects()
+        refreshCacheSize()
+    }
+
+    func refreshCacheSize() {
+        isCalculatingCacheSize = true
+        let directory = Self.cacheDirectory
+        Task.detached(priority: .utility) {
+            let total = Self.directorySize(directory)
+            await MainActor.run {
+                ArtworkCache.shared.cacheSizeBytes = total
+                ArtworkCache.shared.isCalculatingCacheSize = false
+            }
+        }
     }
 
     func image(for artwork: Artwork, maxPixel: Int = 512) async -> NSImage? {
@@ -86,6 +102,7 @@ final class ArtworkCache: ObservableObject {
             Self.writeArtwork(data, albumID: albumID.uuidString, directory: directory)
         }.value
         memory.removeAllObjects()
+        refreshCacheSize()
         NotificationCenter.default.post(name: .artworkDidChange, object: albumID.uuidString)
     }
 
@@ -108,11 +125,14 @@ final class ArtworkCache: ObservableObject {
             }
         }.value
         memory.removeAllObjects()
+        refreshCacheSize()
         NotificationCenter.default.post(name: .artworkDidChange, object: nil)
     }
 
     func clearCache() {
         memory.removeAllObjects()
+        cacheSizeBytes = 0
+        isCalculatingCacheSize = false
         try? FileManager.default.removeItem(at: Self.cacheDirectory)
     }
 
@@ -148,6 +168,22 @@ final class ArtworkCache: ObservableObject {
                                    directory: URL) -> Data? {
         let thumb = thumbnailURL(directory: directory, albumID: albumID)
         return try? Data(contentsOf: thumb)
+    }
+
+    nonisolated private static func directorySize(_ directory: URL) -> Int64 {
+        guard let enumerator = FileManager.default.enumerator(
+            at: directory,
+            includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey],
+            options: [.skipsHiddenFiles]
+        ) else { return 0 }
+
+        var total: Int64 = 0
+        for case let url as URL in enumerator {
+            guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
+                  values.isRegularFile == true else { continue }
+            total += Int64(values.fileSize ?? 0)
+        }
+        return total
     }
 
     nonisolated private static func writeArtwork(_ data: Data?, albumID: String, directory: URL) {
