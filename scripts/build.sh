@@ -6,6 +6,7 @@ cd "$(dirname "$0")/.."
 CONFIG="${1:-release}"
 
 echo "==> swift build -c $CONFIG"
+export AUDIA_MACOS_SDK_VERSION="$(xcrun --show-sdk-version)"
 swift build -c "$CONFIG"
 
 BIN=".build/$CONFIG/Audia"

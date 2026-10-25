@@ -104,7 +104,7 @@ Sources/Audia/
   PlayerState.swift          AVPlayer engine, queue, history, shuffle/repeat
   AudioDevices.swift         Core Audio output device enumeration and selection
   WindowMode.swift           Library/MiniPlayer window modes and metrics
-  MiniPlayerView.swift       Compact player UI and custom mini traffic lights
+  MiniPlayerView.swift       Compact player UI and Liquid Glass mini traffic lights
   Components.swift           WindowConfigurator, titlebar layout, shared controls
   ContentView.swift          Root layout, sidebar/player/content composition
   PlayerToolbar.swift        Top transport bar, seek, volume, output, search
@@ -236,7 +236,9 @@ Important schema decisions:
   - Library: normal main window, minimum about `1040 x 640`.
   - MiniPlayer: width `320`; cover `320`; middle `42`; bottom `30`; queue panel
     adds `201`. Window shortcuts are Command-1 / Command-2.
-  - MiniPlayer uses custom three-dot traffic lights inside the cover.
+  - MiniPlayer uses custom Liquid Glass-style traffic lights inside the cover;
+    they stay hidden until the pointer enters the window, matching the old
+    compact-player behavior without adding a title-bar strip.
 - Selection and drag:
   - Marquee selection works in Albums, Recently Added, Artists/Genres album panes,
     Songs, Playlists, and album detail.
@@ -440,6 +442,39 @@ Rules and behavior:
 
 The main window uses a hidden/full-size content view and a custom 45pt title bar.
 
+### Build SDK and the macOS 27 window design
+
+SwiftPM records the package's deployment target as the linked SDK version unless
+overridden. With the old build the binary contained `LC_BUILD_VERSION sdk 15.0`,
+so AppKit deliberately used the legacy window design (flat traffic lights) even
+on macOS 27. `Package.swift` now adds:
+
+```text
+-Xlinker -platform_version -Xlinker macos
+-Xlinker 15.0 -Xlinker $AUDIA_MACOS_SDK_VERSION
+```
+
+`scripts/build.sh` exports `AUDIA_MACOS_SDK_VERSION="$(xcrun --show-sdk-version)"`.
+The result is `minos 15.0` and `sdk 27.0`; the macOS 15 deployment target is kept,
+but AppKit now opts into the current design and native Library traffic lights.
+
+Do not remove this linker override. Building the app while it records SDK 15
+silently opts the whole app out of the macOS 26/27 Liquid Glass window style.
+
+### MiniPlayer traffic lights
+
+The MiniPlayer deliberately keeps `_titlebarHeight` at 0 so its window stays
+`320 x 392` and the cover starts at the top edge. It therefore draws its own
+three 14pt controls at `leading 20` and `top 10`, using Display P3 colors,
+specular top/bottom highlights, a glass rim, and hover glyphs. They fade in with
+the existing hover chrome and use gray fills when the window is not key.
+
+Do not replace these with `standardWindowButton` views. AppKit owns those views
+and reattaches them to `NSTitlebarView` on layout; they are clipped at title-bar
+height 0, and giving mini a real 32pt title bar makes the window `320 x 424`
+instead of the intended `320 x 392`. Reparenting them into the SwiftUI content
+view also gets undone by AppKit's title-bar layout pass.
+
 - `Components.swift` swizzles private AppKit selectors:
   - `_titlebarHeight` returns 45 for the main Library window.
   - `_shouldCenterTrafficLights` returns true outside full screen.
@@ -452,10 +487,11 @@ The main window uses a hidden/full-size content view and a custom 45pt title bar
   - From `WindowModeCenter` when switching Library/MiniPlayer.
 - This fixed a first-open bug where traffic lights were 7pt from the top instead
   of the centered 15pt offset. Resizing the window used to fix it by accident.
-- Measured result after the fix:
-  - Fresh launch with no saved frame: window `y=60`, traffic lights `y=75`
-    (button height 14, 15pt top offset).
-  - Restored saved frame: window `y=196`, traffic lights `y=211`.
+- Measured result after the fix on macOS 27:
+  - Library traffic lights use AppKit's native 16pt buttons, centered in the
+    45pt bar (about 14.5pt from the top).
+  - MiniPlayer window remains `320 x 392`; its custom 14pt lights sit at
+    `x=20`, `y=10` and do not change the window size.
   - Resizing does not change the centered offset.
 - Do not remove the key-window refresh or the width nudge. The private title-bar
   height is only re-read during a frame/layout pass.
@@ -576,8 +612,9 @@ end tell
 APPLESCRIPT
 ```
 
-Expected when centered: traffic-light `y` is 15pt below the window top with a
-14pt button; the center is at 22pt, matching the 45pt title bar.
+Expected when centered: the native Library traffic-light center is about 22.5pt
+below the window top (16pt buttons), matching the 45pt title bar. MiniPlayer
+traffic lights are custom SwiftUI controls, not standard window buttons.
 
 ## 14. Known limitations and possible follow-ups
 

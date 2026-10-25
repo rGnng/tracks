@@ -55,21 +55,24 @@ struct MiniPlayerView: View {
                 .frame(height: 32)
                 .frame(maxHeight: .infinity, alignment: .top)
 
-            HStack(spacing: 8) {
-                miniTrafficLight(color: Color(red: 1.0, green: 0.37, blue: 0.34),
+            HStack(spacing: 9) {
+                MiniTrafficLight(color: Color(.displayP3, red: 0.886, green: 0.396, blue: 0.341),
+                                 symbol: "xmark",
                                  help: "Close") {
                     windowMode.mainWindow?.performClose(nil)
                 }
-                miniTrafficLight(color: Color(red: 1.0, green: 0.78, blue: 0.25),
+                MiniTrafficLight(color: Color(.displayP3, red: 0.953, green: 0.753, blue: 0.094),
+                                 symbol: "minus",
                                  help: "Minimize") {
                     windowMode.mainWindow?.miniaturize(nil)
                 }
-                miniTrafficLight(color: Color(red: 0.24, green: 0.79, blue: 0.33),
+                MiniTrafficLight(color: Color(.displayP3, red: 0.361, green: 0.737, blue: 0.106),
+                                 symbol: "arrow.up.left.and.arrow.down.right",
                                  help: "Show Library") {
                     windowMode.setMode(.library)
                 }
             }
-            .padding(.leading, 10)
+            .padding(.leading, 20)
             .padding(.top, 10)
             .frame(maxWidth: .infinity, alignment: .leading)
             .opacity(hovering ? 1 : 0)
@@ -269,25 +272,105 @@ struct MiniPlayerView: View {
         .disabled(disabled)
     }
 
-    private func miniTrafficLight(color: Color,
-                                  help: String,
-                                  action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Circle()
-                .fill(color)
-                .frame(width: 12, height: 12)
-                .overlay(Circle().strokeBorder(Color.black.opacity(0.14), lineWidth: 0.5))
-                .contentShape(Circle())
-        }
-        .buttonStyle(.plain)
-        .help(help)
-    }
-
     private var volumeIcon: String {
         if player.isMuted { return "speaker.slash.fill" }
         if player.volume < 0.34 { return "speaker.wave.1.fill" }
         if player.volume < 0.67 { return "speaker.wave.2.fill" }
         return "speaker.wave.3.fill"
+    }
+}
+
+// MARK: - Mini traffic lights
+
+/// The mini player is too compact for a real title bar, so it draws its own
+/// controls. These mirror the macOS 27 Liquid Glass traffic lights while the
+/// Library keeps AppKit's native window buttons.
+private struct MiniTrafficLight: View {
+    let color: Color
+    let symbol: String
+    let help: String
+    let action: () -> Void
+
+    @State private var hovering = false
+    @Environment(\.controlActiveState) private var controlActiveState
+
+    private var activeColor: Color {
+        guard controlActiveState != .key else { return color }
+        return Color(nsColor: NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+                ? NSColor(calibratedWhite: 0.34, alpha: 1)
+                : NSColor(calibratedWhite: 0.62, alpha: 1)
+        })
+    }
+
+    var body: some View {
+        Button(action: action) {
+            ZStack {
+                Circle()
+                    .fill(activeColor)
+
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            stops: [
+                                .init(color: .white.opacity(0.24), location: 0.00),
+                                .init(color: .clear, location: 0.40),
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            stops: [
+                                .init(color: .clear, location: 0.64),
+                                .init(color: .white.opacity(0.22), location: 1.00),
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [.white.opacity(0.13), .clear],
+                            center: UnitPoint(x: 0.30, y: 0.24),
+                            startRadius: 0,
+                            endRadius: 8
+                        )
+                    )
+
+                Circle()
+                    .strokeBorder(
+                        AngularGradient(
+                            colors: [
+                                .white.opacity(0.72),
+                                .white.opacity(0.02),
+                                .black.opacity(0.06),
+                                .white.opacity(0.50),
+                            ],
+                            center: .center
+                        ),
+                        lineWidth: 0.7
+                    )
+
+                if hovering {
+                    Image(systemName: symbol)
+                        .font(.system(size: 7.5, weight: .bold))
+                        .foregroundColor(.black.opacity(0.55))
+                }
+            }
+            .frame(width: 14, height: 14)
+            .shadow(color: .black.opacity(0.24), radius: 0.6, y: 0.5)
+            .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .accessibilityLabel(help)
+        .onHover { hovering = $0 }
     }
 }
 
