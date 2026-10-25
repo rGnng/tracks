@@ -338,7 +338,7 @@ struct SettingsView: View {
                     .controlSize(.small)
             }
 
-            Text("Single key. Stars the playing track, selected tracks, or selected album. Default: *")
+            Text("Single key. Stars the playing track or selected tracks. Default: *")
                 .font(.system(size: 10.5))
                 .foregroundColor(Theme.secondaryText)
         }
@@ -986,19 +986,13 @@ enum KeyboardShortcuts {
         let library = Library.shared
         var songs: [Song] = []
 
-        // In MiniPlayer there is no visible library selection; the shortcut
-        // should affect the track the compact player is showing.
-        if WindowModeCenter.shared.mode == .library {
-            switch StatusBarCenter.shared.context {
-            case .tracks(let ids):
-                songs = ids.compactMap { library.song(withID: $0)?.song }
-            case .albums(let ids):
-                songs = ids.compactMap { library.album(withID: $0)?.songs }.flatMap { $0 }
-            case .album(let id):
-                songs = library.album(withID: id)?.songs ?? []
-            case .artist, .genre, .playlist, .starred, .library:
-                break
-            }
+        // Prefer the selected track rows. Album/artist/genre selection is not
+        // expanded into every contained track; without a track selection the
+        // shortcut stars the currently playing track. In MiniPlayer there is
+        // no visible selection, so it also targets the playing track.
+        if WindowModeCenter.shared.mode == .library,
+           case .tracks(let ids) = StatusBarCenter.shared.context {
+            songs = ids.compactMap { library.song(withID: $0)?.song }
         }
 
         if songs.isEmpty, let current = PlayerState.shared.currentSong {

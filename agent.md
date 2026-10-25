@@ -238,11 +238,11 @@ Important schema decisions:
 - Play Later appends to the bottom of the queue and sits below Play Next.
 - Get Info has Details, Artwork, and File tabs, with tag/artwork writeback for the
   Internal Library.
-- The default `*` shortcut adds the playing track, selected tracks, or selected
-  album to the virtual Stared playlist. It is add-only, not a toggle. It is
-  configurable in Settings > Shortcuts and stored under `shortcut.starCurrent`;
-  Reset restores `*`. The handler skips text editing and ignores Command/Control
-  combinations.
+- The default `*` shortcut adds the playing track or selected track rows to the
+  virtual Stared playlist. It is add-only, not a toggle. Album/artist/genre
+  selections are not expanded into their tracks. It is configurable in
+  Settings > Shortcuts and stored under `shortcut.starCurrent`; Reset restores
+  `*`. The handler skips text editing and ignores Command/Control combinations.
 
 ## 7. Artwork cache and Settings
 
