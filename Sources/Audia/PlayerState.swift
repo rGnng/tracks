@@ -37,6 +37,7 @@ final class PlayerState: ObservableObject {
     private static let shuffleDefaultsKey = "player.shuffleEnabled"
     private static let repeatDefaultsKey = "player.repeatMode"
     private static let historyDefaultsKey = "player.historyIDs"
+    private static let volumeDefaultsKey = "player.volume"
     private static let historyLimit = 50
 
     private var avPlayer: AVPlayer?
@@ -53,6 +54,9 @@ final class PlayerState: ObservableObject {
         repeatMode = RepeatMode(rawValue: UserDefaults.standard.string(forKey: Self.repeatDefaultsKey) ?? "") ?? .off
         historyIDs = (UserDefaults.standard.stringArray(forKey: Self.historyDefaultsKey) ?? [])
             .compactMap(UUID.init(uuidString:))
+        let storedVolume = UserDefaults.standard.object(forKey: Self.volumeDefaultsKey) as? Double
+        volume = min(max(storedVolume ?? 0.65, 0), 1)
+        volumeBeforeMute = volume > 0 ? volume : 0.65
 
         // Keep the current player on the device selected in the toolbar menu.
         deviceCancellable = AudioDevices.shared.$selectedUID
@@ -279,6 +283,54 @@ final class PlayerState: ObservableObject {
         if let currentID, let index = queue.firstIndex(where: { $0.id == currentID }) {
             currentIndex = index
         }
+    }
+
+    /// Reorders the portion of the queue shown as Up Next without moving the
+    /// currently playing track or touching the already-played prefix.
+    func moveUpNext(from: Int, to: Int) {
+        guard let current = currentIndex, queue.indices.contains(current) else { return }
+        let start = current + 1
+        guard start < queue.count else { return }
+        var tail = Array(queue[start...])
+        guard tail.indices.contains(from) else { return }
+        let item = tail.remove(at: from)
+        tail.insert(item, at: min(max(to, 0), tail.count))
+        queue.replaceSubrange(start..., with: tail)
+        baseQueue = queue
+    }
+
+    /// Moves an existing queue entry (or a history-only entry) directly after
+    /// the current track so it plays next.
+    func playNextFromQueue(_ song: Song) {
+        guard let current = currentIndex, queue.indices.contains(current) else {
+            play([song])
+            return
+        }
+        let currentID = queue[current].id
+        if let existing = queue.firstIndex(where: { $0.id == song.id }) {
+            guard existing != current, existing != current + 1 else { return }
+            var updated = queue
+            let moved = updated.remove(at: existing)
+            guard let newCurrent = updated.firstIndex(where: { $0.id == currentID }) else { return }
+            updated.insert(moved, at: min(newCurrent + 1, updated.count))
+            queue = updated
+            baseQueue = updated
+            currentIndex = updated.firstIndex(where: { $0.id == currentID })
+        } else {
+            queue.insert(song, at: current + 1)
+            if let baseCurrent = baseQueue.firstIndex(where: { $0.id == currentID }) {
+                baseQueue.insert(song, at: min(baseCurrent + 1, baseQueue.count))
+            } else {
+                baseQueue.append(song)
+            }
+        }
+    }
+
+    /// Removes one song from the active queue. This does not delete the file or
+    /// remove the song from play history.
+    func removeFromQueue(_ song: Song) {
+        guard let index = queue.firstIndex(where: { $0.id == song.id }) else { return }
+        removeQueue(at: IndexSet(integer: index))
     }
 
     func shuffleQueue() {
@@ -515,6 +567,7 @@ final class PlayerState: ObservableObject {
         volume = min(max(v, 0), 1)
         avPlayer?.volume = Float(volume)
         if volume > 0 { volumeBeforeMute = volume }
+        persistVolume()
     }
 
     func toggleMute() {
@@ -525,6 +578,11 @@ final class PlayerState: ObservableObject {
             volume = 0
         }
         avPlayer?.volume = Float(volume)
+        persistVolume()
+    }
+
+    private func persistVolume() {
+        UserDefaults.standard.set(volume, forKey: Self.volumeDefaultsKey)
     }
 
     // MARK: Engine

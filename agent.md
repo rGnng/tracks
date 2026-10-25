@@ -215,11 +215,22 @@ Important schema decisions:
 - `PlayerState` uses `AVPlayer`/`AVPlayerItem`, with real Core Audio output devices.
 - Queue operations: append, insert, remove, move, shuffle, clear, play by position/
   song, history, auto-next on end.
+- Up Next rows support drag-to-reorder; the currently playing track and the
+  already-played queue prefix are not moved.
+- Queue rows show the title, artist, album, duration, and a gray filled star for
+  starred songs. The trailing star toggle is intentionally absent from the queue.
+- Queue row context menus provide Play Next (move the song directly after the
+  current track), Go to Album, Go to Artist (album artist, falling back to the
+  track artist), and Delete from Queue.
+- The main queue popover is resizable from its bottom-right handle. Width and
+  list height persist under `queue.popoverWidth` and `queue.listHeight`.
 - `baseQueue` preserves normal order when shuffle is toggled off.
 - Shuffle/random covers the unplayed queue: enabling it while stopped shuffles
   the whole queue, enabling it while playing keeps the current track and shuffles
   the remainder, and tracks appended while shuffle is active are randomized too.
 - Repeat modes: Off, All, One; persisted in UserDefaults.
+- Volume level is persisted in UserDefaults (`player.volume`) and restored at
+  launch, including when playback starts later.
 - History is most-recent-first, persisted by song ID.
 - Main window modes:
   - Library: normal main window, minimum about `1040 x 640`.

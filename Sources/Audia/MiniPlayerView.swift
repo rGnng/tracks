@@ -344,16 +344,33 @@ private struct MiniQueueRow: View {
     let song: Song
     let action: () -> Void
 
+    @ObservedObject private var library = Library.shared
     @State private var hover = false
+
+    private var starred: Bool {
+        library.starredSongIDs.contains(song.id)
+    }
+
+    private var subtitle: String {
+        song.album.isEmpty ? song.artist : "\(song.artist) · \(song.album)"
+    }
 
     var body: some View {
         HStack(spacing: 8) {
             VStack(alignment: .leading, spacing: 1) {
-                Text(song.title)
-                    .font(.system(size: 11))
-                    .foregroundColor(Theme.primaryText)
-                    .lineLimit(1)
-                Text(song.artist)
+                HStack(spacing: 3) {
+                    Text(song.title)
+                        .font(.system(size: 11))
+                        .foregroundColor(Theme.primaryText)
+                        .lineLimit(1)
+                    if starred {
+                        Image(systemName: "star.fill")
+                            .font(.system(size: 8.5))
+                            .foregroundColor(Theme.secondaryText)
+                            .accessibilityLabel("Starred")
+                    }
+                }
+                Text(subtitle)
                     .font(.system(size: 9.5))
                     .foregroundColor(Theme.secondaryText)
                     .lineLimit(1)
@@ -369,5 +386,8 @@ private struct MiniQueueRow: View {
         .contentShape(Rectangle())
         .onTapGesture(perform: action)
         .onHover { hover = $0 }
+        .contextMenu {
+            QueueSongContextMenu(song: song)
+        }
     }
 }

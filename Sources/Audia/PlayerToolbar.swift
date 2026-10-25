@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 private enum ToolbarButtonMetrics {
     static let size: CGFloat = 30
@@ -177,8 +178,23 @@ private struct QueuePopover: View {
     @Binding var tab: QueueTab
     @EnvironmentObject private var player: PlayerState
 
+    @AppStorage("queue.popoverWidth") private var storedWidth = 300.0
+    @AppStorage("queue.listHeight") private var storedListHeight = 260.0
+    @State private var resizeStart: CGSize?
+    @State private var draggingID: UUID?
+    @State private var dropTargetIndex: Int?
+    @State private var dropAtEnd = false
+
     private var songs: [Song] {
         tab == .upNext ? player.upNext : player.history
+    }
+
+    private var queueWidth: CGFloat {
+        CGFloat(min(max(storedWidth, 260), 640))
+    }
+
+    private var listHeight: CGFloat {
+        CGFloat(min(max(storedListHeight, 120), 620))
     }
 
     var body: some View {
@@ -198,42 +214,161 @@ private struct QueuePopover: View {
                 Text(tab == .upNext ? "Nothing Up Next" : "No History")
                     .font(.system(size: 12))
                     .foregroundColor(Theme.secondaryText)
-                    .frame(maxWidth: .infinity, minHeight: 120)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: listHeight)
             } else {
                 ScrollView {
                     LazyVStack(spacing: 0) {
-                        ForEach(songs) { song in
-                            QueueRow(song: song) {
-                                player.playFromQueue(song)
-                            }
+                        ForEach(Array(songs.enumerated()), id: \.element.id) { index, song in
+                            queueRow(song, at: index)
+                        }
+                        if tab == .upNext {
+                            endDropZone
                         }
                     }
-                    .padding(.vertical, 4)
+                    .padding(.vertical, 2)
                 }
-                .frame(height: 260)
+                .frame(height: listHeight)
             }
 
-            if tab == .upNext {
-                Divider()
-                HStack {
-                    Spacer()
+            Divider()
+            HStack(spacing: 8) {
+                if tab == .upNext {
                     Button {
                         player.clearUpNext()
                     } label: {
                         Text("Clear")
                             .font(.system(size: 12, weight: .medium))
                             .foregroundColor(Theme.selectionBlue)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .disabled(songs.isEmpty)
                     .opacity(songs.isEmpty ? 0.4 : 1)
                 }
+                Spacer(minLength: 0)
+                resizeHandle
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+        }
+        .frame(width: queueWidth)
+    }
+
+    private var resizeHandle: some View {
+        Image(systemName: "arrow.up.left.and.arrow.down.right")
+            .font(.system(size: 9, weight: .semibold))
+            .foregroundColor(Theme.secondaryText.opacity(0.8))
+            .frame(width: 22, height: 20)
+            .contentShape(Rectangle())
+            .help("Drag to resize")
+            .accessibilityLabel("Resize queue")
+            .gesture(
+                DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                    .onChanged { value in
+                        if resizeStart == nil {
+                            resizeStart = CGSize(width: queueWidth, height: listHeight)
+                        }
+                        guard let start = resizeStart else { return }
+                        storedWidth = min(max(Double(start.width + value.translation.width), 260), 640)
+                        storedListHeight = min(max(Double(start.height + value.translation.height), 120), 620)
+                    }
+                    .onEnded { _ in
+                        resizeStart = nil
+                    }
+            )
+    }
+
+    @ViewBuilder
+    private func queueRow(_ song: Song, at index: Int) -> some View {
+        let row = QueueRow(song: song) {
+            player.playFromQueue(song)
+        }
+        .contextMenu {
+            QueueSongContextMenu(song: song)
+        }
+
+        if tab == .upNext {
+            row
+                .overlay(alignment: .top) {
+                    if dropTargetIndex == index {
+                        Rectangle()
+                            .fill(Theme.selectionBlue)
+                            .frame(height: 2)
+                    }
+                }
+                .onDrag {
+                    draggingID = song.id
+                    dropTargetIndex = nil
+                    dropAtEnd = false
+                    return NSItemProvider(object: song.id.uuidString as NSString)
+                }
+                .onDrop(of: [.plainText],
+                        isTargeted: Binding(
+                            get: { dropTargetIndex == index },
+                            set: { targeted in
+                                if targeted {
+                                    dropTargetIndex = index
+                                } else if dropTargetIndex == index {
+                                    dropTargetIndex = nil
+                                }
+                            }
+                        )) { _ in
+                    performDrop(before: index)
+                }
+        } else {
+            row
+        }
+    }
+
+    private var endDropZone: some View {
+        ZStack(alignment: .top) {
+            Color.clear
+            if dropAtEnd {
+                Rectangle()
+                    .fill(Theme.selectionBlue)
+                    .frame(height: 2)
             }
         }
-        .frame(width: 300)
+        .frame(height: 14)
+        .contentShape(Rectangle())
+        .onDrop(of: [.plainText], isTargeted: $dropAtEnd) { _ in
+            performDropAtEnd()
+        }
+    }
+
+    private func performDrop(before index: Int) -> Bool {
+        guard tab == .upNext,
+              let draggingID,
+              let from = songs.firstIndex(where: { $0.id == draggingID }) else {
+            return false
+        }
+        defer { resetDragState() }
+        guard from != index else { return true }
+        let destination = from < index ? index - 1 : index
+        player.moveUpNext(from: from, to: destination)
+        return true
+    }
+
+    private func performDropAtEnd() -> Bool {
+        guard tab == .upNext,
+              let draggingID,
+              let from = songs.firstIndex(where: { $0.id == draggingID }) else {
+            return false
+        }
+        defer { resetDragState() }
+        let destination = max(songs.count - 1, 0)
+        guard from != destination else { return true }
+        player.moveUpNext(from: from, to: destination)
+        return true
+    }
+
+    private func resetDragState() {
+        draggingID = nil
+        dropTargetIndex = nil
+        dropAtEnd = false
     }
 }
 
@@ -241,36 +376,96 @@ private struct QueueRow: View {
     let song: Song
     let onPlay: () -> Void
 
+    @ObservedObject private var library = Library.shared
     @State private var hover = false
+
+    private var starred: Bool {
+        library.starredSongIDs.contains(song.id)
+    }
 
     var body: some View {
         HStack(spacing: 8) {
-            HStack(spacing: 8) {
-                VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 4) {
                     Text(song.title)
                         .font(.system(size: 12.5))
                         .foregroundColor(Theme.primaryText)
                         .lineLimit(1)
-                    Text(song.artist)
-                        .font(.system(size: 10.5))
-                        .foregroundColor(Theme.secondaryText)
+                    if starred {
+                        Image(systemName: "star.fill")
+                            .font(.system(size: 9.5))
+                            .foregroundColor(Theme.secondaryText)
+                            .accessibilityLabel("Starred")
+                    }
+                }
+                Text(song.artist)
+                    .font(.system(size: 10.5))
+                    .foregroundColor(Theme.secondaryText)
+                    .lineLimit(1)
+                if !song.album.isEmpty {
+                    Text(song.album)
+                        .font(.system(size: 10))
+                        .foregroundColor(Theme.secondaryText.opacity(0.82))
                         .lineLimit(1)
                 }
-                Spacer(minLength: 8)
-                Text(formatTime(song.duration))
-                    .font(.system(size: 11).monospacedDigit())
-                    .foregroundColor(Theme.secondaryText)
             }
-            .contentShape(Rectangle())
-            .onTapGesture(perform: onPlay)
-
-            StarButton(songID: song.id)
-                .frame(width: 24)
+            Spacer(minLength: 8)
+            Text(formatTime(song.duration))
+                .font(.system(size: 11).monospacedDigit())
+                .foregroundColor(Theme.secondaryText)
         }
         .padding(.horizontal, 12)
-        .frame(height: 34)
+        .frame(height: 48)
         .background(hover ? Theme.rowHover : Color.clear)
+        .contentShape(Rectangle())
+        .onTapGesture(perform: onPlay)
         .onHover { hover = $0 }
+    }
+}
+
+/// Shared right-click menu for songs shown in the queue panel.
+struct QueueSongContextMenu: View {
+    let song: Song
+    @EnvironmentObject private var player: PlayerState
+
+    private var albumID: UUID? {
+        Library.shared.song(withID: song.id)?.album.id
+    }
+
+    private var artistTarget: String {
+        let source = Library.shared.song(withID: song.id)?.song ?? song
+        let albumArtist = source.albumArtist.trimmingCharacters(in: .whitespacesAndNewlines)
+        return albumArtist.isEmpty ? source.artist : albumArtist
+    }
+
+    private var isInQueue: Bool {
+        player.queue.contains { $0.id == song.id }
+    }
+
+    var body: some View {
+        Button("Play Next") {
+            player.playNextFromQueue(song)
+        }
+        .disabled(player.currentSong?.id == song.id)
+
+        Button("Go to Album") {
+            guard let albumID else { return }
+            NavigationCenter.shared.albumToOpen = albumID
+        }
+        .disabled(albumID == nil)
+
+        Button("Go to Artist") {
+            guard !artistTarget.isEmpty else { return }
+            NavigationCenter.shared.artistToOpen = artistTarget
+        }
+        .disabled(artistTarget.isEmpty)
+
+        Divider()
+
+        Button("Delete from Queue") {
+            player.removeFromQueue(song)
+        }
+        .disabled(!isInQueue)
     }
 }
 
