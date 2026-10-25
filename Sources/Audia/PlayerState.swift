@@ -1,0 +1,640 @@
+import SwiftUI
+import Combine
+import AVFoundation
+
+enum RepeatMode: String, CaseIterable {
+    case off
+    case all
+    case one
+}
+
+/// Shared playback state and audio engine.
+///
+/// Tracks that come from the file-based library carry a `fileURL` and are played
+/// with `AVPlayer`. On macOS AVPlayer exposes `audioOutputDeviceUniqueID`, which
+/// lets playback follow the device chosen in the Output Device menu. Library
+/// entries without a decodable file fall back to simulated transport so the UI
+/// still works.
+@MainActor
+final class PlayerState: ObservableObject {
+    static let shared = PlayerState()
+
+    @Published private(set) var queue: [Song] = []
+    @Published private(set) var currentIndex: Int?
+    @Published var isPlaying = false
+    @Published var elapsed: TimeInterval = 0
+    @Published var volume: Double = 0.65
+    @Published private(set) var isShuffleOn = false
+    @Published private(set) var repeatMode: RepeatMode = .off
+    /// Most-recent-first play history, independent of the active queue.
+    @Published private(set) var history: [Song] = []
+
+    /// The queue in the order the user started it. Toggling shuffle off restores
+    /// this order while keeping the current track at its original position.
+    private var baseQueue: [Song] = []
+    private var historyIDs: [UUID] = []
+
+    private static let shuffleDefaultsKey = "player.shuffleEnabled"
+    private static let repeatDefaultsKey = "player.repeatMode"
+    private static let historyDefaultsKey = "player.historyIDs"
+    private static let historyLimit = 50
+
+    private var avPlayer: AVPlayer?
+    private var endObserver: NSObjectProtocol?
+    private var timer: Timer?
+    private var volumeBeforeMute: Double = 0.65
+    private var deviceCancellable: AnyCancellable?
+    /// While the seek bar is being dragged, don't let the timer overwrite the
+    /// dragged position with AVPlayer's still-old current time.
+    private var seekGraceUntil: Date?
+
+    private init() {
+        isShuffleOn = UserDefaults.standard.bool(forKey: Self.shuffleDefaultsKey)
+        repeatMode = RepeatMode(rawValue: UserDefaults.standard.string(forKey: Self.repeatDefaultsKey) ?? "") ?? .off
+        historyIDs = (UserDefaults.standard.stringArray(forKey: Self.historyDefaultsKey) ?? [])
+            .compactMap(UUID.init(uuidString:))
+
+        // Keep the current player on the device selected in the toolbar menu.
+        deviceCancellable = AudioDevices.shared.$selectedUID
+            .removeDuplicates()
+            .sink { [weak self] _ in
+                Task { @MainActor in self?.applyOutputDevice() }
+            }
+    }
+
+    var currentSong: Song? {
+        guard let i = currentIndex, queue.indices.contains(i) else { return nil }
+        return queue[i]
+    }
+
+    /// Songs still queued after the current track.
+    var upNext: [Song] {
+        guard let i = currentIndex, queue.indices.contains(i) else { return [] }
+        return Array(queue.dropFirst(i + 1))
+    }
+
+
+    /// Drops everything after the current track, keeping the current song.
+    func clearUpNext() {
+        guard let i = currentIndex, queue.indices.contains(i) else { return }
+        let keptIDs = Set(queue.prefix(i + 1).map(\.id))
+        queue = Array(queue.prefix(i + 1))
+        // Keep the normal-order copy in sync so disabling shuffle later does
+        // not resurrect tracks the user just cleared.
+        baseQueue = baseQueue.filter { keptIDs.contains($0.id) }
+    }
+
+    /// Stops playback and forgets the queue. Used when switching libraries.
+    func stopAndClear() {
+        releasePlayer()
+        stopTimer()
+        queue = []
+        baseQueue = []
+        currentIndex = nil
+        isPlaying = false
+        elapsed = 0
+    }
+
+    var duration: TimeInterval {
+        if let seconds = avPlayer?.currentItem?.duration.seconds,
+           seconds.isFinite,
+           seconds > 0 {
+            return seconds
+        }
+        return currentSong?.duration ?? 0
+    }
+
+    var progress: Double {
+        guard duration > 0 else { return 0 }
+        return min(max(elapsed / duration, 0), 1)
+    }
+
+    var isMuted: Bool { volume == 0 }
+
+    var isDecodingAudio: Bool { avPlayer != nil }
+
+    // MARK: Transport
+
+    func play(_ songs: [Song], startAt index: Int = 0) {
+        guard !songs.isEmpty else { return }
+        // A normal Play action starts a collection in order. It deliberately
+        // clears Shuffle and Repeat; Shuffle has its own entry point.
+        if isShuffleOn {
+            isShuffleOn = false
+            persistShuffle()
+        }
+        if repeatMode != .off {
+            repeatMode = .off
+            UserDefaults.standard.set(RepeatMode.off.rawValue, forKey: Self.repeatDefaultsKey)
+        }
+        baseQueue = songs
+        queue = songs
+        currentIndex = min(max(index, 0), songs.count - 1)
+        beginCurrentTrack()
+    }
+
+    func play(_ song: Song, in songs: [Song]) {
+        let idx = songs.firstIndex(where: { $0.id == song.id }) ?? 0
+        play(songs, startAt: idx)
+    }
+
+    /// Appends tracks to the end of the current queue without starting playback.
+    func appendToQueue(_ songs: [Song]) {
+        guard !songs.isEmpty else { return }
+        if queue.isEmpty {
+            queue = songs
+            baseQueue = songs
+            currentIndex = nil
+        } else {
+            queue.append(contentsOf: songs)
+            baseQueue.append(contentsOf: songs)
+        }
+    }
+
+    func insertIntoQueue(_ songs: [Song], at index: Int) {
+        guard !songs.isEmpty else { return }
+        if queue.isEmpty {
+            queue = songs
+            baseQueue = songs
+            currentIndex = nil
+            return
+        }
+        let insertion = min(max(index, 0), queue.count)
+        queue.insert(contentsOf: songs, at: insertion)
+        baseQueue.insert(contentsOf: songs, at: min(insertion, baseQueue.count))
+        if let currentIndex, insertion <= currentIndex {
+            self.currentIndex = currentIndex + songs.count
+        }
+    }
+
+    /// Appends tracks to the bottom of the queue without changing playback.
+    func playLater(_ songs: [Song]) {
+        appendToQueue(songs)
+    }
+
+    func clearQueue() {
+        releasePlayer()
+        stopTimer()
+        queue = []
+        baseQueue = []
+        currentIndex = nil
+        isPlaying = false
+        elapsed = 0
+    }
+
+    func playQueue(at index: Int) {
+        guard queue.indices.contains(index) else { return }
+        currentIndex = index
+        beginCurrentTrack()
+    }
+
+    func stopPlayback() {
+        releasePlayer()
+        stopTimer()
+        isPlaying = false
+        elapsed = 0
+    }
+
+    func setPaused(_ paused: Bool) {
+        guard currentSong != nil else { return }
+        if paused == !isPlaying { return }
+        togglePlayPause()
+    }
+
+    func removeQueue(at offsets: IndexSet) {
+        guard !offsets.isEmpty else { return }
+        let current = currentIndex
+        let removedCurrent = current.map { offsets.contains($0) } ?? false
+        let removedIDs = offsets.compactMap { queue.indices.contains($0) ? queue[$0].id : nil }
+        queue.remove(atOffsets: offsets)
+        baseQueue.removeAll { song in removedIDs.contains(song.id) }
+
+        if removedCurrent {
+            releasePlayer()
+            stopTimer()
+            isPlaying = false
+            elapsed = 0
+            currentIndex = queue.isEmpty ? nil : min(offsets.min() ?? 0, queue.count - 1)
+        } else if let current {
+            let removedBefore = offsets.filter { $0 < current }.count
+            currentIndex = min(max(current - removedBefore, 0), max(queue.count - 1, 0))
+            if queue.isEmpty { currentIndex = nil }
+        }
+    }
+
+    /// Removes songs that were deleted from the library from the queue and
+    /// history, stopping playback if the current track was removed.
+    func removeSongs(withIDs ids: Set<UUID>) {
+        guard !ids.isEmpty else { return }
+        let currentID = currentSong?.id
+        let removedCurrent = currentID.map { ids.contains($0) } ?? false
+
+        queue.removeAll { ids.contains($0.id) }
+        baseQueue.removeAll { ids.contains($0.id) }
+
+        if removedCurrent {
+            releasePlayer()
+            stopTimer()
+            isPlaying = false
+            elapsed = 0
+        }
+        if let currentID, let index = queue.firstIndex(where: { $0.id == currentID }) {
+            currentIndex = index
+        } else if queue.isEmpty {
+            currentIndex = nil
+        } else if removedCurrent {
+            currentIndex = min(currentIndex ?? 0, queue.count - 1)
+        }
+
+        historyIDs.removeAll { ids.contains($0) }
+        history.removeAll { ids.contains($0.id) }
+        persistHistory()
+    }
+
+    func moveQueue(from: Int, to: Int) {
+        guard queue.indices.contains(from), to >= 0, to <= queue.count else { return }
+        let currentID = currentSong?.id
+        var updated = queue
+        let item = updated.remove(at: from)
+        let insertion = min(max(to, 0), updated.count)
+        updated.insert(item, at: insertion)
+        queue = updated
+        baseQueue = updated
+        if let currentID, let index = queue.firstIndex(where: { $0.id == currentID }) {
+            currentIndex = index
+        }
+    }
+
+    func shuffleQueue() {
+        guard queue.count > 1 else { return }
+        let currentID = currentSong?.id
+        queue.shuffle()
+        baseQueue = queue
+        if let currentID, let index = queue.firstIndex(where: { $0.id == currentID }) {
+            currentIndex = index
+        }
+    }
+
+    func seek(toSeconds seconds: TimeInterval) {
+        seek(toTime: max(0, min(seconds, duration)))
+    }
+
+    /// Jumps to a track inside the current queue without rebuilding it. This
+    /// preserves the normal-order base queue when shuffle is enabled.
+    func playFromQueue(_ song: Song) {
+        if let idx = queue.firstIndex(where: { $0.id == song.id }) {
+            currentIndex = idx
+            beginCurrentTrack()
+        } else {
+            play([song])
+        }
+    }
+
+    /// iTunes-style Shuffle action: turn shuffle on and start the collection in
+    /// a random order. Turning shuffle off later restores the original order.
+    func playShuffled(_ songs: [Song]) {
+        guard !songs.isEmpty else { return }
+        baseQueue = songs
+        if !isShuffleOn {
+            isShuffleOn = true
+            persistShuffle()
+        }
+        queue = songs.shuffled()
+        currentIndex = 0
+        beginCurrentTrack()
+    }
+
+    func toggleShuffle() {
+        setShuffle(!isShuffleOn)
+    }
+
+    func setShuffle(_ enabled: Bool) {
+        guard enabled != isShuffleOn else { return }
+        isShuffleOn = enabled
+        persistShuffle()
+        guard !queue.isEmpty else { return }
+
+        if enabled {
+            guard let i = currentIndex, queue.indices.contains(i) else { return }
+            let head = Array(queue.prefix(i + 1))
+            queue = head + Array(queue.dropFirst(i + 1)).shuffled()
+        } else {
+            guard let current = currentSong else { return }
+            var restored = baseQueue.isEmpty ? queue : baseQueue
+            if let idx = restored.firstIndex(where: { $0.id == current.id }) {
+                currentIndex = idx
+            } else {
+                // Defensive: keep the audible track in the queue even if the
+                // normal-order copy somehow lost it.
+                let insert = min(currentIndex ?? 0, restored.count)
+                restored.insert(current, at: insert)
+                baseQueue = restored
+                currentIndex = insert
+            }
+            queue = restored
+        }
+    }
+
+    private func persistShuffle() {
+        UserDefaults.standard.set(isShuffleOn, forKey: Self.shuffleDefaultsKey)
+    }
+
+    func setRepeat(enabled: Bool) {
+        let mode: RepeatMode = enabled ? .all : .off
+        guard repeatMode != mode else { return }
+        repeatMode = mode
+        UserDefaults.standard.set(mode.rawValue, forKey: Self.repeatDefaultsKey)
+    }
+
+    func cycleRepeatMode() {
+        switch repeatMode {
+        case .off: repeatMode = .all
+        case .all: repeatMode = .one
+        case .one: repeatMode = .off
+        }
+        UserDefaults.standard.set(repeatMode.rawValue, forKey: Self.repeatDefaultsKey)
+    }
+
+    /// Inserts songs directly after the current track.
+    func playNext(_ songs: [Song]) {
+        guard !songs.isEmpty else { return }
+        if let index = currentIndex, queue.indices.contains(index) {
+            let current = queue[index]
+            queue.insert(contentsOf: songs, at: index + 1)
+            if let baseIndex = baseQueue.firstIndex(where: { $0.id == current.id }) {
+                baseQueue.insert(contentsOf: songs, at: baseIndex + 1)
+            } else {
+                baseQueue.append(contentsOf: songs)
+            }
+        } else {
+            play(songs)
+        }
+    }
+
+    /// Refreshes queued copies after tag edits or star changes.
+    func applyUpdatedSongs(_ songs: [Song]) {
+        guard !songs.isEmpty else { return }
+        let byID = Dictionary(uniqueKeysWithValues: songs.map { ($0.id, $0) })
+        if !queue.isEmpty || !baseQueue.isEmpty {
+            queue = queue.map { byID[$0.id] ?? $0 }
+            baseQueue = baseQueue.map { byID[$0.id] ?? $0 }
+        }
+
+        // Resolve persisted history IDs against the current library. Prune
+        // entries whose songs no longer exist (for example after removing an
+        // external library).
+        let resolved = historyIDs.compactMap { byID[$0] }
+        if resolved.count != historyIDs.count {
+            historyIDs = resolved.map(\.id)
+            persistHistory()
+        }
+        history = resolved
+    }
+
+    private func recordHistory(_ song: Song) {
+        historyIDs.removeAll { $0 == song.id }
+        historyIDs.insert(song.id, at: 0)
+        if historyIDs.count > Self.historyLimit {
+            historyIDs.removeLast(historyIDs.count - Self.historyLimit)
+        }
+        history = historyIDs.compactMap { id in
+            if id == song.id { return song }
+            return history.first { $0.id == id }
+        }
+        persistHistory()
+    }
+
+    private func persistHistory() {
+        UserDefaults.standard.set(historyIDs.map(\.uuidString), forKey: Self.historyDefaultsKey)
+    }
+
+    func togglePlayPause() {
+        guard let song = currentSong else { return }
+
+        if isPlaying {
+            if let avPlayer {
+                let time = avPlayer.currentTime().seconds
+                if time.isFinite { elapsed = time }
+            }
+            avPlayer?.pause()
+            isPlaying = false
+            stopTimer()
+            seekGraceUntil = nil
+        } else {
+            // Pressing play after the queue reached its end (repeat off)
+            // restarts the last track instead of doing nothing at EOF.
+            if song.duration > 0, elapsed >= song.duration - 0.1 {
+                beginCurrentTrack(countPlay: false)
+                return
+            }
+            if avPlayer == nil, song.fileURL != nil {
+                beginCurrentTrack(countPlay: false)
+                return
+            }
+            avPlayer?.play()
+            isPlaying = true
+            startTimer()
+        }
+    }
+
+    func next() {
+        guard let i = currentIndex, !queue.isEmpty else { return }
+        if i + 1 < queue.count {
+            currentIndex = i + 1
+            beginCurrentTrack()
+        } else if repeatMode != .off {
+            currentIndex = 0
+            beginCurrentTrack()
+        } else {
+            finishQueue()
+        }
+    }
+
+    func previous() {
+        guard let i = currentIndex, !queue.isEmpty else { return }
+        if elapsed > 3 || i == 0 {
+            beginCurrentTrack(countPlay: false)
+        } else {
+            currentIndex = (i - 1 + queue.count) % queue.count
+            beginCurrentTrack()
+        }
+    }
+
+    func seek(to fraction: Double) {
+        let total = duration
+        guard total > 0 else { return }
+        let position = min(max(fraction, 0), 1) * total
+        seek(toTime: position)
+    }
+
+    func seek(by delta: TimeInterval) {
+        let total = duration
+        guard total > 0 else { return }
+        let position = min(max(elapsed + delta, 0), total)
+        seek(toTime: position)
+    }
+
+    private func seek(toTime position: TimeInterval) {
+        if let avPlayer {
+            avPlayer.seek(to: CMTime(seconds: position, preferredTimescale: 600),
+                          toleranceBefore: .zero,
+                          toleranceAfter: .zero)
+            seekGraceUntil = Date().addingTimeInterval(0.3)
+        }
+        elapsed = position
+    }
+
+    // MARK: Volume
+
+    func setVolume(_ v: Double) {
+        volume = min(max(v, 0), 1)
+        avPlayer?.volume = Float(volume)
+        if volume > 0 { volumeBeforeMute = volume }
+    }
+
+    func toggleMute() {
+        if isMuted {
+            volume = volumeBeforeMute > 0 ? volumeBeforeMute : 0.65
+        } else {
+            volumeBeforeMute = volume
+            volume = 0
+        }
+        avPlayer?.volume = Float(volume)
+    }
+
+    // MARK: Engine
+
+    private func beginCurrentTrack(countPlay: Bool = true) {
+        releasePlayer()
+        stopTimer()
+        elapsed = 0
+        isPlaying = false
+        seekGraceUntil = nil
+
+        guard let song = currentSong else { return }
+        if countPlay {
+            Library.shared.recordPlay(song.id)
+            recordHistory(song)
+        }
+
+        if let url = song.fileURL {
+            let item = AVPlayerItem(url: url)
+            let player = AVPlayer(playerItem: item)
+            player.volume = Float(volume)
+            player.audioOutputDeviceUniqueID = AudioDevices.shared.effectiveUID
+            avPlayer = player
+
+            endObserver = NotificationCenter.default.addObserver(
+                forName: .AVPlayerItemDidPlayToEndTime,
+                object: item,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor in self?.advanceAfterTrackEnds() }
+            }
+
+            player.play()
+            isPlaying = true
+            startTimer()
+            return
+        }
+
+        // Fallback for entries without a decodable file: simulate transport.
+        isPlaying = true
+        startTimer()
+    }
+
+    private func releasePlayer() {
+        avPlayer?.pause()
+        avPlayer = nil
+        if let endObserver {
+            NotificationCenter.default.removeObserver(endObserver)
+            self.endObserver = nil
+        }
+    }
+
+    private func applyOutputDevice() {
+        guard let avPlayer else { return }
+        let time = avPlayer.currentTime()
+        let wasPlaying = isPlaying
+        avPlayer.audioOutputDeviceUniqueID = AudioDevices.shared.effectiveUID
+        if time.isValid {
+            avPlayer.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
+            seekGraceUntil = Date().addingTimeInterval(0.3)
+        }
+        if wasPlaying {
+            avPlayer.play()
+        }
+    }
+
+    private func startTimer() {
+        stopTimer()
+        timer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.tick() }
+        }
+    }
+
+    private func stopTimer() {
+        timer?.invalidate()
+        timer = nil
+    }
+
+    private func tick() {
+        guard isPlaying, let song = currentSong else { return }
+
+        if let player = avPlayer {
+            if let item = player.currentItem, item.status == .failed {
+                // The file could not be decoded; fall through to the simulated
+                // transport so the UI remains usable.
+                releasePlayer()
+            } else {
+                if let until = seekGraceUntil, Date() < until {
+                    return
+                }
+                seekGraceUntil = nil
+                let time = player.currentTime().seconds
+                if time.isFinite {
+                    elapsed = time
+                }
+                return
+            }
+        }
+
+        elapsed += 0.2
+        if song.duration > 0, elapsed >= song.duration {
+            advanceAfterTrackEnds()
+        }
+    }
+
+    /// Called when a track reaches its natural end. Repeat One replays the
+    /// current item; Repeat All wraps; Repeat Off stops at the last item.
+    private func advanceAfterTrackEnds() {
+        guard let i = currentIndex, !queue.isEmpty else { return }
+        if repeatMode == .one {
+            beginCurrentTrack()
+            return
+        }
+        if i + 1 < queue.count {
+            currentIndex = i + 1
+            beginCurrentTrack()
+        } else if repeatMode == .all {
+            currentIndex = 0
+            beginCurrentTrack()
+        } else {
+            finishQueue()
+        }
+    }
+
+    private func finishQueue() {
+        // Repeat Off reached the end of the queue: clear it so the top-center
+        // panel returns to its empty stopped state instead of freezing on the
+        // last track.
+        releasePlayer()
+        stopTimer()
+        queue = []
+        baseQueue = []
+        currentIndex = nil
+        isPlaying = false
+        elapsed = 0
+        seekGraceUntil = nil
+    }
+}

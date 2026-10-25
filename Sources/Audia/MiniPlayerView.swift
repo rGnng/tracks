@@ -1,0 +1,373 @@
+import SwiftUI
+
+struct MiniPlayerView: View {
+    @EnvironmentObject private var player: PlayerState
+    @ObservedObject private var library = Library.shared
+    @ObservedObject private var windowMode = WindowModeCenter.shared
+
+    @State private var hovering = false
+    @State private var showVolume = false
+    @State private var showRemaining = false
+
+    private var showControls: Bool { hovering || showVolume }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            cover
+            middle
+            bottom
+            if windowMode.miniQueueExpanded {
+                Divider()
+                MiniQueuePanel()
+                    .frame(height: MiniPlayerMetrics.queue - 1)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
+        .frame(width: MiniPlayerMetrics.width)
+        .frame(maxHeight: .infinity)
+        .background(Theme.contentBackground)
+        .onHover { hovering = $0 }
+        .animation(.easeInOut(duration: 0.15), value: hovering)
+    }
+
+    // MARK: Cover
+
+    private var cover: some View {
+        ZStack(alignment: .topTrailing) {
+            Group {
+                if let song = player.currentSong {
+                    AlbumArtwork(artwork: library.artwork(forAlbumTitle: song.album))
+                } else {
+                    ZStack {
+                        Theme.lcdIdleFill
+                        Image(systemName: "opticaldisc.fill")
+                            .font(.system(size: 54, weight: .regular))
+                            .foregroundColor(Theme.secondaryText.opacity(0.9))
+                    }
+                }
+            }
+            .frame(width: MiniPlayerMetrics.cover, height: MiniPlayerMetrics.cover)
+            .clipped()
+
+            // Only the title-bar strip is draggable, so hovering the artwork
+            // still reaches SwiftUI's onHover and reveals the controls.
+            WindowDragArea()
+                .frame(height: 32)
+                .frame(maxHeight: .infinity, alignment: .top)
+
+            HStack(spacing: 8) {
+                miniTrafficLight(color: Color(red: 1.0, green: 0.37, blue: 0.34),
+                                 help: "Close") {
+                    windowMode.mainWindow?.performClose(nil)
+                }
+                miniTrafficLight(color: Color(red: 1.0, green: 0.78, blue: 0.25),
+                                 help: "Minimize") {
+                    windowMode.mainWindow?.miniaturize(nil)
+                }
+                miniTrafficLight(color: Color(red: 0.24, green: 0.79, blue: 0.33),
+                                 help: "Show Library") {
+                    windowMode.setMode(.library)
+                }
+            }
+            .padding(.leading, 10)
+            .padding(.top, 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .opacity(hovering ? 1 : 0)
+            .allowsHitTesting(hovering)
+            .animation(.easeInOut(duration: 0.12), value: hovering)
+
+            Button {
+                windowMode.setMode(.library)
+            } label: {
+                Image(systemName: "rectangle.expand.vertical")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.9))
+                    .frame(width: 26, height: 26)
+                    .background(Circle().fill(Color.black.opacity(0.35)))
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .padding(8)
+            .help("Show Library (⌘1)")
+            .opacity(hovering ? 1 : 0)
+            .allowsHitTesting(hovering)
+            .animation(.easeInOut(duration: 0.12), value: hovering)
+        }
+        .frame(width: MiniPlayerMetrics.width, height: MiniPlayerMetrics.cover)
+        .clipped()
+    }
+
+    // MARK: Middle (info on idle, controls on hover)
+
+    private var middle: some View {
+        ZStack {
+            info
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                .opacity(showControls ? 0 : 1)
+                .allowsHitTesting(!showControls)
+
+            controls
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                .opacity(showControls ? 1 : 0)
+                .allowsHitTesting(showControls)
+        }
+        .padding(.horizontal, 12)
+        .frame(width: MiniPlayerMetrics.width, height: MiniPlayerMetrics.middle)
+    }
+
+    @ViewBuilder
+    private var info: some View {
+        if let song = player.currentSong {
+            VStack(alignment: .center, spacing: 1) {
+                Text(song.title)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(Theme.primaryText)
+                    .lineLimit(1)
+                Text("\(song.artist) - \(song.album)")
+                    .font(.system(size: 11.5))
+                    .foregroundColor(Theme.secondaryText)
+                    .lineLimit(1)
+            }
+            .multilineTextAlignment(.center)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+            .offset(y: 2)
+        }
+    }
+
+    private var controls: some View {
+        ZStack {
+            HStack(spacing: 0) {
+                volumeButton
+                Spacer(minLength: 0)
+                queueButton
+            }
+
+            HStack(spacing: 16) {
+                transportButton("backward.fill", size: 14,
+                                disabled: player.currentSong == nil) {
+                    player.previous()
+                }
+                transportButton(player.isPlaying ? "pause.fill" : "play.fill",
+                                size: 21,
+                                disabled: player.currentSong == nil) {
+                    player.togglePlayPause()
+                }
+                transportButton("forward.fill", size: 14,
+                                disabled: player.currentSong == nil) {
+                    player.next()
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var volumeButton: some View {
+        Image(systemName: volumeIcon)
+            .font(.system(size: 14, weight: .medium))
+            .foregroundColor(Theme.secondaryText)
+            .frame(width: 32, height: 32)
+            .contentShape(Rectangle())
+            .gesture(
+                TapGesture(count: 2)
+                    .onEnded { player.toggleMute() }
+                    .exclusively(before: TapGesture().onEnded {
+                        showVolume.toggle()
+                    })
+            )
+            .popover(isPresented: $showVolume, arrowEdge: .bottom) {
+                HStack(spacing: 8) {
+                    Image(systemName: volumeIcon)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(Theme.secondaryText)
+                    Slider(value: Binding(
+                        get: { player.volume },
+                        set: { player.setVolume($0) }
+                    ), in: 0...1)
+                    .frame(width: 150)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+            }
+            .help(player.isMuted ? "Unmute (double-click)" : "Mute (double-click)")
+    }
+
+    private var queueButton: some View {
+        Button {
+            windowMode.toggleMiniQueue()
+        } label: {
+            Image(systemName: "list.bullet")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundColor(windowMode.miniQueueExpanded ? Theme.selectionBlue : Theme.secondaryText)
+                .frame(width: 32, height: 32)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(windowMode.miniQueueExpanded ? "Hide Queue" : "Show Queue")
+    }
+
+    // MARK: Bottom seek bar
+
+    private var bottom: some View {
+        HStack(spacing: 6) {
+            Text(formatTime(player.elapsed))
+                .frame(width: 36, alignment: .leading)
+            miniSeekBar
+            Button {
+                showRemaining.toggle()
+            } label: {
+                Text(showRemaining
+                     ? formatRemaining(max(0, player.duration - player.elapsed))
+                     : formatTime(player.duration))
+                    .frame(width: 36, alignment: .trailing)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundColor(Theme.secondaryText)
+            .help(showRemaining ? "Show Total Time" : "Show Remaining Time")
+        }
+        .font(.system(size: 10.5).monospacedDigit())
+        .foregroundColor(Theme.secondaryText)
+        .padding(.horizontal, 6)
+        .frame(width: MiniPlayerMetrics.width, height: MiniPlayerMetrics.bottom)
+    }
+
+    private var miniSeekBar: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Rectangle()
+                    .fill(Theme.track)
+                    .frame(height: 4)
+                Rectangle()
+                    .fill(Theme.lcdProgress)
+                    .frame(width: max(0, geo.size.width * player.progress), height: 4)
+            }
+            .frame(maxHeight: .infinity, alignment: .center)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        guard player.currentSong != nil, geo.size.width > 0 else { return }
+                        player.seek(to: min(max(value.location.x / geo.size.width, 0), 1))
+                    }
+            )
+        }
+        .frame(height: 14)
+    }
+
+    private func transportButton(_ icon: String,
+                                 size: CGFloat,
+                                 disabled: Bool,
+                                 action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: size, weight: .semibold))
+                .foregroundColor(disabled ? Theme.secondaryText.opacity(0.4) : Theme.primaryText)
+                .frame(width: size >= 16 ? 34 : 30, height: 32)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled)
+    }
+
+    private func miniTrafficLight(color: Color,
+                                  help: String,
+                                  action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Circle()
+                .fill(color)
+                .frame(width: 12, height: 12)
+                .overlay(Circle().strokeBorder(Color.black.opacity(0.14), lineWidth: 0.5))
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
+    }
+
+    private var volumeIcon: String {
+        if player.isMuted { return "speaker.slash.fill" }
+        if player.volume < 0.34 { return "speaker.wave.1.fill" }
+        if player.volume < 0.67 { return "speaker.wave.2.fill" }
+        return "speaker.wave.3.fill"
+    }
+}
+
+// MARK: - Compact queue panel
+
+private enum MiniQueueTab: Hashable {
+    case upNext
+    case history
+}
+
+private struct MiniQueuePanel: View {
+    @EnvironmentObject private var player: PlayerState
+    @State private var tab: MiniQueueTab = .upNext
+
+    private var songs: [Song] {
+        tab == .upNext ? player.upNext : player.history
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Picker("", selection: $tab) {
+                Text("Up Next").tag(MiniQueueTab.upNext)
+                Text("History").tag(MiniQueueTab.history)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+
+            Divider()
+
+            if songs.isEmpty {
+                Text(tab == .upNext ? "Nothing Up Next" : "No History")
+                    .font(.system(size: 11))
+                    .foregroundColor(Theme.secondaryText)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(songs) { song in
+                            MiniQueueRow(song: song) {
+                                player.playFromQueue(song)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .background(Theme.contentBackground)
+    }
+}
+
+private struct MiniQueueRow: View {
+    let song: Song
+    let action: () -> Void
+
+    @State private var hover = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(song.title)
+                    .font(.system(size: 11))
+                    .foregroundColor(Theme.primaryText)
+                    .lineLimit(1)
+                Text(song.artist)
+                    .font(.system(size: 9.5))
+                    .foregroundColor(Theme.secondaryText)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 6)
+            Text(formatTime(song.duration))
+                .font(.system(size: 9.5).monospacedDigit())
+                .foregroundColor(Theme.secondaryText)
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 30)
+        .background(hover ? Theme.rowHover : Color.clear)
+        .contentShape(Rectangle())
+        .onTapGesture(perform: action)
+        .onHover { hover = $0 }
+    }
+}
