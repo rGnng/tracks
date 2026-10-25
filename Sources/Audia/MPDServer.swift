@@ -25,7 +25,6 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
     private var playlistVersion: UInt32 = 1
     private var singleMode = false
     private var consumeMode = false
-    private var isStopped = true
     private var startedAt = Date()
 
     private init() {}
@@ -91,7 +90,6 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
         idleSessions.removeAll()
         isRunning = false
         listeningSummary = ""
-        isStopped = true
     }
 
     func addSession(_ session: MPDClientSession) {
@@ -251,26 +249,22 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
                 let position = id - 1
                 let queue = PlayerState.shared.queue
                 guard queue.indices.contains(position) else { return ack(2, command, "Bad song index") }
-                isStopped = false
                 PlayerState.shared.playQueue(at: position)
             } else if let raw = args.first, let position = Int(raw) {
                 let queue = PlayerState.shared.queue
                 guard queue.indices.contains(position) else { return ack(2, command, "Bad song index") }
-                isStopped = false
                 PlayerState.shared.playQueue(at: position)
             } else {
                 let player = PlayerState.shared
-                if player.currentSong == nil {
+                switch playbackState {
+                case .stop:
                     if !player.queue.isEmpty {
-                        isStopped = false
                         player.playQueue(at: player.currentIndex ?? 0)
                     }
-                } else if isStopped {
-                    isStopped = false
-                    player.playQueue(at: player.currentIndex ?? 0)
-                } else if !player.isPlaying {
-                    isStopped = false
+                case .pause:
                     player.setPaused(false)
+                case .play:
+                    break
                 }
             }
             bumpPlaylist()
@@ -285,7 +279,6 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
             }
             if requested == nil {
                 if player.currentSong != nil {
-                    isStopped = false
                     player.setPaused(player.isPlaying)
                 }
             } else if let requested {
@@ -293,14 +286,11 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
                     if player.currentSong == nil, !player.queue.isEmpty {
                         player.playQueue(at: 0)
                     }
-                    isStopped = false
                     player.setPaused(true)
                 } else {
                     if player.currentSong == nil, !player.queue.isEmpty {
-                        isStopped = false
                         player.playQueue(at: 0)
                     } else {
-                        isStopped = false
                         player.setPaused(false)
                     }
                 }
@@ -308,17 +298,14 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
             return ok()
         case "stop":
             PlayerState.shared.stopPlayback()
-            isStopped = true
             broadcastIdle("player")
             return ok()
         case "next":
             PlayerState.shared.next()
-            isStopped = false
             broadcastIdle("player")
             return ok()
         case "previous":
             PlayerState.shared.previous()
-            isStopped = false
             broadcastIdle("player")
             return ok()
         case "seek", "seekid":
@@ -334,7 +321,6 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
                 }
             }
             PlayerState.shared.seek(toSeconds: time)
-            isStopped = false
             broadcastIdle("player")
             return ok()
         case "seekcur":
@@ -382,7 +368,6 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
         case "toggle":
             let player = PlayerState.shared
             if player.currentSong != nil {
-                isStopped = false
                 player.togglePlayPause()
             }
             broadcastIdle("player")
@@ -639,16 +624,26 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
          "unsubscribe", "sendmessage", "readmessages"]
     }
 
+    /// Derive the MPD state from the live player instead of keeping a local
+    /// flag. The old flag was reset to "stopped" when the MPD server restarted,
+    /// which made a running player appear stopped until another MPD command.
+    private enum PlaybackState: String {
+        case stop
+        case play
+        case pause
+    }
+
+    private var playbackState: PlaybackState {
+        let player = PlayerState.shared
+        guard player.currentSong != nil else { return .stop }
+        if player.isPlaying { return .play }
+        if player.isDecodingAudio || player.elapsed > 0 { return .pause }
+        return .stop
+    }
+
     private func statusLines() -> [String] {
         let player = PlayerState.shared
-        let state: String
-        if player.currentSong == nil || isStopped {
-            state = "stop"
-        } else if player.isPlaying {
-            state = "play"
-        } else {
-            state = "pause"
-        }
+        let state = playbackState.rawValue
         let duration = player.duration > 0 ? player.duration : (player.currentSong?.duration ?? 0)
         var lines = [
             "volume: \(Int((player.volume * 100).rounded()))",
