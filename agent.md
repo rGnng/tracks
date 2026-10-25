@@ -283,7 +283,10 @@ Supported areas:
 - Library queries: `listall`, `listallinfo`, `lsinfo`, `find`, `search`, `findadd`,
   `searchadd`, `list`, `count`, `update`, `rescan`.
 - Album art: `albumart`, `readpicture`, `binarylimit`. Responses use the 500x500
-  JPEG cache, 8192-byte chunks by default, correct size/type, and JPEG magic.
+  JPEG cache, correct size/type, and JPEG magic. The default chunk size is
+  262144 bytes so a typical cover fits in one response; clients can still request
+  a smaller `binarylimit`. A URI-to-album-ID cache avoids rescanning the whole
+  library for every binary chunk.
 - Idle: `idle`, `noidle`; queue changes broadcast `playlist`/`player`, stored
   playlist changes broadcast `stored_playlist`.
 - Stored playlists:

@@ -22,12 +22,23 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
     private var sessions: [ObjectIdentifier: MPDClientSession] = [:]
     private var idleSessions: [ObjectIdentifier: MPDClientSession] = [:]
     private var password = ""
+    /// URI -> album ID cache. Artwork normally arrives in several chunks; the
+    /// album lookup scans the whole library and must not run for every chunk.
+    private var albumIDCache: [String: UUID] = [:]
     private var playlistVersion: UInt32 = 1
     private var singleMode = false
     private var consumeMode = false
     private var startedAt = Date()
 
-    private init() {}
+    private init() {
+        NotificationCenter.default.addObserver(
+            forName: .libraryDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.albumIDCache.removeAll() }
+        }
+    }
 
     // MARK: Configuration
 
@@ -878,14 +889,17 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
     }
 
     private func albumID(forURI uri: String) -> UUID? {
+        if let cached = albumIDCache[uri] { return cached }
         let songs = librarySongs()
         let exact = songs.first { $0.fileURL?.path == uri }
         let prefixed = songs.first { ($0.fileURL?.path ?? "").hasPrefix(uri.hasSuffix("/") ? uri : uri + "/") }
         let suffixed = songs.first { ($0.fileURL?.path ?? "").hasSuffix(uri) }
         guard let song = exact ?? prefixed ?? suffixed else { return nil }
-        return Library.shared.albums.first { album in
+        guard let albumID = Library.shared.albums.first(where: { album in
             album.songs.contains { $0.id == song.id }
-        }?.id
+        })?.id else { return nil }
+        albumIDCache[uri] = albumID
+        return albumID
     }
 
     private func artworkResponse(uri: String,
@@ -901,7 +915,7 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
         guard safeOffset < total else {
             return lines(["size: \(total)", "type: image/jpeg"])
         }
-        let limit = max(1, session?.binaryLimit ?? 8192)
+        let limit = max(1, session?.binaryLimit ?? 262_144)
         let end = min(safeOffset + limit, total)
         let chunk = data.subdata(in: safeOffset..<end)
         return MPDResponse(
@@ -1121,7 +1135,7 @@ final class MPDClientSession: @unchecked Sendable {
     private var isIdle = false
     private var listBuffer: [String]?
     private var listOK = false
-    var binaryLimit = 8192
+    var binaryLimit = 262_144
 
     init(fd: Int32, server: MPDServer?) {
         self.fd = fd
