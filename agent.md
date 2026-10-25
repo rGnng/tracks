@@ -315,6 +315,10 @@ Supported areas:
   - `added: <ISO8601>` from `Song.dateAdded` (MPD 0.24 field)
   - `Last-Modified: <ISO8601>` mirrored from `dateAdded` for older clients
   - Unknown `dateAdded` returns `added: -1`.
+- `Track` and `Disc` are emitted as plain integers. Do not append `/total`:
+  strict remote parsers treat the value as an integer and fail on values such as
+  `1/12`. Track/disc totals remain available in the Tracks database but are not
+  sent in the MPD tag itself.
 - Playback state, elapsed time, duration, and queue data are derived from the live
   `PlayerState` on every request. There is no cached `isStopped` flag. Restarting
   the MPD server while audio is playing therefore keeps `state: play` and the
