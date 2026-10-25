@@ -108,7 +108,6 @@ struct KeyboardShortcut: Codable, Equatable {
 }
 
 enum KeyboardShortcutStore {
-    private static let legacyKey = "shortcut.starCurrent"
     private static let storageKey = "shortcut.starCurrent.v2"
 
     private struct Setting: Codable {
@@ -120,12 +119,6 @@ enum KeyboardShortcutStore {
         if let data = defaults.data(forKey: storageKey),
            let setting = try? JSONDecoder().decode(Setting.self, from: data) {
             return setting.shortcut
-        }
-        if let legacy = defaults.string(forKey: legacyKey) {
-            let trimmed = legacy.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty {
-                return KeyboardShortcut(key: trimmed, modifiers: [], display: trimmed)
-            }
         }
         return .defaultStar
     }

@@ -91,15 +91,7 @@ final class Library: ObservableObject {
     private var didAutoPromptSetup = false
 
     private static let internalPathKey = "internalLibraryPath"
-    private static let legacyFoldersKey = "libraryFolders"
     private static let setupDismissedKey = "internalSetupDismissed"
-    private static let legacyMigrationKey = "librariesMigrated"
-
-    /// Reading ALBUMARTIST requires one full metadata pass after this feature
-    /// ships. The marker is per database path so opening an older library also
-    /// gets corrected once.
-    private var albumArtistRescanKey: String { "albumArtistRescan.v1." + db.path }
-    private var metadataRescanKey: String { "metadataFieldsRescan.v1." + db.path }
 
     init() {
         albums = []
@@ -144,7 +136,7 @@ final class Library: ObservableObject {
         return rootURL.appendingPathComponent("library.sqlite")
     }
 
-    // MARK: Server setup / migration
+    // MARK: Server setup
 
     private func bootstrapLibraries() {
         if let path = Self.configuredInternalPath() {
@@ -155,66 +147,7 @@ final class Library: ObservableObject {
             internalLibrary = library
         }
 
-        migrateLegacyConfiguration()
         externalLibraries = db.loadLibraries().filter { $0.kind == .external }
-    }
-
-    private func migrateLegacyConfiguration() {
-        let defaults = UserDefaults.standard
-        guard !defaults.bool(forKey: Self.legacyMigrationKey) else { return }
-
-        if let saved = defaults.string(forKey: Self.legacyFoldersKey) {
-            let paths = saved.split(separator: "\n").map(String.init).filter { !$0.isEmpty }
-            for path in paths {
-                let canonical = canonicalPath(NSString(string: path).expandingTildeInPath)
-                if let internalLibrary, overlaps(canonical, internalLibrary.path) { continue }
-                _ = db.ensureLibrary(path: canonical, kind: .external, name: displayName(for: canonical))
-            }
-            defaults.removeObject(forKey: Self.legacyFoldersKey)
-        }
-
-        // Migrate a database populated by a build that had no library records.
-        if db.loadLibraries().isEmpty, db.songCount() > 0, let root = inferredLegacyRoot() {
-            _ = db.ensureLibrary(path: root, kind: .external, name: displayName(for: root))
-        }
-
-        defaults.set(true, forKey: Self.legacyMigrationKey)
-    }
-
-    private func inferredLegacyRoot() -> String? {
-        let paths = db.songPaths()
-        guard !paths.isEmpty else { return nil }
-
-        let sample = canonicalPath(NSString(string: "~/Music/Tracks Sample Library").expandingTildeInPath)
-        if FileManager.default.fileExists(atPath: sample),
-           paths.allSatisfy({ isUnder(canonicalPath($0), root: sample) }) {
-            return sample
-        }
-
-        var prefix: [String]?
-        for path in paths {
-            let components = URL(fileURLWithPath: canonicalPath(path)).pathComponents
-            if let current = prefix {
-                var shared: [String] = []
-                var index = 0
-                while index < current.count, index < components.count,
-                      current[index] == components[index] {
-                    shared.append(current[index])
-                    index += 1
-                }
-                prefix = shared
-            } else {
-                prefix = components
-            }
-        }
-
-        guard var components = prefix, components.count > 1 else { return nil }
-        components.removeLast() // the file name
-        let root = NSString.path(withComponents: components)
-        guard root != "/",
-              FileManager.default.fileExists(atPath: root) else { return nil }
-        if let internalLibrary, overlaps(root, internalLibrary.path) { return nil }
-        return root
     }
 
     // MARK: Setup state
@@ -553,12 +486,7 @@ final class Library: ObservableObject {
             return
         }
 
-        // One-time full pass: earlier builds never read ALBUMARTIST, so the
-        // album grouping in an existing database may be based on track artists.
-        let forceAlbumArtistRescan = !UserDefaults.standard.bool(forKey: albumArtistRescanKey)
-        let forceMetadataRescan = !UserDefaults.standard.bool(forKey: metadataRescanKey)
-        let forceFullRescan = force || forceAlbumArtistRescan || forceMetadataRescan
-        let known = forceFullRescan ? [:] : db.knownFiles()
+        let known = force ? [:] : db.knownFiles()
         isScanning = true
         scanPhase = .scan
         scanCompleted = 0
@@ -584,15 +512,8 @@ final class Library: ObservableObject {
             await ArtworkCache.shared.importArtwork(artwork)
             self.db.prune(roots: roots)
             self.reload()
-            if forceAlbumArtistRescan {
-                UserDefaults.standard.set(true, forKey: self.albumArtistRescanKey)
-            }
-            if forceMetadataRescan {
-                UserDefaults.standard.set(true, forKey: self.metadataRescanKey)
-            }
             self.scanProgress = 1
             self.isScanning = false
-            ArtworkCache.shared.startPrecache()
             PlayerState.shared.applyUpdatedSongs(self.allSongs)
         }
     }
@@ -634,7 +555,6 @@ final class Library: ObservableObject {
             self.reload()
             self.scanProgress = 1
             self.isScanning = false
-            ArtworkCache.shared.startPrecache()
             PlayerState.shared.applyUpdatedSongs(self.allSongs)
         }
     }

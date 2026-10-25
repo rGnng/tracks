@@ -76,7 +76,7 @@ If no Internal Library exists, the fallback database path is
 - `artworkCacheJPEGQuality` is currently `0.75`. The default is `0.8`; the cache
   is only regenerated when the user clicks **Rebuild Cache**.
 - `playlists.date_modified` exists and is used by MPD.
-- `PRAGMA user_version = 1`.
+- `PRAGMA user_version = 1` remains as an inert legacy value; no code reads it.
 - Do not clear playback history, play counts, stars, playlists, or user window
   preferences while testing.
 
@@ -93,7 +93,7 @@ Sources/Audia/
   Theme.swift                Light/dark colors and layout constants
   Models.swift               Artwork, Song, Album, Playlist, MusicLibrary, sidebar models
   Library.swift              Library singleton, scanning, playlists, read-only rules, delete API
-  LibraryDatabase.swift      SQLite schema, sync/prune, playlists, migrations, song deletion
+  LibraryDatabase.swift      SQLite schema, sync/prune, playlists, song deletion
   LibraryOrganizer.swift     Canonical file names and tag-driven file relocation
   LibraryDeletion.swift      Delete confirmation UI and partial-failure alert
   FLACLibrary.swift          FLAC/AVFoundation metadata readers and LibraryScanner
@@ -151,8 +151,7 @@ Sources/Audia/
 - Library ID: `stableUUID("library|" + path)`.
 - Playlist ID: random UUID.
 
-Never recompute song IDs during normal open/move/rebase operations. Recompute only
-for the one-time legacy migration.
+Never recompute song IDs during normal open/move/rebase operations.
 
 ### Core schema
 
@@ -175,8 +174,7 @@ Important schema decisions:
 - Artwork BLOBs were removed from the database. Album rows keep metadata and the
   artwork cache key; the 500x500 JPEG lives on disk.
 - `songs.loved` is the star flag and backs the built-in Stared playlist.
-- `playlists.date_modified` was added for MPD `Last-Modified`. Migration runs on
-  open and falls back to `date_created` for old rows.
+- `playlists.date_modified` is maintained for MPD `Last-Modified`.
 - `playlist_items` has a primary key on `(playlist_id, song_id)`, so a stored
   playlist cannot contain duplicate copies of the same song.
 - `date_added` is first-discovery time:
@@ -186,10 +184,9 @@ Important schema decisions:
 - Year/date values are stored as raw text in `songs.year` and `albums.year`
   (`TEXT NOT NULL DEFAULT ''`). Empty means unknown. Tags such as `2015` and
   `2015-05-01` are preserved. UI displays the text without thousands separators
-  and omits it when empty. The old INTEGER columns are migrated in place: numeric
-  values are cast to text and 0 becomes empty. Sorting uses the first four digits
-  only. Get Info shows an empty year field for unknown years; clearing a known
-  year removes it from the database and the managed tag fields.
+  and omits it when empty. Sorting uses the first four digits only. Get Info
+  shows an empty year field for unknown years; clearing a known year removes it
+  from the database and the managed tag fields.
 - `Album.addedAt` is `max(song.dateAdded)` and drives the Recently Added order.
 - WAL is used while running. On normal termination, `closeForTermination()`
   checkpoints and switches the journal back to DELETE so `library.sqlite` is
@@ -258,17 +255,17 @@ Important schema decisions:
 - Settings > Shortcuts uses a standard AppKit shortcut recorder (`KeyboardShortcut.swift`):
   click the field, press a key combination, Escape cancels, bare Delete clears.
   Modifiers and shifted symbols are supported. The shortcut is stored as JSON
-  under `shortcut.starCurrent.v2`; the older `shortcut.starCurrent` string is
-  migrated. Reset restores `*`. The global handler skips text editing and returns
-  events untouched while the recorder is active.
+  under `shortcut.starCurrent.v2`. Reset restores `*`. The global handler skips
+  text editing and returns events untouched while the recorder is active.
 
 ## 7. Artwork cache and Settings
 
 - Artwork is stored only as 500x500 JPEG files in:
   `~/Library/Caches/com.audia.tracks/Artwork`
 - Database artwork BLOBs are zero for library albums.
-- `ArtworkCache` uses an in-memory cache plus disk cache and a detached pre-cache
-  scan. Rebuild Cache clears and regenerates the disk cache.
+- `ArtworkCache` uses an in-memory cache plus disk cache. Scans write artwork
+  directly into the cache. Rebuild Cache clears the disk cache and performs a
+  forced rescan to regenerate it.
 - JPEG quality control:
   - Plain SwiftUI `TextField`, digits only.
   - Accepted range 15-100, default 80.
@@ -445,7 +442,14 @@ The main window uses a hidden/full-size content view and a custom 45pt title bar
 - Do not remove the key-window refresh or the width nudge. The private title-bar
   height is only re-read during a frame/layout pass.
 
-## 11. Key pitfalls and rules
+## 11. Legacy migrations
+
+All one-time legacy data migrations have been removed. The current application
+expects the current schema and current UserDefaults format; older databases or
+pre-recorder shortcut strings are not migrated. Schema creation still includes
+the full current table definitions for new libraries.
+
+## 12. Key pitfalls and rules
 
 1. Swift 6 concurrency:
    - `Library`, `LibraryDatabase`, `PlayerState`, `MPDServer`, and `WindowModeCenter`
@@ -491,7 +495,7 @@ The main window uses a hidden/full-size content view and a custom 45pt title bar
       wiring in code and manually when possible.
 12. The project is not committed. Do not assume git history is available.
 
-## 12. Useful verification commands
+## 13. Useful verification commands
 
 Build and basic state:
 
@@ -557,7 +561,7 @@ APPLESCRIPT
 Expected when centered: traffic-light `y` is 15pt below the window top with a
 14pt button; the center is at 22pt, matching the 45pt title bar.
 
-## 13. Known limitations and possible follow-ups
+## 14. Known limitations and possible follow-ups
 
 - Stored playlists cannot contain duplicate copies of a song.
 - The MPD implementation is partial MPD 0.24: no list ranges, `playlistsearch`,
@@ -574,7 +578,7 @@ Expected when centered: traffic-light `y` is 15pt below the window top with a
 - `MockData` may still be present as dead code in `Models.swift`.
 - The project is untracked in git and has no commit.
 
-## 14. Handoff summary
+## 15. Handoff summary
 
 Tracks is a native macOS iTunes-style player with a SQLite library, real AVPlayer
 playback, Internal/External libraries, organizer-based imports and tag edits,

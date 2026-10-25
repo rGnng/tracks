@@ -56,25 +56,6 @@ final class LibraryDatabase {
         exec("PRAGMA journal_mode=WAL;")
         exec("PRAGMA foreign_keys=ON;")
         createSchema()
-        // The song-ID fix for the very first SQLite build is a one-time
-        // migration. Later, IDs deliberately stay put when a library folder
-        // (and therefore its song paths) moves to a new location.
-        if userVersion() < 1 {
-            migrateSongIDsIfNeeded()
-            setUserVersion(1)
-        }
-        importLegacyPlaylistsIfNeeded()
-    }
-
-    private func userVersion() -> Int {
-        guard let stmt = prepare("PRAGMA user_version") else { return 0 }
-        let version = sqlite3_step(stmt) == SQLITE_ROW ? int(stmt, 0) : 0
-        sqlite3_finalize(stmt)
-        return version
-    }
-
-    private func setUserVersion(_ version: Int) {
-        exec("PRAGMA user_version = \(version);")
     }
 
     private func checkpointAndClose() {
@@ -250,86 +231,6 @@ final class LibraryDatabase {
         return LibraryInspection(path: path, songCount: songCount, internalLibraryPath: internalPath)
     }
 
-    /// Earlier builds derived song IDs from `"song|" + path`. Keep the
-    /// original path-derived persistent IDs (which the file-based library
-    /// used) so existing playlists, play counts and references survive.
-    private func migrateSongIDsIfNeeded() {
-        var updates: [(old: String, new: String)] = []
-        guard let stmt = prepare("SELECT id, path FROM songs") else { return }
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            guard let old = text(stmt, 0), let path = text(stmt, 1) else { continue }
-            let new = LibraryScanner.stableUUID(path).uuidString
-            if old != new { updates.append((old, new)) }
-        }
-        sqlite3_finalize(stmt)
-        guard !updates.isEmpty else { return }
-
-        exec("BEGIN;")
-        for update in updates {
-            if let itemStmt = prepare("UPDATE OR IGNORE playlist_items SET song_id = ? WHERE song_id = ?") {
-                bind(itemStmt, 1, update.new)
-                bind(itemStmt, 2, update.old)
-                sqlite3_step(itemStmt)
-                sqlite3_finalize(itemStmt)
-            }
-            if let songStmt = prepare("UPDATE OR IGNORE songs SET id = ? WHERE id = ?") {
-                bind(songStmt, 1, update.new)
-                bind(songStmt, 2, update.old)
-                sqlite3_step(songStmt)
-                sqlite3_finalize(songStmt)
-            }
-        }
-        exec("DELETE FROM playlist_items WHERE song_id NOT IN (SELECT id FROM songs);")
-        exec("COMMIT;")
-    }
-
-    /// One-time import of the JSON playlists that older builds kept in
-    /// UserDefaults. The database is authoritative from now on.
-    private func importLegacyPlaylistsIfNeeded() {
-        var existing = 0
-        if let stmt = prepare("SELECT COUNT(*) FROM playlists") {
-            if sqlite3_step(stmt) == SQLITE_ROW { existing = int(stmt, 0) }
-            sqlite3_finalize(stmt)
-        }
-        guard existing == 0 else { return }
-        guard let data = UserDefaults.standard.data(forKey: "playlists"),
-              let legacy = try? JSONDecoder().decode([LegacyPlaylist].self, from: data) else {
-            return
-        }
-
-        exec("BEGIN;")
-        for (index, playlist) in legacy.enumerated() {
-            let id = UUID(uuidString: playlist.id)?.uuidString ?? UUID().uuidString
-            let name = playlist.name.isEmpty ? "Untitled Playlist" : playlist.name
-            if let stmt = prepare("INSERT OR IGNORE INTO playlists(id, name, date_created) VALUES(?, ?, ?)") {
-                bind(stmt, 1, id)
-                bind(stmt, 2, name)
-                bind(stmt, 3, Date().timeIntervalSince1970 + Double(index) / 1000)
-                sqlite3_step(stmt)
-                sqlite3_finalize(stmt)
-            }
-            for (position, songID) in playlist.songIDs.enumerated() {
-                guard let song = UUID(uuidString: songID)?.uuidString else { continue }
-                if let stmt = prepare("INSERT OR IGNORE INTO playlist_items(playlist_id, song_id, position) VALUES(?, ?, ?)") {
-                    bind(stmt, 1, id)
-                    bind(stmt, 2, song)
-                    bind(stmt, 3, position)
-                    sqlite3_step(stmt)
-                    sqlite3_finalize(stmt)
-                }
-            }
-        }
-        exec("COMMIT;")
-
-        UserDefaults.standard.removeObject(forKey: "playlists")
-    }
-
-    private struct LegacyPlaylist: Decodable {
-        let id: String
-        let name: String
-        let songIDs: [String]
-    }
-
     // MARK: Schema
 
     private func createSchema() {
@@ -394,68 +295,6 @@ final class LibraryDatabase {
         CREATE INDEX IF NOT EXISTS idx_playlist_items ON playlist_items(playlist_id, position);
         """)
 
-        // Older databases predate the star/love flag. Keep the column available
-        // even when an existing table was created without it.
-        if !hasColumn("songs", "loved") {
-            exec("ALTER TABLE songs ADD COLUMN loved INTEGER NOT NULL DEFAULT 0;")
-        }
-        if !hasColumn("songs", "track_total") {
-            exec("ALTER TABLE songs ADD COLUMN track_total INTEGER NOT NULL DEFAULT 0;")
-        }
-        if !hasColumn("songs", "disc") {
-            exec("ALTER TABLE songs ADD COLUMN disc INTEGER NOT NULL DEFAULT 0;")
-        }
-        if !hasColumn("songs", "disc_total") {
-            exec("ALTER TABLE songs ADD COLUMN disc_total INTEGER NOT NULL DEFAULT 0;")
-        }
-        if !hasColumn("songs", "comments") {
-            exec("ALTER TABLE songs ADD COLUMN comments TEXT NOT NULL DEFAULT '';")
-        }
-        if !hasColumn("playlists", "date_modified") {
-            exec("ALTER TABLE playlists ADD COLUMN date_modified REAL NOT NULL DEFAULT 0;")
-        }
-        exec("UPDATE playlists SET date_modified = date_created WHERE date_modified = 0;")
-
-        // Year/date tags are text. Migrate old INTEGER columns in place.
-        if columnType("songs", "year")?.uppercased() != "TEXT" {
-            migrateYearToText(table: "songs")
-        }
-        if columnType("albums", "year")?.uppercased() != "TEXT" {
-            migrateYearToText(table: "albums")
-        }
-    }
-
-    private func migrateYearToText(table: String) {
-        exec("BEGIN;")
-        exec("ALTER TABLE \(table) ADD COLUMN year_text TEXT NOT NULL DEFAULT '';")
-        exec("""
-            UPDATE \(table) SET year_text = CASE
-                WHEN year IS NULL THEN ''
-                WHEN CAST(year AS TEXT) IN ('0', '') THEN ''
-                ELSE CAST(year AS TEXT)
-            END;
-            """)
-        exec("ALTER TABLE \(table) DROP COLUMN year;")
-        exec("ALTER TABLE \(table) RENAME COLUMN year_text TO year;")
-        exec("COMMIT;")
-    }
-
-    private func hasColumn(_ table: String, _ column: String) -> Bool {
-        guard let stmt = prepare("PRAGMA table_info(\(table))") else { return false }
-        defer { sqlite3_finalize(stmt) }
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            if text(stmt, 1) == column { return true }
-        }
-        return false
-    }
-
-    private func columnType(_ table: String, _ column: String) -> String? {
-        guard let stmt = prepare("PRAGMA table_info(\(table))") else { return nil }
-        defer { sqlite3_finalize(stmt) }
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            if text(stmt, 1) == column { return text(stmt, 2) }
-        }
-        return nil
     }
 
     // MARK: Scanning / sync
@@ -679,23 +518,6 @@ final class LibraryDatabase {
         sqlite3_finalize(stmt)
     }
 
-    func songCount() -> Int {
-        guard let stmt = prepare("SELECT COUNT(*) FROM songs") else { return 0 }
-        let count = sqlite3_step(stmt) == SQLITE_ROW ? int(stmt, 0) : 0
-        sqlite3_finalize(stmt)
-        return count
-    }
-
-    func songPaths() -> [String] {
-        var paths: [String] = []
-        guard let stmt = prepare("SELECT path FROM songs") else { return paths }
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            if let path = text(stmt, 0) { paths.append(path) }
-        }
-        sqlite3_finalize(stmt)
-        return paths
-    }
-
     /// Removes rows that are no longer referenced by anything. Album artists
     /// are kept even when no track credits them directly (compilations).
     private func cleanupOrphans() {
@@ -878,7 +700,7 @@ final class LibraryDatabase {
     func loadPlaylists(songsByID: [String: Song]) -> [Playlist] {
         var entries: [(id: String, name: String, modified: Double)] = []
         if let stmt = prepare("""
-            SELECT id, name, COALESCE(NULLIF(date_modified, 0), date_created)
+            SELECT id, name, date_modified
             FROM playlists ORDER BY name COLLATE NOCASE
             """) {
             while sqlite3_step(stmt) == SQLITE_ROW {

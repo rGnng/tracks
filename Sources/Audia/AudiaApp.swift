@@ -213,15 +213,6 @@ struct SettingsView: View {
                                 .foregroundColor(Theme.secondaryText)
                         }
                         Spacer(minLength: 0)
-                        if artworkCache.isCaching {
-                            ProgressView(value: artworkCache.cacheProgress)
-                                .progressViewStyle(.linear)
-                                .frame(width: 100)
-                            Text("\(Int(artworkCache.cacheProgress * 100))%")
-                                .font(.system(size: 10).monospacedDigit())
-                                .foregroundColor(Theme.secondaryText)
-                                .frame(width: 34, alignment: .trailing)
-                        }
                         Button("Rebuild Cache") {
                             artworkCache.rebuildCache()
                         }

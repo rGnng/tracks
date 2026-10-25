@@ -7,7 +7,6 @@ struct SidebarView: View {
     @ObservedObject private var navigator = KeyboardNavigator.shared
     @ObservedObject private var library = Library.shared
     @ObservedObject private var drag = DragController.shared
-    @ObservedObject private var artworkCache = ArtworkCache.shared
     @ObservedObject private var importer = MediaImporter.shared
     @EnvironmentObject private var player: PlayerState
     @State private var hoveringPlaylistHeader = false
@@ -195,12 +194,6 @@ struct SidebarView: View {
             let title = library.scanPhase == .parsing ? "Parsing" : "Scanning Libraries"
             let detail = library.scanTotal > 0 ? "\(library.scanCompleted)/\(library.scanTotal)" : nil
             return (title, library.scanProgress, detail)
-        }
-        if artworkCache.isCaching {
-            let detail = artworkCache.cacheTotal > 0
-                ? "\(artworkCache.cacheCompleted)/\(artworkCache.cacheTotal)"
-                : nil
-            return ("Caching", artworkCache.cacheProgress, detail)
         }
         return nil
     }

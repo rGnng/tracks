@@ -1193,23 +1193,8 @@ struct SongTable: View {
         _showGenre = AppStorage(wrappedValue: true, "\(prefix).showGenre")
         _showPlays = AppStorage(wrappedValue: true, "\(prefix).showPlays")
 
-        // Migrate older column orders to include Album Artist. Existing custom
-        // orders get the field inserted next to Artist so it is visible.
         let orderKey = "\(prefix).columnOrder"
         let newDefault = SongColumn.defaultOrder.map(\.rawValue).joined(separator: ",")
-        let oldDefault = "name,time,artist,album,genre,plays,track"
-        let previousDefault = "name,artist,album,genre,plays,track,time"
-        if var stored = UserDefaults.standard.string(forKey: orderKey) {
-            if stored == oldDefault || stored == previousDefault {
-                stored = newDefault
-                UserDefaults.standard.set(stored, forKey: orderKey)
-            } else if !stored.split(separator: ",").contains("albumArtist") {
-                var parts = stored.split(separator: ",").map(String.init)
-                let insertion = parts.firstIndex(of: "artist").map { $0 + 1 } ?? parts.count
-                parts.insert("albumArtist", at: insertion)
-                UserDefaults.standard.set(parts.joined(separator: ","), forKey: orderKey)
-            }
-        }
         _columnOrderCSV = AppStorage(wrappedValue: newDefault, orderKey)
         _sortedSongs = State(initialValue: Self.sortSongs(songs, by: .name, ascending: true))
     }

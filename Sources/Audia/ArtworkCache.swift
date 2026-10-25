@@ -1,9 +1,6 @@
 import SwiftUI
 import AppKit
 import ImageIO
-import SQLite3
-
-private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
 extension Notification.Name {
     static let artworkDidChange = Notification.Name("tracks.artworkDidChange")
@@ -14,20 +11,13 @@ private struct SendableImage: @unchecked Sendable {
     let image: NSImage
 }
 
-/// Disk + memory cache for album artwork. Library loading never reads every
-/// artwork BLOB; visible views request thumbnails asynchronously and the cache
-/// worker prebuilds the rest on a background task.
+/// Disk + memory cache for album artwork. Visible views request thumbnails
+/// asynchronously; scans write new artwork directly into the disk cache.
 @MainActor
 final class ArtworkCache: ObservableObject {
     static let shared = ArtworkCache()
 
-    @Published private(set) var isCaching = false
-    @Published private(set) var cacheCompleted = 0
-    @Published private(set) var cacheTotal = 0
-    @Published private(set) var cacheProgress: Double = 0
-
     private var databasePath: String?
-    private var cacheTask: Task<Void, Never>?
     private let memory = NSCache<NSString, NSImage>()
 
     private nonisolated static let artworkMaxPixel = 500
@@ -46,57 +36,12 @@ final class ArtworkCache: ObservableObject {
             .appendingPathComponent("Artwork", isDirectory: true)
     }
 
-    nonisolated private static var legacyCacheDirectory: URL {
-        let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
-        return base.appendingPathComponent("Tracks/ArtworkCache", isDirectory: true)
-    }
-
     private init() {}
 
     func setDatabasePath(_ path: String) {
         guard databasePath != path else { return }
         databasePath = path
-        cacheTask?.cancel()
         memory.removeAllObjects()
-        startPrecache()
-    }
-
-    func startPrecache() {
-        guard databasePath != nil else { return }
-        cacheTask?.cancel()
-        isCaching = true
-        cacheCompleted = 0
-        cacheTotal = 0
-        cacheProgress = 0
-
-        let path = databasePath!
-        let directory = Self.cacheDirectory
-        cacheTask = Task.detached(priority: .utility) {
-            try? FileManager.default.removeItem(at: Self.legacyCacheDirectory)
-            let total = await Self.externalizeDatabaseArtwork(path: path, directory: directory) { completed, total in
-                Task { @MainActor in
-                    ArtworkCache.shared.updateCacheProgress(completed, total)
-                }
-            }
-            guard !Task.isCancelled else { return }
-            await MainActor.run {
-                ArtworkCache.shared.finishPrecache(total: total)
-                NotificationCenter.default.post(name: .artworkDidChange, object: nil)
-            }
-        }
-    }
-
-    private func updateCacheProgress(_ completed: Int, _ total: Int) {
-        cacheCompleted = completed
-        cacheTotal = total
-        cacheProgress = total > 0 ? Double(completed) / Double(total) : 0
-    }
-
-    private func finishPrecache(total: Int) {
-        isCaching = false
-        cacheProgress = 1
-        cacheCompleted = max(cacheCompleted, total)
-        cacheTotal = max(cacheTotal, total)
     }
 
     func image(for artwork: Artwork, maxPixel: Int = 512) async -> NSImage? {
@@ -167,14 +112,8 @@ final class ArtworkCache: ObservableObject {
     }
 
     func clearCache() {
-        cacheTask?.cancel()
-        isCaching = false
-        cacheCompleted = 0
-        cacheTotal = 0
-        cacheProgress = 0
         memory.removeAllObjects()
         try? FileManager.default.removeItem(at: Self.cacheDirectory)
-        try? FileManager.default.removeItem(at: Self.legacyCacheDirectory)
     }
 
     func rebuildCache() {
@@ -183,69 +122,6 @@ final class ArtworkCache: ObservableObject {
     }
 
     // MARK: - Background work
-
-    nonisolated private static func externalizeDatabaseArtwork(
-        path: String,
-        directory: URL,
-        progress: @Sendable (Int, Int) -> Void
-    ) async -> Int {
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        var db: OpaquePointer?
-        guard sqlite3_open_v2(path, &db, SQLITE_OPEN_READWRITE, nil) == SQLITE_OK, let db else {
-            return 0
-        }
-        defer { sqlite3_close(db) }
-        sqlite3_busy_timeout(db, 10_000)
-
-        var total = 0
-        if let stmt = prepare(db, "SELECT COUNT(*) FROM albums WHERE artwork IS NOT NULL") {
-            if sqlite3_step(stmt) == SQLITE_ROW {
-                total = Int(sqlite3_column_int64(stmt, 0))
-            }
-            sqlite3_finalize(stmt)
-        }
-        progress(0, total)
-        guard total > 0 else { return 0 }
-
-        guard let select = prepare(db, "SELECT id, artwork FROM albums WHERE artwork IS NOT NULL"),
-              let clear = prepare(db, "UPDATE albums SET artwork = NULL WHERE id = ?") else {
-            return 0
-        }
-        defer {
-            sqlite3_finalize(select)
-            sqlite3_finalize(clear)
-        }
-
-        var completed = 0
-        while sqlite3_step(select) == SQLITE_ROW {
-            if Task.isCancelled { break }
-            guard let idText = sqlite3_column_text(select, 0),
-                  let blob = sqlite3_column_blob(select, 1) else { continue }
-            let albumID = String(cString: idText)
-            let count = Int(sqlite3_column_bytes(select, 1))
-            let data = Data(bytes: blob, count: count)
-            writeArtwork(data, albumID: albumID, directory: directory)
-
-            sqlite3_reset(clear)
-            sqlite3_clear_bindings(clear)
-            _ = albumID.withCString {
-                sqlite3_bind_text(clear, 1, $0, -1, SQLITE_TRANSIENT)
-            }
-            sqlite3_step(clear)
-
-            completed += 1
-            if completed % 8 == 0 || completed == total {
-                progress(completed, total)
-            }
-            if completed % 4 == 0 { await Task.yield() }
-        }
-
-        // Reclaim the space occupied by the artwork BLOBs. This is a one-time
-        // migration for libraries created before artwork was externalized.
-        sqlite3_exec(db, "VACUUM;", nil, nil, nil)
-        progress(completed, total)
-        return completed
-    }
 
     nonisolated private static func imageFromInlineData(_ data: Data, maxPixel: Int) -> SendableImage? {
         if let thumb = makeJPEG(data, maxPixel: artworkMaxPixel), let image = NSImage(data: thumb) {
@@ -264,12 +140,6 @@ final class ArtworkCache: ObservableObject {
         if let data = try? Data(contentsOf: thumb), let image = NSImage(data: data) {
             return SendableImage(image: image)
         }
-        guard let full = ensureFull(albumID: albumID,
-                                    databasePath: databasePath,
-                                    directory: directory) else { return nil }
-        if let image = NSImage(data: full) {
-            return SendableImage(image: image)
-        }
         return nil
     }
 
@@ -277,33 +147,7 @@ final class ArtworkCache: ObservableObject {
                                    databasePath: String,
                                    directory: URL) -> Data? {
         let thumb = thumbnailURL(directory: directory, albumID: albumID)
-        if let data = try? Data(contentsOf: thumb) { return data }
-        guard let original = artworkFromDatabase(path: databasePath, albumID: albumID) else { return nil }
-        let jpeg = makeJPEG(original, maxPixel: artworkMaxPixel)
-        if let jpeg { try? jpeg.write(to: thumb, options: .atomic) }
-        return jpeg ?? original
-    }
-
-    nonisolated private static func artworkFromDatabase(path: String, albumID: String) -> Data? {
-        var db: OpaquePointer?
-        guard sqlite3_open_v2(path, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK, let db else {
-            return nil
-        }
-        defer { sqlite3_close(db) }
-        sqlite3_busy_timeout(db, 1000)
-        guard let stmt = prepare(db, "SELECT artwork FROM albums WHERE id = ?") else { return nil }
-        defer { sqlite3_finalize(stmt) }
-        _ = albumID.withCString { sqlite3_bind_text(stmt, 1, $0, -1, SQLITE_TRANSIENT) }
-        guard sqlite3_step(stmt) == SQLITE_ROW, let pointer = sqlite3_column_blob(stmt, 0) else {
-            return nil
-        }
-        return Data(bytes: pointer, count: Int(sqlite3_column_bytes(stmt, 0)))
-    }
-
-    nonisolated private static func prepare(_ db: OpaquePointer, _ sql: String) -> OpaquePointer? {
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
-        return stmt
+        return try? Data(contentsOf: thumb)
     }
 
     nonisolated private static func writeArtwork(_ data: Data?, albumID: String, directory: URL) {
