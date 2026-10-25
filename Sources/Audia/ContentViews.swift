@@ -1610,6 +1610,7 @@ struct SongTable: View {
                 InfoCenter.shared.target = .song(song.id)
                 openWindow(id: "get-info")
             }
+            Button("Go to Album") { goToAlbum(song) }
             if let playlistID = context.playlistID {
                 Divider()
                 Button("Remove from Playlist") {
@@ -1631,6 +1632,11 @@ struct SongTable: View {
             return [song]
         }
         return sorted.filter { selectedIDs.contains($0.id) }
+    }
+
+    private func goToAlbum(_ song: Song) {
+        guard let albumID = Library.shared.song(withID: song.id)?.album.id else { return }
+        NavigationCenter.shared.albumToOpen = albumID
     }
 
     private func playContext(_ song: Song) {

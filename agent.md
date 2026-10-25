@@ -229,7 +229,8 @@ Important schema decisions:
     - Text editors receive absolute paths.
   - Internal playlists can receive album/song drops.
 - Context menus include Play, Shuffle, Add to Playlist, Play Next, Play Later,
-  Get Info, and the conditional Delete item.
+  Get Info, and the conditional Delete item. Songs/Playlist row menus also have
+  **Go to Album**, which switches to Albums and opens that song's album detail.
 - Sidebar **Albums** and **Recently Added** also have Play and Shuffle context
   menus. Albums uses the full library; Recently Added uses the same album order
   as the Recently Added view. This is the app-level "shuffle all" entry point.
