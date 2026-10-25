@@ -142,12 +142,28 @@ final class PlayerState: ObservableObject {
     func appendToQueue(_ songs: [Song]) {
         guard !songs.isEmpty else { return }
         if queue.isEmpty {
-            queue = songs
             baseQueue = songs
+            queue = isShuffleOn ? songs.shuffled() : songs
             currentIndex = nil
         } else {
             queue.append(contentsOf: songs)
             baseQueue.append(contentsOf: songs)
+            if isShuffleOn {
+                shuffleUnplayedQueue()
+            }
+        }
+    }
+
+    /// Re-shuffles the part of the queue that has not been played yet while
+    /// keeping the current track in place. Used when random/shuffle is enabled
+    /// after tracks were already queued, or when tracks are appended.
+    private func shuffleUnplayedQueue() {
+        guard isShuffleOn, queue.count > 1 else { return }
+        if let i = currentIndex, queue.indices.contains(i) {
+            let head = Array(queue.prefix(i + 1))
+            queue = head + Array(queue.dropFirst(i + 1)).shuffled()
+        } else {
+            queue.shuffle()
         }
     }
 
@@ -315,23 +331,27 @@ final class PlayerState: ObservableObject {
         guard !queue.isEmpty else { return }
 
         if enabled {
-            guard let i = currentIndex, queue.indices.contains(i) else { return }
-            let head = Array(queue.prefix(i + 1))
-            queue = head + Array(queue.dropFirst(i + 1)).shuffled()
+            shuffleUnplayedQueue()
         } else {
-            guard let current = currentSong else { return }
-            var restored = baseQueue.isEmpty ? queue : baseQueue
-            if let idx = restored.firstIndex(where: { $0.id == current.id }) {
-                currentIndex = idx
+            let restored = baseQueue.isEmpty ? queue : baseQueue
+            if let current = currentSong {
+                if let idx = restored.firstIndex(where: { $0.id == current.id }) {
+                    queue = restored
+                    currentIndex = idx
+                } else {
+                    // Defensive: keep the audible track in the queue even if
+                    // the normal-order copy somehow lost it.
+                    var repaired = restored
+                    let insert = min(currentIndex ?? 0, repaired.count)
+                    repaired.insert(current, at: insert)
+                    baseQueue = repaired
+                    queue = repaired
+                    currentIndex = insert
+                }
             } else {
-                // Defensive: keep the audible track in the queue even if the
-                // normal-order copy somehow lost it.
-                let insert = min(currentIndex ?? 0, restored.count)
-                restored.insert(current, at: insert)
-                baseQueue = restored
-                currentIndex = insert
+                queue = restored
+                currentIndex = nil
             }
-            queue = restored
         }
     }
 

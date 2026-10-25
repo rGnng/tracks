@@ -208,6 +208,9 @@ Important schema decisions:
 - Queue operations: append, insert, remove, move, shuffle, clear, play by position/
   song, history, auto-next on end.
 - `baseQueue` preserves normal order when shuffle is toggled off.
+- Shuffle/random covers the unplayed queue: enabling it while stopped shuffles
+  the whole queue, enabling it while playing keeps the current track and shuffles
+  the remainder, and tracks appended while shuffle is active are randomized too.
 - Repeat modes: Off, All, One; persisted in UserDefaults.
 - History is most-recent-first, persisted by song ID.
 - Main window modes:
