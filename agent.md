@@ -158,10 +158,10 @@ for the one-time legacy migration.
 
 ```sql
 artists(id TEXT PK, name TEXT UNIQUE)
-albums(id TEXT PK, title, artist_id, genre, year, artwork BLOB,
+albums(id TEXT PK, title, artist_id, genre, year TEXT, artwork BLOB,
        UNIQUE(title, artist_id))
 songs(id TEXT PK, path TEXT UNIQUE, title, artist_id, album_id,
-      genre, year, track, track_total, disc, disc_total, comments,
+      genre, year TEXT, track, track_total, disc, disc_total, comments,
       duration, date_added, play_count, rating, loved, last_played,
       skip_count, mtime, file_size)
 libraries(id TEXT PK, path TEXT UNIQUE, kind TEXT, name TEXT, date_added)
@@ -183,9 +183,13 @@ Important schema decisions:
   - Internal imports: import time.
   - External tracks: file modification time.
   - Existing rows preserve it across rescans and tag edits.
-- Years are stored as integers, with 0 meaning unknown. UI displays years as plain
-  strings (no thousands separator) and omits them when 0. Get Info shows an empty
-  year field for unknown years; clearing a known year saves 0.
+- Year/date values are stored as raw text in `songs.year` and `albums.year`
+  (`TEXT NOT NULL DEFAULT ''`). Empty means unknown. Tags such as `2015` and
+  `2015-05-01` are preserved. UI displays the text without thousands separators
+  and omits it when empty. The old INTEGER columns are migrated in place: numeric
+  values are cast to text and 0 becomes empty. Sorting uses the first four digits
+  only. Get Info shows an empty year field for unknown years; clearing a known
+  year removes it from the database and the managed tag fields.
 - `Album.addedAt` is `max(song.dateAdded)` and drives the Recently Added order.
 - WAL is used while running. On normal termination, `closeForTermination()`
   checkpoints and switches the journal back to DELETE so `library.sqlite` is

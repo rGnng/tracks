@@ -271,7 +271,7 @@ private struct BrowserAlbumPane: View {
                 $0.artist == $1.artist ? $0.title < $1.title : $0.artist < $1.artist
             }
         case .year:
-            return albums.sorted { $0.year > $1.year }
+            return albums.sorted { $0.yearNumber > $1.yearNumber }
         }
     }
 
@@ -398,7 +398,7 @@ private struct BrowserAlbumSection: View {
     private var albumInfo: String {
         var parts: [String] = []
         if !album.genre.isEmpty { parts.append(album.genre) }
-        if album.year > 0 { parts.append(String(album.year)) }
+        if !album.year.isEmpty { parts.append(album.year) }
         parts.append("\(album.songs.count) songs")
         return parts.joined(separator: " · ")
     }

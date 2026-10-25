@@ -611,7 +611,7 @@ private struct AlbumDetailView: View {
     private var albumInfo: String {
         var parts: [String] = []
         if !album.genre.isEmpty { parts.append(album.genre) }
-        if album.year > 0 { parts.append(String(album.year)) }
+        if !album.year.isEmpty { parts.append(album.year) }
         parts.append("\(album.songs.count) songs")
         return parts.joined(separator: " · ")
     }
@@ -790,8 +790,8 @@ struct AlbumList: View {
                                         ArtistLinkText(name: album.artist, fontSize: 11, isSelected: selected)
                                     }
                                     Spacer()
-                                    if album.year > 0 {
-                                        Text(String(album.year))
+                                    if !album.year.isEmpty {
+                                        Text(album.year)
                                             .font(.system(size: 11))
                                             .foregroundColor(selected ? .white.opacity(0.85) : Theme.secondaryText)
                                     }

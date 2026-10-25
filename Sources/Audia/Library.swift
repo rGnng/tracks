@@ -254,7 +254,7 @@ final class Library: ObservableObject {
         var groups: [String: [Album]] = [:]
         for album in albums { groups[album.artist, default: []].append(album) }
         return groups
-            .map { ArtistSummary(name: $0.key, albums: $0.value.sorted { $0.year > $1.year }) }
+            .map { ArtistSummary(name: $0.key, albums: $0.value.sorted { $0.yearNumber > $1.yearNumber }) }
             .sorted { $0.name < $1.name }
     }
 
@@ -852,7 +852,7 @@ final class Library: ObservableObject {
                                    albumArtist: updated.albumArtist,
                                    album: updated.album,
                                    genre: updated.genre,
-                                   year: updated.year > 0 ? updated.year : nil,
+                                   year: updated.year.isEmpty ? nil : updated.year,
                                    track: updated.trackNumber > 0 ? updated.trackNumber : nil,
                                    trackTotal: updated.trackTotal > 0 ? updated.trackTotal : nil,
                                    discNumber: updated.discNumber > 0 ? updated.discNumber : nil,
@@ -882,7 +882,7 @@ final class Library: ObservableObject {
                                    albumArtist: song.albumArtist,
                                    album: song.album,
                                    genre: song.genre,
-                                   year: song.year > 0 ? song.year : nil,
+                                   year: song.year.isEmpty ? nil : song.year,
                                    track: song.trackNumber > 0 ? song.trackNumber : nil,
                                    trackTotal: song.trackTotal > 0 ? song.trackTotal : nil,
                                    discNumber: song.discNumber > 0 ? song.discNumber : nil,

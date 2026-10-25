@@ -7,7 +7,7 @@ struct TagFields: Sendable {
     var albumArtist: String?
     var album: String?
     var genre: String?
-    var year: Int?
+    var year: String?
     var track: Int?
     var trackTotal: Int?
     var discNumber: Int?
@@ -192,7 +192,7 @@ enum ID3TagWriter {
         text("TPE2", fields.albumArtist)
         text("TALB", fields.album)
         text("TCON", fields.genre)
-        if let year = fields.year, year > 0 { text("TDRC", String(year)) }
+        if let year = fields.year, !year.isEmpty { text("TDRC", year) }
         let track = fields.track ?? 0
         let trackTotal = fields.trackTotal ?? 0
         if track > 0 || trackTotal > 0 {
@@ -438,7 +438,7 @@ enum FLACTagWriter {
         add("ALBUMARTIST", fields.albumArtist)
         add("ALBUM", fields.album)
         add("GENRE", fields.genre)
-        if let year = fields.year, year > 0 { add("DATE", String(year)) }
+        if let year = fields.year, !year.isEmpty { add("DATE", year) }
         if let track = fields.track, track > 0 { add("TRACKNUMBER", String(track)) }
         if let total = fields.trackTotal, total > 0 { add("TRACKTOTAL", String(total)) }
         if let disc = fields.discNumber, disc > 0 { add("DISCNUMBER", String(disc)) }
@@ -761,7 +761,7 @@ enum OggTagWriter {
         add("ALBUMARTIST", fields.albumArtist)
         add("ALBUM", fields.album)
         add("GENRE", fields.genre)
-        if let year = fields.year, year > 0 { add("DATE", String(year)) }
+        if let year = fields.year, !year.isEmpty { add("DATE", year) }
         if let track = fields.track, track > 0 { add("TRACKNUMBER", String(track)) }
         if let total = fields.trackTotal, total > 0 { add("TRACKTOTAL", String(total)) }
         if let disc = fields.discNumber, disc > 0 { add("DISCNUMBER", String(disc)) }
@@ -898,7 +898,7 @@ enum M4ATagWriter {
         if let albumArtist = AudioTagWriter.text(fields.albumArtist) { add("aART", albumArtist as NSString) }
         if let album = AudioTagWriter.text(fields.album) { add("©alb", album as NSString) }
         if let genre = AudioTagWriter.text(fields.genre) { add("©gen", genre as NSString) }
-        if let year = fields.year, year > 0 { add("©day", String(year) as NSString) }
+        if let year = fields.year, !year.isEmpty { add("©day", year as NSString) }
         let track = fields.track ?? 0
         let trackTotal = fields.trackTotal ?? 0
         if track > 0 || trackTotal > 0 {

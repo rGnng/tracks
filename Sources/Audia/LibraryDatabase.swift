@@ -36,7 +36,7 @@ final class LibraryDatabase {
         let title: String
         let artist: String
         let genre: String
-        let year: Int
+        let year: String
     }
 
     init(path: String) {
@@ -343,7 +343,7 @@ final class LibraryDatabase {
             title TEXT NOT NULL,
             artist_id TEXT NOT NULL,
             genre TEXT NOT NULL DEFAULT '',
-            year INTEGER NOT NULL DEFAULT 0,
+            year TEXT NOT NULL DEFAULT '',
             artwork BLOB,
             UNIQUE(title, artist_id)
         );
@@ -354,7 +354,7 @@ final class LibraryDatabase {
             artist_id TEXT NOT NULL,
             album_id TEXT NOT NULL,
             genre TEXT NOT NULL DEFAULT '',
-            year INTEGER NOT NULL DEFAULT 0,
+            year TEXT NOT NULL DEFAULT '',
             track INTEGER NOT NULL DEFAULT 0,
             track_total INTEGER NOT NULL DEFAULT 0,
             disc INTEGER NOT NULL DEFAULT 0,
@@ -415,6 +415,29 @@ final class LibraryDatabase {
             exec("ALTER TABLE playlists ADD COLUMN date_modified REAL NOT NULL DEFAULT 0;")
         }
         exec("UPDATE playlists SET date_modified = date_created WHERE date_modified = 0;")
+
+        // Year/date tags are text. Migrate old INTEGER columns in place.
+        if columnType("songs", "year")?.uppercased() != "TEXT" {
+            migrateYearToText(table: "songs")
+        }
+        if columnType("albums", "year")?.uppercased() != "TEXT" {
+            migrateYearToText(table: "albums")
+        }
+    }
+
+    private func migrateYearToText(table: String) {
+        exec("BEGIN;")
+        exec("ALTER TABLE \(table) ADD COLUMN year_text TEXT NOT NULL DEFAULT '';")
+        exec("""
+            UPDATE \(table) SET year_text = CASE
+                WHEN year IS NULL THEN ''
+                WHEN CAST(year AS TEXT) IN ('0', '') THEN ''
+                ELSE CAST(year AS TEXT)
+            END;
+            """)
+        exec("ALTER TABLE \(table) DROP COLUMN year;")
+        exec("ALTER TABLE \(table) RENAME COLUMN year_text TO year;")
+        exec("COMMIT;")
     }
 
     private func hasColumn(_ table: String, _ column: String) -> Bool {
@@ -424,6 +447,15 @@ final class LibraryDatabase {
             if text(stmt, 1) == column { return true }
         }
         return false
+    }
+
+    private func columnType(_ table: String, _ column: String) -> String? {
+        guard let stmt = prepare("PRAGMA table_info(\(table))") else { return nil }
+        defer { sqlite3_finalize(stmt) }
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if text(stmt, 1) == column { return text(stmt, 2) }
+        }
+        return nil
     }
 
     // MARK: Scanning / sync
@@ -693,7 +725,7 @@ final class LibraryDatabase {
         return fallbackID
     }
 
-    private func ensureAlbum(title: String, artistID: String, genre: String, year: Int, artwork: Data?) -> String {
+    private func ensureAlbum(title: String, artistID: String, genre: String, year: String, artwork: Data?) -> String {
         let fallbackID = LibraryScanner.stableUUID("album|" + artistID + "|" + title.lowercased()).uuidString
         if let stmt = prepare("""
             INSERT INTO albums(id, title, artist_id, genre, year, artwork)
@@ -805,7 +837,7 @@ final class LibraryDatabase {
                                 discNumber: int(stmt, 18),
                                 discTotal: int(stmt, 19),
                                 comments: text(stmt, 20) ?? "",
-                                year: int(stmt, 4),
+                                year: text(stmt, 4) ?? "",
                                 plays: int(stmt, 7),
                                 dateAdded: double(stmt, 16),
                                 fileURL: URL(fileURLWithPath: text(stmt, 2) ?? ""),
@@ -820,7 +852,7 @@ final class LibraryDatabase {
                                                          title: albumTitle,
                                                          artist: albumArtist,
                                                          genre: text(stmt, 10) ?? "",
-                                                         year: int(stmt, 11))
+                                                         year: text(stmt, 11) ?? "")
                 }
             }
             sqlite3_finalize(stmt)

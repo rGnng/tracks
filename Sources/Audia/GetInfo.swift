@@ -399,7 +399,7 @@ struct GetInfoView: View {
             albumArtist = uniform(.albumArtist, songs.map(\.albumArtist))
             albumTitle = uniform(.album, songs.map(\.album))
             genre = uniform(.genre, songs.map(\.genre))
-            year = uniform(.year, songs.map { $0.year > 0 ? String($0.year) : "" })
+            year = uniform(.year, songs.map(\.year))
             track = uniform(.track, songs.map { $0.trackNumber > 0 ? String($0.trackNumber) : "" })
             trackTotal = uniform(.trackTotal, songs.map { song in
                 let total = song.trackTotal > 0 ? song.trackTotal : songs.count
@@ -433,7 +433,7 @@ struct GetInfoView: View {
             albumArtist = song.albumArtist
             albumTitle = song.album
             genre = song.genre
-            year = song.year > 0 ? String(song.year) : ""
+            year = song.year
             track = song.trackNumber > 0 ? String(song.trackNumber) : ""
             let fallbackTotal = song.trackTotal > 0 ? song.trackTotal : result.album.songs.count
             trackTotal = fallbackTotal > 0 ? String(fallbackTotal) : ""
@@ -486,7 +486,7 @@ struct GetInfoView: View {
                 let albumTitleValue = resolved(.album, ui: albumTitle, original: album.title)
                 let albumArtistValue = resolved(.albumArtist, ui: albumArtist, original: album.artist)
                 let genreValue = resolved(.genre, ui: genre, original: album.genre)
-                let yearValue = resolvedInt(.year, ui: year, original: album.year)
+                let yearValue = resolved(.year, ui: year, original: album.year)
 
                 let updatedSongs = album.songs.map { song -> Song in
                     Song(id: song.id,
@@ -503,7 +503,7 @@ struct GetInfoView: View {
                          discNumber: resolvedInt(.disc, ui: disc, original: song.discNumber),
                          discTotal: resolvedInt(.discTotal, ui: discTotal, original: song.discTotal),
                          comments: resolved(.comments, ui: comments, original: song.comments),
-                         year: resolvedInt(.year, ui: year, original: song.year),
+                         year: resolved(.year, ui: year, original: song.year),
                          plays: resetPlays ? 0 : song.plays,
                          dateAdded: song.dateAdded,
                          fileURL: song.fileURL,
@@ -551,7 +551,7 @@ struct GetInfoView: View {
                                        discNumber: Int(disc) ?? 0,
                                        discTotal: Int(discTotal) ?? 0,
                                        comments: comments,
-                                       year: resolvedInt(.year, ui: year, original: song.year),
+                                       year: resolved(.year, ui: year, original: song.year),
                                        plays: resetPlays ? 0 : song.plays,
                                        dateAdded: song.dateAdded,
                                        fileURL: song.fileURL,

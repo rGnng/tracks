@@ -59,7 +59,8 @@ struct Song: Identifiable, Hashable {
     let discNumber: Int
     let discTotal: Int
     let comments: String
-    let year: Int
+    /// Raw date/year tag text. Empty means unknown.
+    let year: String
     let plays: Int
     /// First-discovery baseline used by Recently Added. Newly imported tracks
     /// use the file's modification date; existing rows keep this value even
@@ -77,7 +78,7 @@ struct Song: Identifiable, Hashable {
          duration: TimeInterval, trackNumber: Int,
          trackTotal: Int = 0, discNumber: Int = 0, discTotal: Int = 0,
          comments: String = "",
-         year: Int, plays: Int,
+         year: String = "", plays: Int,
          dateAdded: TimeInterval = 0,
          fileURL: URL? = nil, fileSize: Int64? = nil, isStarred: Bool = false) {
         self.id = id
@@ -99,6 +100,11 @@ struct Song: Identifiable, Hashable {
         self.fileSize = fileSize
         self.isStarred = isStarred
     }
+
+    var yearNumber: Int { Self.yearNumber(from: year) }
+    fileprivate static func yearNumber(from value: String) -> Int {
+        Int(value.prefix(4)) ?? 0
+    }
 }
 
 struct Album: Identifiable, Hashable {
@@ -107,11 +113,12 @@ struct Album: Identifiable, Hashable {
     /// Album artist (the album-level credit); per-track credits live on Song.
     let artist: String
     let genre: String
-    let year: Int
+    /// Raw date/year tag text. Empty means unknown.
+    let year: String
     let artwork: Artwork
     let songs: [Song]
 
-    init(id: UUID = UUID(), title: String, artist: String, genre: String, year: Int,
+    init(id: UUID = UUID(), title: String, artist: String, genre: String, year: String = "",
          artwork: Artwork, songs: [Song]) {
         self.id = id
         self.title = title
@@ -121,6 +128,8 @@ struct Album: Identifiable, Hashable {
         self.artwork = artwork
         self.songs = songs
     }
+
+    var yearNumber: Int { Song.yearNumber(from: year) }
 }
 
 extension Album {
@@ -224,26 +233,26 @@ enum SidebarSelection: Hashable {
 
 enum MockData {
     static let albums: [Album] = [
-        Album(title: "Midnight Architecture", artist: "Lunar Veil", genre: "Electronic", year: 2023, artwork: .make(0),
-              songs: songs(["Glass Facade", "Neon Undertow", "Concrete Waves", "Halogen Sky", "Slow Circuit", "Rooftop Static", "Afterimage", "Parallel Rails"], "Lunar Veil", "Midnight Architecture", "Electronic", 2023)),
-        Album(title: "Paper Moons", artist: "The Paper Foxes", genre: "Indie Rock", year: 2022, artwork: .make(1),
-              songs: songs(["Origami Heart", "Cutout Stars", "Folded Light", "Paper Moons", "Ink & Ivory", "Crease", "Unwritten", "Second Draft", "Margins", "Epilogue"], "The Paper Foxes", "Paper Moons", "Indie Rock", 2022)),
-        Album(title: "Sol y Sombra", artist: "Mira Sol", genre: "Latin Pop", year: 2021, artwork: .make(2),
-              songs: songs(["Amanecer", "Corazón de Fuego", "Media Noche", "Bajo el Sol", "Viento Cálido", "La Orilla", "Sombra y Luz", "Despertar", "Mar Adentro"], "Mira Sol", "Sol y Sombra", "Latin Pop", 2021)),
-        Album(title: "Static Bloom", artist: "Copperfield", genre: "Alternative", year: 2024, artwork: .make(3),
-              songs: songs(["White Noise Garden", "Half Signal", "Static Bloom", "Copper Wire", "Fever Frequency", "Dandelion Radio", "Transmission", "Low Tide"], "Copperfield", "Static Bloom", "Alternative", 2024)),
-        Album(title: "Afterlight", artist: "Nova Reyes", genre: "Synthpop", year: 2023, artwork: .make(4),
-              songs: songs(["Afterlight", "Chrome Sunset", "Velvet Static", "Pulse", "Mirrorball", "Night Drive", "Electric Bloom", "Halcyon", "Last Call"], "Nova Reyes", "Afterlight", "Synthpop", 2023)),
-        Album(title: "Woodland Echoes", artist: "Fern & Fable", genre: "Folk", year: 2020, artwork: .make(5),
-              songs: songs(["Moss & Morning", "The Old Trail", "Woodland Echoes", "Birchlight", "River Song", "Lantern", "Hollow", "Wren"], "Fern & Fable", "Woodland Echoes", "Folk", 2020)),
-        Album(title: "Neon Reverie", artist: "Kai Drift", genre: "Electronic", year: 2022, artwork: .make(6),
-              songs: songs(["Neon Reverie", "Ghost Signal", "Prism", "Overdrive", "Bloom", "Wavelength", "Subsonic", "Aurora Grid", "Fade to Blue"], "Kai Drift", "Neon Reverie", "Electronic", 2022)),
-        Album(title: "Gravity Well", artist: "The Paper Foxes", genre: "Indie Rock", year: 2019, artwork: .make(7),
-              songs: songs(["Gravity Well", "Event Horizon", "Low Orbit", "Tidal", "Orbit Decay", "Starfall", "Escape Velocity", "Long Way Down"], "The Paper Foxes", "Gravity Well", "Indie Rock", 2019)),
-        Album(title: "Saltwater", artist: "Mira Sol", genre: "R&B", year: 2024, artwork: .make(8),
-              songs: songs(["Saltwater", "Tide & Time", "Undertow", "Pearl", "After the Rain", "High Noon", "Driftwood", "Silver Lining", "Horizon"], "Mira Sol", "Saltwater", "R&B", 2024)),
-        Album(title: "Glass Cathedral", artist: "Lunar Veil", genre: "Ambient", year: 2021, artwork: .make(9),
-              songs: songs(["Vestibule", "Stained Light", "Nave", "Choir of Glass", "Aisle", "Vesper", "Echo Chamber", "Sanctum"], "Lunar Veil", "Glass Cathedral", "Ambient", 2021)),
+        Album(title: "Midnight Architecture", artist: "Lunar Veil", genre: "Electronic", year: "2023", artwork: .make(0),
+              songs: songs(["Glass Facade", "Neon Undertow", "Concrete Waves", "Halogen Sky", "Slow Circuit", "Rooftop Static", "Afterimage", "Parallel Rails"], "Lunar Veil", "Midnight Architecture", "Electronic", "2023")),
+        Album(title: "Paper Moons", artist: "The Paper Foxes", genre: "Indie Rock", year: "2022", artwork: .make(1),
+              songs: songs(["Origami Heart", "Cutout Stars", "Folded Light", "Paper Moons", "Ink & Ivory", "Crease", "Unwritten", "Second Draft", "Margins", "Epilogue"], "The Paper Foxes", "Paper Moons", "Indie Rock", "2022")),
+        Album(title: "Sol y Sombra", artist: "Mira Sol", genre: "Latin Pop", year: "2021", artwork: .make(2),
+              songs: songs(["Amanecer", "Corazón de Fuego", "Media Noche", "Bajo el Sol", "Viento Cálido", "La Orilla", "Sombra y Luz", "Despertar", "Mar Adentro"], "Mira Sol", "Sol y Sombra", "Latin Pop", "2021")),
+        Album(title: "Static Bloom", artist: "Copperfield", genre: "Alternative", year: "2024", artwork: .make(3),
+              songs: songs(["White Noise Garden", "Half Signal", "Static Bloom", "Copper Wire", "Fever Frequency", "Dandelion Radio", "Transmission", "Low Tide"], "Copperfield", "Static Bloom", "Alternative", "2024")),
+        Album(title: "Afterlight", artist: "Nova Reyes", genre: "Synthpop", year: "2023", artwork: .make(4),
+              songs: songs(["Afterlight", "Chrome Sunset", "Velvet Static", "Pulse", "Mirrorball", "Night Drive", "Electric Bloom", "Halcyon", "Last Call"], "Nova Reyes", "Afterlight", "Synthpop", "2023")),
+        Album(title: "Woodland Echoes", artist: "Fern & Fable", genre: "Folk", year: "2020", artwork: .make(5),
+              songs: songs(["Moss & Morning", "The Old Trail", "Woodland Echoes", "Birchlight", "River Song", "Lantern", "Hollow", "Wren"], "Fern & Fable", "Woodland Echoes", "Folk", "2020")),
+        Album(title: "Neon Reverie", artist: "Kai Drift", genre: "Electronic", year: "2022", artwork: .make(6),
+              songs: songs(["Neon Reverie", "Ghost Signal", "Prism", "Overdrive", "Bloom", "Wavelength", "Subsonic", "Aurora Grid", "Fade to Blue"], "Kai Drift", "Neon Reverie", "Electronic", "2022")),
+        Album(title: "Gravity Well", artist: "The Paper Foxes", genre: "Indie Rock", year: "2019", artwork: .make(7),
+              songs: songs(["Gravity Well", "Event Horizon", "Low Orbit", "Tidal", "Orbit Decay", "Starfall", "Escape Velocity", "Long Way Down"], "The Paper Foxes", "Gravity Well", "Indie Rock", "2019")),
+        Album(title: "Saltwater", artist: "Mira Sol", genre: "R&B", year: "2024", artwork: .make(8),
+              songs: songs(["Saltwater", "Tide & Time", "Undertow", "Pearl", "After the Rain", "High Noon", "Driftwood", "Silver Lining", "Horizon"], "Mira Sol", "Saltwater", "R&B", "2024")),
+        Album(title: "Glass Cathedral", artist: "Lunar Veil", genre: "Ambient", year: "2021", artwork: .make(9),
+              songs: songs(["Vestibule", "Stained Light", "Nave", "Choir of Glass", "Aisle", "Vesper", "Echo Chamber", "Sanctum"], "Lunar Veil", "Glass Cathedral", "Ambient", "2021")),
     ]
 
     static let allSongs: [Song] = albums.flatMap(\.songs)
@@ -269,11 +278,11 @@ enum MockData {
         var groups: [String: [Album]] = [:]
         for a in albums { groups[a.artist, default: []].append(a) }
         return groups
-            .map { ArtistSummary(name: $0.key, albums: $0.value.sorted { $0.year > $1.year }) }
+            .map { ArtistSummary(name: $0.key, albums: $0.value.sorted { $0.yearNumber > $1.yearNumber }) }
             .sorted { $0.name < $1.name }
     }()
 
-    private static func songs(_ titles: [String], _ artist: String, _ album: String, _ genre: String, _ year: Int) -> [Song] {
+    private static func songs(_ titles: [String], _ artist: String, _ album: String, _ genre: String, _ year: String) -> [Song] {
         titles.enumerated().map { i, t in
             Song(
                 title: t,

@@ -775,7 +775,7 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
         if !song.albumArtist.isEmpty { lines.append("AlbumArtist: \(song.albumArtist)") }
         if !song.album.isEmpty { lines.append("Album: \(song.album)") }
         if !song.genre.isEmpty { lines.append("Genre: \(song.genre)") }
-        if song.year > 0 { lines.append("Date: \(song.year)") }
+        if !song.year.isEmpty { lines.append("Date: \(song.year)") }
         // MPD's Track/Disc tags are decimal numbers. Some remote controllers
         // parse them strictly as integers, so do not append "/total" here.
         if song.trackNumber > 0 {
@@ -849,7 +849,7 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
         case "albumartist", "album_artist": return song.albumArtist
         case "album": return song.album
         case "genre": return song.genre
-        case "date", "year": return song.year > 0 ? String(song.year) : nil
+        case "date", "year": return song.year.isEmpty ? nil : song.year
         case "track": return song.trackNumber > 0 ? String(song.trackNumber) : nil
         case "disc": return song.discNumber > 0 ? String(song.discNumber) : nil
         case "comment": return song.comments

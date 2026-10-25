@@ -86,7 +86,7 @@ struct ContentPane: View {
                 $0.artist == $1.artist ? $0.title < $1.title : $0.artist < $1.artist
             }
         case .year:
-            return filteredAlbums.sorted { $0.year > $1.year }
+            return filteredAlbums.sorted { $0.yearNumber > $1.yearNumber }
         }
     }
 

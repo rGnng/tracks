@@ -16,7 +16,8 @@ struct ScannedTrack: Sendable {
     let albumArtist: String
     let album: String
     let genre: String
-    let year: Int
+    /// Raw DATE/YEAR tag text. Empty means unknown.
+    let year: String
     let track: Int
     let trackTotal: Int
     let discNumber: Int
@@ -103,7 +104,8 @@ enum FLACMetadataReader {
             ?? artist
         let album = tags["ALBUM"] ?? "Unknown Album"
         let genre = tags["GENRE"] ?? "Unknown"
-        let year = Int(tags["DATE"]?.prefix(4) ?? "") ?? 0
+        let rawYear = tag("DATE") ?? tag("YEAR") ?? ""
+        let year = rawYear == "0" ? "" : rawYear
         let trackPair = parsePair(tags["TRACKNUMBER"])
         let track = trackPair.number
         let trackTotal = intTag("TRACKTOTAL")
@@ -212,7 +214,7 @@ enum AVAssetMetadataReader {
         var albumArtist: String?
         var album: String?
         var genre: String?
-        var year: Int?
+        var year: String?
         var track: Int?
         var trackTotal: Int?
         var discNumber: Int?
@@ -265,7 +267,7 @@ enum AVAssetMetadataReader {
                             albumArtist: albumArtist,
                             album: album,
                             genre: genre,
-                            year: fields.year ?? 0,
+                            year: fields.year ?? "",
                             track: fields.track ?? 0,
                             trackTotal: fields.trackTotal ?? 0,
                             discNumber: fields.discNumber ?? 0,
@@ -309,7 +311,7 @@ enum AVAssetMetadataReader {
         case "GENRE", "TCON", "TCO", "©GEN", "GNRE", "IGNR":
             fields.genre = fields.genre ?? text(from: value)
         case "DATE", "TDRC", "TYER", "TYE", "©DAY", "ICRD":
-            fields.year = fields.year ?? year(from: value)
+            fields.year = fields.year ?? yearString(from: value)
         case "TRACKNUMBER", "TRCK", "TRK", "TRKN", "ITRK":
             let pair = numberPair(from: value)
             if fields.track == nil, pair.number > 0 { fields.track = pair.number }
@@ -330,7 +332,7 @@ enum AVAssetMetadataReader {
             case "artist": fields.artist = fields.artist ?? text(from: value)
             case "albumName": fields.album = fields.album ?? text(from: value)
             case "type": fields.genre = fields.genre ?? text(from: value)
-            case "creationDate": fields.year = fields.year ?? year(from: value)
+            case "creationDate": fields.year = fields.year ?? yearString(from: value)
             case "comment": fields.comments = fields.comments ?? text(from: value)
             default: break
             }
@@ -364,15 +366,19 @@ enum AVAssetMetadataReader {
         return nil
     }
 
-    private static func year(from value: Any) -> Int? {
+    private static func yearString(from value: Any) -> String? {
         if let date = value as? Date {
-            return Calendar(identifier: .gregorian).component(.year, from: date)
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.dateFormat = "yyyy-MM-dd"
+            return formatter.string(from: date)
         }
         if let number = value as? NSNumber {
-            return number.intValue > 0 ? number.intValue : nil
+            let value = number.stringValue
+            return value == "0" ? nil : value
         }
         guard let string = text(from: value) else { return nil }
-        return Int(string.prefix(4))
+        return string == "0" ? nil : string
     }
 
     private static func numberPair(from value: Any) -> (number: Int, total: Int) {
