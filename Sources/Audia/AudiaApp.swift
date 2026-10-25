@@ -134,6 +134,7 @@ struct SettingsView: View {
     @AppStorage("mpd.port") private var mpdPort = 6600
     @AppStorage("mpd.password") private var mpdPassword = ""
     @AppStorage("artworkCacheJPEGQuality") private var artworkCacheJPEGQuality = 0.8
+    @AppStorage("shortcut.starCurrent") private var starShortcut = "*"
     @ObservedObject private var library = Library.shared
     @ObservedObject private var artworkCache = ArtworkCache.shared
     @ObservedObject private var mpd = MPDServer.shared
@@ -165,6 +166,10 @@ struct SettingsView: View {
                 }
                 .pickerStyle(.radioGroup)
                 .frame(maxWidth: 360, alignment: .leading)
+
+                Divider()
+
+                shortcutsBox
 
                 Divider()
 
@@ -258,7 +263,10 @@ struct SettingsView: View {
         }
         .frame(width: 660, height: 640, alignment: .topLeading)
         .background(SettingsFocusSink())
-        .onAppear { artworkQualityText = "\(artworkQualityPercent)" }
+        .onAppear {
+            artworkQualityText = "\(artworkQualityPercent)"
+            if starShortcut.isEmpty { starShortcut = "*" }
+        }
         .onChange(of: artworkCacheJPEGQuality) { _, _ in
             if !artworkQualityFocused { artworkQualityText = "\(artworkQualityPercent)" }
         }
@@ -297,6 +305,45 @@ struct SettingsView: View {
         .onChange(of: mpdAddresses) { _, _ in scheduleMPDApply() }
         .onChange(of: mpdPort) { _, _ in scheduleMPDApply() }
         .onChange(of: mpdPassword) { _, _ in scheduleMPDApply() }
+    }
+
+    private var shortcutsBox: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "keyboard")
+                    .font(.system(size: 12))
+                    .foregroundColor(Theme.secondaryText)
+                Text("Shortcuts")
+                    .font(.system(size: 12, weight: .semibold))
+                Spacer()
+            }
+
+            HStack(spacing: 8) {
+                Text("Star current item")
+                    .font(.system(size: 11))
+                    .foregroundColor(Theme.secondaryText)
+                Spacer()
+                TextField("*", text: $starShortcut)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 11, design: .monospaced))
+                    .multilineTextAlignment(.center)
+                    .frame(width: 50)
+                    .onChange(of: starShortcut) { _, value in
+                        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                        let first = String(trimmed.prefix(1))
+                        let normalized = first.isEmpty ? "*" : first
+                        if normalized != value { starShortcut = normalized }
+                    }
+                Button("Reset") { starShortcut = "*" }
+                    .controlSize(.small)
+            }
+
+            Text("Single key. Stars the playing track, selected tracks, or selected album. Default: *")
+                .font(.system(size: 10.5))
+                .foregroundColor(Theme.secondaryText)
+        }
+        .padding(10)
+        .background(boxBackground)
     }
 
     private var mpdBox: some View {
@@ -884,6 +931,16 @@ enum KeyboardShortcuts {
             return nil
         }
 
+        let configuredStarKey = UserDefaults.standard.string(forKey: "shortcut.starCurrent") ?? "*"
+        let starKey = configuredStarKey.isEmpty ? "*" : String(configuredStarKey.prefix(1))
+        if !isEditingText,
+           modifiers.intersection([.command, .control]).isEmpty,
+           let characters = event.characters,
+           characters == starKey {
+            starCurrentItem()
+            return nil
+        }
+
         guard modifiers.isEmpty, !isEditingText else { return event }
 
         switch event.keyCode {
@@ -920,6 +977,37 @@ enum KeyboardShortcuts {
         default:
             return event
         }
+    }
+
+    /// Adds the current selection (or the playing track when nothing is
+    /// selected) to the virtual Stared playlist. This is an add-only action;
+    /// pressing the shortcut again leaves an already-starred track starred.
+    private static func starCurrentItem() {
+        let library = Library.shared
+        var songs: [Song] = []
+
+        // In MiniPlayer there is no visible library selection; the shortcut
+        // should affect the track the compact player is showing.
+        if WindowModeCenter.shared.mode == .library {
+            switch StatusBarCenter.shared.context {
+            case .tracks(let ids):
+                songs = ids.compactMap { library.song(withID: $0)?.song }
+            case .albums(let ids):
+                songs = ids.compactMap { library.album(withID: $0)?.songs }.flatMap { $0 }
+            case .album(let id):
+                songs = library.album(withID: id)?.songs ?? []
+            case .artist, .genre, .playlist, .starred, .library:
+                break
+            }
+        }
+
+        if songs.isEmpty, let current = PlayerState.shared.currentSong {
+            songs = [current]
+        }
+
+        let ids = Array(Set(songs.map(\.id)))
+        guard !ids.isEmpty else { return }
+        library.setStarred(ids, starred: true)
     }
 
     private static func scrollByPage(up: Bool, event: NSEvent) {
