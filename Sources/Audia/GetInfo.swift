@@ -47,7 +47,14 @@ private struct GetInfoTextField: NSViewRepresentable {
 
     func updateNSView(_ field: SelectableTextField, context: Context) {
         context.coordinator.parent = self
-        if field.currentEditor() == nil {
+        if text != context.coordinator.lastText {
+            field.stringValue = text
+            if let editor = field.currentEditor() as? NSTextView {
+                editor.string = text
+                editor.setSelectedRange(NSRange(location: (text as NSString).length, length: 0))
+            }
+            context.coordinator.lastText = text
+        } else if field.currentEditor() == nil, field.stringValue != text {
             field.stringValue = text
         }
         field.isEditable = isEditable
@@ -72,13 +79,16 @@ private struct GetInfoTextField: NSViewRepresentable {
 
     final class Coordinator: NSObject, NSTextFieldDelegate {
         var parent: GetInfoTextField
+        var lastText: String
 
         init(_ parent: GetInfoTextField) {
             self.parent = parent
+            self.lastText = parent.text
         }
 
         func controlTextDidChange(_ notification: Notification) {
             guard let field = notification.object as? NSTextField else { return }
+            lastText = field.stringValue
             parent.text = field.stringValue
         }
     }
