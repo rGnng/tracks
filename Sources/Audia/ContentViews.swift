@@ -46,6 +46,8 @@ struct AlbumGrid: View {
         }
         .onChange(of: openAlbumID, initial: true) { _, id in
             guard let id, let album = albums.first(where: { $0.id == id }) else { return }
+            selectedIDs = [album.id]
+            selectionAnchor = album.id
             expandedAlbum = album
             openAlbumID = nil
         }
@@ -168,6 +170,29 @@ struct AlbumGrid: View {
                 .onChange(of: navigator.activateCount) { _, _ in
                     activateSelection()
                 }
+                .onAppear {
+                    scrollToFirstSelectedAlbum(proxy: proxy, animated: false)
+                }
+                .onChange(of: albums) { _, _ in
+                    scrollToFirstSelectedAlbum(proxy: proxy, animated: true)
+                }
+            }
+        }
+    }
+
+    private func firstSelectedAlbumID() -> UUID? {
+        albums.first { selectedIDs.contains($0.id) }?.id
+    }
+
+    private func scrollToFirstSelectedAlbum(proxy: ScrollViewProxy, animated: Bool) {
+        DispatchQueue.main.async {
+            guard let id = firstSelectedAlbumID() else { return }
+            if animated {
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    proxy.scrollTo(id, anchor: .center)
+                }
+            } else {
+                proxy.scrollTo(id, anchor: .center)
             }
         }
     }
@@ -837,6 +862,12 @@ struct AlbumList: View {
                 .onChange(of: navigator.activateCount) { _, _ in
                     activateSelection()
                 }
+                .onAppear {
+                    scrollToFirstSelectedAlbum(proxy: proxy, animated: false)
+                }
+                .onChange(of: albums) { _, _ in
+                    scrollToFirstSelectedAlbum(proxy: proxy, animated: true)
+                }
             }
         }
         .background(Theme.contentBackground)
@@ -849,6 +880,23 @@ struct AlbumList: View {
                 self.selectionAnchor = nil
             }
             updateStatusBar()
+        }
+    }
+
+    private func firstSelectedAlbumID() -> UUID? {
+        albums.first { selectedIDs.contains($0.id) }?.id
+    }
+
+    private func scrollToFirstSelectedAlbum(proxy: ScrollViewProxy, animated: Bool) {
+        DispatchQueue.main.async {
+            guard let id = firstSelectedAlbumID() else { return }
+            if animated {
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    proxy.scrollTo(id, anchor: .center)
+                }
+            } else {
+                proxy.scrollTo(id, anchor: .center)
+            }
         }
     }
 

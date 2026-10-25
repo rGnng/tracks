@@ -233,6 +233,10 @@ Important schema decisions:
 - Sidebar **Albums** and **Recently Added** also have Play and Shuffle context
   menus. Albums uses the full library; Recently Added uses the same album order
   as the Recently Added view. This is the app-level "shuffle all" entry point.
+- Returning from an album detail keeps the album selected and scrolls the
+  Albums/Recently Added grid or list back to that album. Clearing the search
+  field likewise scrolls to the first currently selected album, so the cursor
+  and visible range stay in sync.
 - Add-to-Playlist submenu starts with **New Playlist**, then a divider, then the
   existing playlist names. New names auto-increment: New Playlist, New Playlist 2,
   etc.
