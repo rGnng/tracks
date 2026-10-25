@@ -113,6 +113,7 @@ Sources/Audia/
   ContentViews.swift         Album grid/list, album detail, song table, selection
   BrowserViews.swift         Artists/Genres master-detail browsers
   ContextMenus.swift         Shared album/song context menus
+  KeyboardShortcut.swift     Standard AppKit shortcut recorder, matching, persistence
   SettingsFocusSink.swift    Invisible initial first responder for Settings
   GetInfo.swift              Details/Artwork/File inspector and tag editing
   StatusBarView.swift        Bottom status bar and status context
@@ -240,9 +241,13 @@ Important schema decisions:
   Internal Library.
 - The default `*` shortcut adds the playing track or selected track rows to the
   virtual Stared playlist. It is add-only, not a toggle. Album/artist/genre
-  selections are not expanded into their tracks. It is configurable in
-  Settings > Shortcuts and stored under `shortcut.starCurrent`; Reset restores
-  `*`. The handler skips text editing and ignores Command/Control combinations.
+  selections are not expanded into their tracks.
+- Settings > Shortcuts uses a standard AppKit shortcut recorder (`KeyboardShortcut.swift`):
+  click the field, press a key combination, Escape cancels, bare Delete clears.
+  Modifiers and shifted symbols are supported. The shortcut is stored as JSON
+  under `shortcut.starCurrent.v2`; the older `shortcut.starCurrent` string is
+  migrated. Reset restores `*`. The global handler skips text editing and returns
+  events untouched while the recorder is active.
 
 ## 7. Artwork cache and Settings
 

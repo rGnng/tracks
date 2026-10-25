@@ -134,7 +134,7 @@ struct SettingsView: View {
     @AppStorage("mpd.port") private var mpdPort = 6600
     @AppStorage("mpd.password") private var mpdPassword = ""
     @AppStorage("artworkCacheJPEGQuality") private var artworkCacheJPEGQuality = 0.8
-    @AppStorage("shortcut.starCurrent") private var starShortcut = "*"
+    @State private var starShortcut: KeyboardShortcut? = KeyboardShortcutStore.load()
     @ObservedObject private var library = Library.shared
     @ObservedObject private var artworkCache = ArtworkCache.shared
     @ObservedObject private var mpd = MPDServer.shared
@@ -265,7 +265,7 @@ struct SettingsView: View {
         .background(SettingsFocusSink())
         .onAppear {
             artworkQualityText = "\(artworkQualityPercent)"
-            if starShortcut.isEmpty { starShortcut = "*" }
+            starShortcut = KeyboardShortcutStore.load()
         }
         .onChange(of: artworkCacheJPEGQuality) { _, _ in
             if !artworkQualityFocused { artworkQualityText = "\(artworkQualityPercent)" }
@@ -323,27 +323,21 @@ struct SettingsView: View {
                     .font(.system(size: 11))
                     .foregroundColor(Theme.secondaryText)
                 Spacer()
-                TextField("*", text: $starShortcut)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(size: 11, design: .monospaced))
-                    .multilineTextAlignment(.center)
-                    .frame(width: 50)
-                    .onChange(of: starShortcut) { _, value in
-                        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-                        let first = String(trimmed.prefix(1))
-                        let normalized = first.isEmpty ? "*" : first
-                        if normalized != value { starShortcut = normalized }
-                    }
-                Button("Reset") { starShortcut = "*" }
+                ShortcutRecorder(shortcut: $starShortcut)
+                    .frame(width: 132, height: 22)
+                Button("Reset") { starShortcut = .defaultStar }
                     .controlSize(.small)
             }
 
-            Text("Single key. Stars the playing track or selected tracks. Default: *")
+            Text("Click the field, then press a key combination. Default: *")
                 .font(.system(size: 10.5))
                 .foregroundColor(Theme.secondaryText)
         }
         .padding(10)
         .background(boxBackground)
+        .onChange(of: starShortcut) { _, value in
+            KeyboardShortcutStore.save(value)
+        }
     }
 
     private var mpdBox: some View {
@@ -920,6 +914,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 @MainActor
 enum KeyboardShortcuts {
     static func handle(_ event: NSEvent) -> NSEvent? {
+        if ShortcutRecorderState.isRecording { return event }
         guard let window = event.window else { return event }
         // Arrow/Page/Home keys carry `.function`/`.numericPad`; ignore those so
         // they don't look like modified keystrokes.
@@ -931,12 +926,10 @@ enum KeyboardShortcuts {
             return nil
         }
 
-        let configuredStarKey = UserDefaults.standard.string(forKey: "shortcut.starCurrent") ?? "*"
-        let starKey = configuredStarKey.isEmpty ? "*" : String(configuredStarKey.prefix(1))
         if !isEditingText,
-           modifiers.intersection([.command, .control]).isEmpty,
-           let characters = event.characters,
-           characters == starKey {
+           !event.isARepeat,
+           let shortcut = KeyboardShortcutStore.load(),
+           shortcut.matches(event) {
             starCurrentItem()
             return nil
         }
