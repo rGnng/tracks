@@ -36,14 +36,18 @@ struct KeyboardShortcut: Codable, Equatable {
 
     init?(event: NSEvent) {
         guard !event.isARepeat else { return nil }
-        let characters = event.characters ?? ""
+        let rawCharacters = event.characters ?? ""
         let flags = event.modifierFlags.intersection([.command, .option, .control, .shift])
-        let label = Self.keyLabel(for: event, characters: characters)
+        // Control+letter produces a control character; show the letter instead.
+        let displayCharacters = flags.contains(.control)
+            ? (event.charactersIgnoringModifiers ?? rawCharacters)
+            : rawCharacters
+        let label = Self.keyLabel(for: event, characters: displayCharacters)
         guard !label.isEmpty else { return nil }
 
-        key = characters.isEmpty ? "keyCode:\(event.keyCode)" : characters
+        key = rawCharacters.isEmpty ? "keyCode:\(event.keyCode)" : rawCharacters
         modifiers = flags.rawValue
-        display = Self.displayString(label: label, flags: flags, characters: characters)
+        display = Self.displayString(label: label, flags: flags, characters: displayCharacters)
     }
 
     private static func displayString(label: String,
@@ -151,6 +155,10 @@ struct ShortcutRecorder: NSViewRepresentable {
     func updateNSView(_ view: ShortcutRecorderView, context: Context) {
         view.onChange = { shortcut = $0 }
         view.setShortcut(shortcut)
+    }
+
+    static func dismantleNSView(_ view: ShortcutRecorderView, coordinator: ()) {
+        view.tearDownRecording()
     }
 }
 
@@ -282,6 +290,12 @@ final class ShortcutRecorderView: NSView {
     private func updateAccessibilityValue() {
         let value = isRecording ? "Recording" : (shortcut?.display ?? "None")
         setAccessibilityValue(value)
+    }
+
+    func tearDownRecording() {
+        guard isRecording else { return }
+        isRecording = false
+        ShortcutRecorderState.isRecording = false
     }
 
     override var focusRingMaskBounds: NSRect { bounds }
