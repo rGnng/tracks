@@ -239,9 +239,10 @@ Important schema decisions:
 - Play Later appends to the bottom of the queue and sits below Play Next.
 - Get Info has Details, Artwork, and File tabs, with tag/artwork writeback for the
   Internal Library.
-- The default `*` shortcut adds the playing track or selected track rows to the
-  virtual Stared playlist. It is add-only, not a toggle. Album/artist/genre
-  selections are not expanded into their tracks.
+- The default `*` shortcut toggles the playing track or selected track rows in
+  the virtual Stared playlist. If every target is already starred, it unstars
+  all of them; otherwise it stars all of them. Album/artist/genre selections are
+  not expanded into their tracks.
 - Settings > Shortcuts uses a standard AppKit shortcut recorder (`KeyboardShortcut.swift`):
   click the field, press a key combination, Escape cancels, bare Delete clears.
   Modifiers and shifted symbols are supported. The shortcut is stored as JSON

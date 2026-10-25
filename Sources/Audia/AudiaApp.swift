@@ -319,7 +319,7 @@ struct SettingsView: View {
             }
 
             HStack(spacing: 8) {
-                Text("Star current item")
+                Text("Toggle star current item")
                     .font(.system(size: 11))
                     .foregroundColor(Theme.secondaryText)
                 Spacer()
@@ -329,7 +329,7 @@ struct SettingsView: View {
                     .controlSize(.small)
             }
 
-            Text("Click the field, then press a key combination. Default: *")
+            Text("Stars or unstars the playing track or selected tracks. Default: *")
                 .font(.system(size: 10.5))
                 .foregroundColor(Theme.secondaryText)
         }
@@ -930,7 +930,7 @@ enum KeyboardShortcuts {
            !event.isARepeat,
            let shortcut = KeyboardShortcutStore.load(),
            shortcut.matches(event) {
-            starCurrentItem()
+            toggleStarCurrentItem()
             return nil
         }
 
@@ -972,16 +972,16 @@ enum KeyboardShortcuts {
         }
     }
 
-    /// Adds the current selection (or the playing track when nothing is
-    /// selected) to the virtual Stared playlist. This is an add-only action;
-    /// pressing the shortcut again leaves an already-starred track starred.
-    private static func starCurrentItem() {
+    /// Toggles the current selection (or the playing track when nothing is
+    /// selected). If every target is already starred, clears all of them;
+    /// otherwise stars all of them.
+    private static func toggleStarCurrentItem() {
         let library = Library.shared
         var songs: [Song] = []
 
         // Prefer the selected track rows. Album/artist/genre selection is not
         // expanded into every contained track; without a track selection the
-        // shortcut stars the currently playing track. In MiniPlayer there is
+        // shortcut targets the currently playing track. In MiniPlayer there is
         // no visible selection, so it also targets the playing track.
         if WindowModeCenter.shared.mode == .library,
            case .tracks(let ids) = StatusBarCenter.shared.context {
@@ -994,7 +994,8 @@ enum KeyboardShortcuts {
 
         let ids = Array(Set(songs.map(\.id)))
         guard !ids.isEmpty else { return }
-        library.setStarred(ids, starred: true)
+        let allStarred = ids.allSatisfy { library.isStarred(songID: $0) }
+        library.setStarred(ids, starred: !allStarred)
     }
 
     private static func scrollByPage(up: Bool, event: NSEvent) {
