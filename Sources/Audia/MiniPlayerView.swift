@@ -12,27 +12,31 @@ struct MiniPlayerView: View {
     private var showControls: Bool { hovering || showVolume }
 
     var body: some View {
-        VStack(spacing: 0) {
-            cover
-            middle
-            bottom
-            if windowMode.miniQueueExpanded {
-                Divider()
-                MiniQueuePanel()
-                    .frame(height: MiniPlayerMetrics.queue - 1)
-                    .transition(.move(edge: .top).combined(with: .opacity))
+        GeometryReader { geo in
+            let width = max(geo.size.width, MiniPlayerMetrics.minWidth)
+            VStack(spacing: 0) {
+                cover(width: width)
+                middle(width: width)
+                bottom(width: width)
+                if windowMode.miniQueueExpanded {
+                    Divider()
+                    MiniQueuePanel()
+                        .frame(height: MiniPlayerMetrics.queue - 1)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
             }
+            .frame(width: width)
+            .frame(maxHeight: .infinity, alignment: .top)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Theme.contentBackground)
+            .onHover { hovering = $0 }
+            .animation(.easeInOut(duration: 0.15), value: hovering)
         }
-        .frame(width: MiniPlayerMetrics.width)
-        .frame(maxHeight: .infinity)
-        .background(Theme.contentBackground)
-        .onHover { hovering = $0 }
-        .animation(.easeInOut(duration: 0.15), value: hovering)
     }
 
     // MARK: Cover
 
-    private var cover: some View {
+    private func cover(width: CGFloat) -> some View {
         ZStack(alignment: .topTrailing) {
             Group {
                 if let song = player.currentSong {
@@ -46,7 +50,7 @@ struct MiniPlayerView: View {
                     }
                 }
             }
-            .frame(width: MiniPlayerMetrics.cover, height: MiniPlayerMetrics.cover)
+            .frame(width: width, height: width)
             .clipped()
 
             // Only the title-bar strip is draggable, so hovering the artwork
@@ -72,7 +76,7 @@ struct MiniPlayerView: View {
                     windowMode.setMode(.library)
                 }
             }
-            .padding(.leading, 20)
+            .padding(.leading, 10)
             .padding(.top, 10)
             .frame(maxWidth: .infinity, alignment: .leading)
             .opacity(hovering ? 1 : 0)
@@ -96,13 +100,13 @@ struct MiniPlayerView: View {
             .allowsHitTesting(hovering)
             .animation(.easeInOut(duration: 0.12), value: hovering)
         }
-        .frame(width: MiniPlayerMetrics.width, height: MiniPlayerMetrics.cover)
+        .frame(width: width, height: width)
         .clipped()
     }
 
     // MARK: Middle (info on idle, controls on hover)
 
-    private var middle: some View {
+    private func middle(width: CGFloat) -> some View {
         ZStack {
             info
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
@@ -115,7 +119,7 @@ struct MiniPlayerView: View {
                 .allowsHitTesting(showControls)
         }
         .padding(.horizontal, 12)
-        .frame(width: MiniPlayerMetrics.width, height: MiniPlayerMetrics.middle)
+        .frame(width: width, height: MiniPlayerMetrics.middle)
     }
 
     @ViewBuilder
@@ -210,7 +214,7 @@ struct MiniPlayerView: View {
 
     // MARK: Bottom seek bar
 
-    private var bottom: some View {
+    private func bottom(width: CGFloat) -> some View {
         HStack(spacing: 6) {
             Text(formatTime(player.elapsed))
                 .frame(width: 36, alignment: .leading)
@@ -231,7 +235,7 @@ struct MiniPlayerView: View {
         .font(.system(size: 10.5).monospacedDigit())
         .foregroundColor(Theme.secondaryText)
         .padding(.horizontal, 6)
-        .frame(width: MiniPlayerMetrics.width, height: MiniPlayerMetrics.bottom)
+        .frame(width: width, height: MiniPlayerMetrics.bottom)
     }
 
     private var miniSeekBar: some View {

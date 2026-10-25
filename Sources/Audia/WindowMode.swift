@@ -2,12 +2,18 @@ import SwiftUI
 import AppKit
 
 enum MiniPlayerMetrics {
+    static let minWidth: CGFloat = 320
     static let width: CGFloat = 320
-    static let cover: CGFloat = 320
+    static let maxWidth: CGFloat = 560
     static let middle: CGFloat = 42
     static let bottom: CGFloat = 30
     static let queue: CGFloat = 201
-    static var baseHeight: CGFloat { cover + middle + bottom }
+
+    static func height(forWidth width: CGFloat, queueExpanded: Bool) -> CGFloat {
+        width + middle + bottom + (queueExpanded ? queue : 0)
+    }
+
+    static var baseHeight: CGFloat { height(forWidth: width, queueExpanded: false) }
 }
 
 /// Switches the single main window between the full Library and the compact
@@ -30,9 +36,12 @@ final class WindowModeCenter: ObservableObject {
     /// applies to it and not to Settings/Get Info windows.
     var mainWindow: NSWindow? { window }
     private var libraryFrame: NSRect?
-    private var miniBaseWindowHeight: CGFloat?
+    private var miniWidth: CGFloat = MiniPlayerMetrics.width
+    private let miniResizeDelegate = MiniResizeDelegate()
+    private var originalWindowDelegate: NSWindowDelegate?
     private let libraryMinSize = NSSize(width: 1040, height: 640)
     private static let libraryFrameKey = "WindowMode.libraryFrame"
+    private static let miniWidthKey = "WindowMode.miniWidth"
 
     private init() {
         if let stored = UserDefaults.standard.string(forKey: Self.libraryFrameKey) {
@@ -40,6 +49,10 @@ final class WindowModeCenter: ObservableObject {
             if frame.width > 0, frame.height > 0 {
                 libraryFrame = frame
             }
+        }
+        if let storedWidth = UserDefaults.standard.object(forKey: Self.miniWidthKey) as? Double {
+            miniWidth = CGFloat(min(max(storedWidth, Double(MiniPlayerMetrics.minWidth)),
+                                   Double(MiniPlayerMetrics.maxWidth)))
         }
     }
 
@@ -80,11 +93,21 @@ final class WindowModeCenter: ObservableObject {
             libraryFrame = window.frame
             UserDefaults.standard.set(NSStringFromRect(window.frame), forKey: Self.libraryFrameKey)
         }
-        let miniSize = NSSize(width: MiniPlayerMetrics.width, height: MiniPlayerMetrics.baseHeight)
-        window.styleMask.remove(.resizable)
-        window.minSize = miniSize
-        window.maxSize = NSSize(width: MiniPlayerMetrics.width,
-                                height: MiniPlayerMetrics.baseHeight + MiniPlayerMetrics.queue + 30)
+
+        let maxWidth = maxMiniWidth(for: window)
+        let width = min(max(miniWidth, MiniPlayerMetrics.minWidth), maxWidth)
+        miniWidth = width.rounded()
+        let miniSize = NSSize(width: miniWidth,
+                             height: MiniPlayerMetrics.height(forWidth: miniWidth, queueExpanded: false))
+
+        window.styleMask.insert(.resizable)
+        window.minSize = NSSize(width: MiniPlayerMetrics.minWidth,
+                                height: MiniPlayerMetrics.height(forWidth: MiniPlayerMetrics.minWidth,
+                                                                 queueExpanded: false))
+        window.maxSize = NSSize(width: maxWidth,
+                                height: MiniPlayerMetrics.height(forWidth: maxWidth,
+                                                                 queueExpanded: true))
+        installMiniResizeDelegate(window)
 
         if !window.styleMask.contains(.fullScreen) {
             let topLeft = NSPoint(x: window.frame.minX,
@@ -94,7 +117,6 @@ final class WindowModeCenter: ObservableObject {
             frame.origin = NSPoint(x: topLeft.x, y: topLeft.y - miniSize.height)
             frame = window.constrainFrameRect(frame, to: window.screen)
             window.setFrame(frame, display: true, animate: animated)
-            miniBaseWindowHeight = window.frame.height
         }
     }
 
@@ -105,28 +127,62 @@ final class WindowModeCenter: ObservableObject {
     func setMiniQueueExpanded(_ expanded: Bool) {
         guard mode == .miniPlayer else { return }
         guard expanded != miniQueueExpanded else { return }
-        if expanded {
-            miniBaseWindowHeight = window?.frame.height ?? miniBaseWindowHeight
-        }
         miniQueueExpanded = expanded
         guard let window, !window.styleMask.contains(.fullScreen) else { return }
-        let base = miniBaseWindowHeight ?? MiniPlayerMetrics.baseHeight
-        let targetHeight = base + (expanded ? MiniPlayerMetrics.queue : 0)
+        let maxWidth = maxMiniWidth(for: window)
+        let width = min(max(window.frame.width, MiniPlayerMetrics.minWidth), maxWidth)
+        let targetHeight = MiniPlayerMetrics.height(forWidth: width, queueExpanded: expanded)
         let top = window.frame.maxY
         var frame = window.frame
+        frame.size.width = width
         frame.size.height = targetHeight
         frame.origin.y = top - targetHeight
         frame = window.constrainFrameRect(frame, to: window.screen)
         window.setFrame(frame, display: true, animate: true)
     }
 
+    private func maxMiniWidth(for window: NSWindow) -> CGFloat {
+        var result = MiniPlayerMetrics.maxWidth
+        if let visible = window.screen?.visibleFrame {
+            let queueChrome = MiniPlayerMetrics.middle + MiniPlayerMetrics.bottom + MiniPlayerMetrics.queue
+            result = min(result, visible.width)
+            result = min(result, visible.height - queueChrome)
+        }
+        return max(MiniPlayerMetrics.minWidth, result)
+    }
+
+    fileprivate func constrainedMiniSize(proposedWidth: CGFloat, window: NSWindow) -> NSSize {
+        let maxWidth = maxMiniWidth(for: window)
+        let width = min(max(proposedWidth, MiniPlayerMetrics.minWidth), maxWidth).rounded()
+        miniWidth = width
+        UserDefaults.standard.set(Double(width), forKey: Self.miniWidthKey)
+        return NSSize(width: width,
+                      height: MiniPlayerMetrics.height(forWidth: width,
+                                                       queueExpanded: miniQueueExpanded).rounded())
+    }
+
+    private func installMiniResizeDelegate(_ window: NSWindow) {
+        guard window.delegate !== miniResizeDelegate else { return }
+        originalWindowDelegate = window.delegate
+        miniResizeDelegate.owner = self
+        miniResizeDelegate.original = originalWindowDelegate
+        window.delegate = miniResizeDelegate
+    }
+
+    private func removeMiniResizeDelegate(_ window: NSWindow) {
+        if window.delegate === miniResizeDelegate {
+            window.delegate = originalWindowDelegate
+        }
+        originalWindowDelegate = nil
+    }
+
     private func applyLibrary(animated: Bool) {
         guard let window else { return }
+        removeMiniResizeDelegate(window)
         for type in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
             window.standardWindowButton(type)?.isHidden = false
         }
         miniQueueExpanded = false
-        miniBaseWindowHeight = nil
         window.styleMask.insert(.resizable)
         window.minSize = libraryMinSize
         window.maxSize = NSSize(width: 10000, height: 10000)
@@ -143,5 +199,27 @@ final class WindowModeCenter: ObservableObject {
               !window.styleMask.contains(.fullScreen) else { return }
         libraryFrame = window.frame
         UserDefaults.standard.set(NSStringFromRect(window.frame), forKey: Self.libraryFrameKey)
+    }
+}
+
+
+private final class MiniResizeDelegate: NSObject, NSWindowDelegate {
+    weak var owner: WindowModeCenter?
+    weak var original: NSWindowDelegate?
+
+    func windowWillResize(_ sender: NSWindow, to frameSize: NSSize) -> NSSize {
+        MainActor.assumeIsolated {
+            owner?.constrainedMiniSize(proposedWidth: frameSize.width, window: sender) ?? frameSize
+        }
+    }
+
+    override func responds(to aSelector: Selector!) -> Bool {
+        if super.responds(to: aSelector) { return true }
+        return original?.responds(to: aSelector) ?? false
+    }
+
+    override func forwardingTarget(for aSelector: Selector!) -> Any? {
+        if let original, original.responds(to: aSelector) { return original }
+        return super.forwardingTarget(for: aSelector)
     }
 }
