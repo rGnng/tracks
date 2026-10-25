@@ -316,6 +316,13 @@ Supported areas:
   `PlayerState` on every request. There is no cached `isStopped` flag. Restarting
   the MPD server while audio is playing therefore keeps `state: play` and the
   correct progress instead of reporting a false stop.
+- MPD repeat mapping:
+  - `repeat 1` + `single 0` -> Repeat All.
+  - `repeat 1` + `single 1` (or `single oneshot`) -> Repeat One.
+  - `repeat 0` with `single 1` -> stopped-after-current mode; `single: 1` remains
+    visible.
+  - App UI Repeat One reports `repeat: 1`, `single: 1`; app UI Repeat All reports
+    `repeat: 1`, `single: 0`.
 
 ### Built-in Stared playlist in MPD
 

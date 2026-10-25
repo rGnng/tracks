@@ -358,7 +358,12 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
             return ok()
         case "repeat":
             guard let value = args.first else { return ack(2, command, "wrong number of arguments") }
-            PlayerState.shared.setRepeat(enabled: value != "0")
+            let player = PlayerState.shared
+            if value == "0" {
+                player.setRepeatMode(.off)
+            } else {
+                player.setRepeatMode(singleMode ? .one : .all)
+            }
             broadcastIdle("options")
             return ok()
         case "random":
@@ -368,7 +373,17 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
             return ok()
         case "single":
             guard let value = args.first else { return ack(2, command, "wrong number of arguments") }
+            let player = PlayerState.shared
             singleMode = value != "0"
+            if singleMode {
+                // MPD's "repeat one" is repeat=1 plus single=1/oneshot.
+                if player.repeatMode != .off {
+                    player.setRepeatMode(.one)
+                }
+            } else if player.repeatMode == .one {
+                // Turning single off while repeat stays on falls back to All.
+                player.setRepeatMode(.all)
+            }
             broadcastIdle("options")
             return ok()
         case "consume":
@@ -656,11 +671,19 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
         let player = PlayerState.shared
         let state = playbackState.rawValue
         let duration = player.duration > 0 ? player.duration : (player.currentSong?.duration ?? 0)
+        let singleValue: Int
+        if player.repeatMode == .one {
+            singleValue = 1
+        } else if player.repeatMode == .all {
+            singleValue = 0
+        } else {
+            singleValue = singleMode ? 1 : 0
+        }
         var lines = [
             "volume: \(Int((player.volume * 100).rounded()))",
             "repeat: \(player.repeatMode != .off ? 1 : 0)",
             "random: \(player.isShuffleOn ? 1 : 0)",
-            "single: \(singleMode ? 1 : 0)",
+            "single: \(singleValue)",
             "consume: \(consumeMode ? 1 : 0)",
             "playlist: \(playlistVersion)",
             "playlistlength: \(player.queue.count)",

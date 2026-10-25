@@ -360,7 +360,12 @@ final class PlayerState: ObservableObject {
     }
 
     func setRepeat(enabled: Bool) {
-        let mode: RepeatMode = enabled ? .all : .off
+        setRepeatMode(enabled ? .all : .off)
+    }
+
+    /// Sets Off/All/One directly. MPD maps its repeat + single flags onto these
+    /// modes; the app's repeat button also uses this path.
+    func setRepeatMode(_ mode: RepeatMode) {
         guard repeatMode != mode else { return }
         repeatMode = mode
         UserDefaults.standard.set(mode.rawValue, forKey: Self.repeatDefaultsKey)
