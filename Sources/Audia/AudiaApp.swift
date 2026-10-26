@@ -176,22 +176,25 @@ struct SettingsView: View {
                 .pickerStyle(.menu)
                 .frame(width: 260, alignment: .leading)
 
-                Picker("Albums sorted by", selection: $albumSort) {
-                    ForEach(GridSort.allCases, id: \.self) { sort in
-                        Text(sort == .album ? "Album Name" : sort.rawValue)
-                            .tag(sort.rawValue)
+                HStack(spacing: 12) {
+                    Picker("Albums sorted by", selection: $albumSort) {
+                        ForEach(GridSort.allCases, id: \.self) { sort in
+                            Text(sort == .album ? "Album Name" : sort.rawValue)
+                                .tag(sort.rawValue)
+                        }
                     }
-                }
-                .pickerStyle(.menu)
-                .frame(width: 260, alignment: .leading)
+                    .pickerStyle(.menu)
+                    .fixedSize()
 
-                Picker("Sort direction", selection: $albumSortDirection) {
-                    ForEach(GridSortDirection.allCases) { direction in
-                        Text(direction.title).tag(direction.rawValue)
+                    Picker("Sort", selection: $albumSortDirection) {
+                        ForEach(GridSortDirection.allCases) { direction in
+                            Text(direction.title).tag(direction.rawValue)
+                        }
                     }
+                    .pickerStyle(.menu)
+                    .fixedSize()
                 }
-                .pickerStyle(.menu)
-                .frame(width: 260, alignment: .leading)
+                .frame(maxWidth: 420, alignment: .leading)
 
                 HStack(spacing: 10) {
                     Text("Highlights")
