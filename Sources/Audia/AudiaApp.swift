@@ -135,7 +135,10 @@ struct SettingsView: View {
     @AppStorage("mpd.password") private var mpdPassword = ""
     @AppStorage("mpd.systemVolume") private var mpdSystemVolume = false
     @AppStorage("artworkCacheJPEGQuality") private var artworkCacheJPEGQuality = 0.8
-    @State private var starShortcut: KeyboardShortcut? = KeyboardShortcutStore.load()
+    @State private var starShortcut: KeyboardShortcut? = KeyboardShortcutStore.loadStar()
+    @State private var muteShortcut: KeyboardShortcut? = KeyboardShortcutStore.loadMute()
+    @State private var volumeDownShortcut: KeyboardShortcut? = KeyboardShortcutStore.loadVolumeDown()
+    @State private var volumeUpShortcut: KeyboardShortcut? = KeyboardShortcutStore.loadVolumeUp()
     @ObservedObject private var library = Library.shared
     @ObservedObject private var artworkCache = ArtworkCache.shared
     @ObservedObject private var mpd = MPDServer.shared
@@ -268,7 +271,10 @@ struct SettingsView: View {
         .background(SettingsFocusSink())
         .onAppear {
             artworkQualityText = "\(artworkQualityPercent)"
-            starShortcut = KeyboardShortcutStore.load()
+            starShortcut = KeyboardShortcutStore.loadStar()
+            muteShortcut = KeyboardShortcutStore.loadMute()
+            volumeDownShortcut = KeyboardShortcutStore.loadVolumeDown()
+            volumeUpShortcut = KeyboardShortcutStore.loadVolumeUp()
             artworkCache.refreshCacheSize()
             PlayerState.shared.setSystemVolumeControl(mpdEnabled && mpdSystemVolume)
         }
@@ -307,10 +313,12 @@ struct SettingsView: View {
         }
         .onChange(of: mpdEnabled) { _, enabled in
             PlayerState.shared.setSystemVolumeControl(enabled && mpdSystemVolume)
+            mpd.notifyOutputConfigurationChanged()
             scheduleMPDApply()
         }
         .onChange(of: mpdSystemVolume) { _, enabled in
             PlayerState.shared.setSystemVolumeControl(mpdEnabled && enabled)
+            mpd.notifyOutputConfigurationChanged()
         }
         .onChange(of: mpdAllInterfaces) { _, _ in scheduleMPDApply() }
         .onChange(of: mpdAddresses) { _, _ in scheduleMPDApply() }
@@ -329,25 +337,63 @@ struct SettingsView: View {
                 Spacer()
             }
 
-            HStack(spacing: 8) {
-                Text("Toggle star current item")
-                    .font(.system(size: 11))
-                    .foregroundColor(Theme.secondaryText)
-                Spacer()
-                ShortcutRecorder(shortcut: $starShortcut)
-                    .frame(width: 132, height: 22)
-                Button("Reset") { starShortcut = .defaultStar }
-                    .controlSize(.small)
-            }
-
+            shortcutRow("Toggle star current item",
+                        shortcut: $starShortcut,
+                        defaultShortcut: .defaultStar,
+                        accessibilityLabel: "Star current item shortcut")
             Text("Stars or unstars the playing track or selected tracks. Default: *")
                 .font(.system(size: 10.5))
                 .foregroundColor(Theme.secondaryText)
+
+            Divider()
+
+            shortcutRow("Mute",
+                        shortcut: $muteShortcut,
+                        defaultShortcut: .defaultMute,
+                        accessibilityLabel: "Mute shortcut")
+            shortcutRow("Volume down",
+                        shortcut: $volumeDownShortcut,
+                        defaultShortcut: .defaultVolumeDown,
+                        accessibilityLabel: "Volume down shortcut")
+            shortcutRow("Volume up",
+                        shortcut: $volumeUpShortcut,
+                        defaultShortcut: .defaultVolumeUp,
+                        accessibilityLabel: "Volume up shortcut")
+
+            Text("Volume shortcuts adjust the player volume, or the macOS output volume when system volume control is active. Defaults: mute m, down -, up =.")
+                .font(.system(size: 10.5))
+                .foregroundColor(Theme.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .padding(10)
         .background(boxBackground)
         .onChange(of: starShortcut) { _, value in
-            KeyboardShortcutStore.save(value)
+            KeyboardShortcutStore.saveStar(value)
+        }
+        .onChange(of: muteShortcut) { _, value in
+            KeyboardShortcutStore.saveMute(value)
+        }
+        .onChange(of: volumeDownShortcut) { _, value in
+            KeyboardShortcutStore.saveVolumeDown(value)
+        }
+        .onChange(of: volumeUpShortcut) { _, value in
+            KeyboardShortcutStore.saveVolumeUp(value)
+        }
+    }
+
+    private func shortcutRow(_ title: String,
+                             shortcut: Binding<KeyboardShortcut?>,
+                             defaultShortcut: KeyboardShortcut,
+                             accessibilityLabel: String) -> some View {
+        HStack(spacing: 8) {
+            Text(title)
+                .font(.system(size: 11))
+                .foregroundColor(Theme.secondaryText)
+            Spacer()
+            ShortcutRecorder(shortcut: shortcut, label: accessibilityLabel)
+                .frame(width: 132, height: 22)
+            Button("Reset") { shortcut.wrappedValue = defaultShortcut }
+                .controlSize(.small)
         }
     }
 
@@ -370,12 +416,13 @@ struct SettingsView: View {
                 .foregroundColor(Theme.secondaryText)
 
             if mpdEnabled {
-                Toggle("Use MPD remote to control system volume", isOn: $mpdSystemVolume)
+                Toggle("Use MPD remote to control system default device volume", isOn: $mpdSystemVolume)
                     .controlSize(.small)
 
-                Text("Locks the player at 100%. MPD remote volume commands adjust the macOS output volume.")
+                Text("Player audio stays at 100%; MPD remote and in-app volume controls adjust the selected macOS output. The “System Default (Volume Control)” MPD output enables this automatically.")
                     .font(.system(size: 10.5))
                     .foregroundColor(Theme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
 
                 Toggle("Listen on all interfaces", isOn: $mpdAllInterfaces)
                     .controlSize(.small)
@@ -934,6 +981,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 @MainActor
 enum KeyboardShortcuts {
+    private static let volumeStep = 0.02
+
     static func handle(_ event: NSEvent) -> NSEvent? {
         if ShortcutRecorderState.isRecording { return event }
         guard let window = event.window else { return event }
@@ -949,10 +998,29 @@ enum KeyboardShortcuts {
 
         if !isEditingText,
            !event.isARepeat,
-           let shortcut = KeyboardShortcutStore.load(),
+           let shortcut = KeyboardShortcutStore.loadStar(),
            shortcut.matches(event) {
             toggleStarCurrentItem()
             return nil
+        }
+
+        if !isEditingText {
+            if !event.isARepeat,
+               let shortcut = KeyboardShortcutStore.loadMute(),
+               shortcut.matches(event) {
+                PlayerState.shared.toggleMute()
+                return nil
+            }
+            if let shortcut = KeyboardShortcutStore.loadVolumeDown(),
+               shortcut.matches(event) {
+                PlayerState.shared.adjustDisplayVolume(by: -Self.volumeStep)
+                return nil
+            }
+            if let shortcut = KeyboardShortcutStore.loadVolumeUp(),
+               shortcut.matches(event) {
+                PlayerState.shared.adjustDisplayVolume(by: Self.volumeStep)
+                return nil
+            }
         }
 
         guard modifiers.isEmpty, !isEditingText else { return event }

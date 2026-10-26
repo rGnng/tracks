@@ -1,6 +1,6 @@
 # Tracks (internal target: Audia) - Agent Handoff
 
-Last updated: 2026-10-25
+Last updated: 2026-10-26
 
 This file is the handoff snapshot for a future coding agent. Read it before changing
 the project, then verify the current code and running state.
@@ -234,10 +234,10 @@ Important schema decisions:
 - Repeat modes: Off, All, One; persisted in UserDefaults.
 - Volume level is persisted in UserDefaults (`player.volume`) and restored at
   launch, including when playback starts later. When the MPD system-volume
-  option is active, the player is held at 100%, the app volume controls are
-  disabled, and the prior player volume is saved in
-  `player.volumeBeforeSystemControl` for restoration when the option is turned
-  off.
+  option is active, the player is held at 100% and the app volume controls
+  operate on the selected macOS output instead. The prior player volume is
+  saved in `player.volumeBeforeSystemControl` for restoration when the option
+  is turned off.
 - History is most-recent-first, persisted by song ID.
 - Main window modes:
   - Library: normal main window, minimum about `1040 x 640`.
@@ -279,11 +279,17 @@ Important schema decisions:
   the virtual Stared playlist. If every target is already starred, it unstars
   all of them; otherwise it stars all of them. Album/artist/genre selections are
   not expanded into their tracks.
-- Settings > Shortcuts uses a standard AppKit shortcut recorder (`KeyboardShortcut.swift`):
-  click the field, press a key combination, Escape cancels, bare Delete clears.
-  Modifiers and shifted symbols are supported. The shortcut is stored as JSON
-  under `shortcut.starCurrent.v2`. Reset restores `*`. The global handler skips
-  text editing and returns events untouched while the recorder is active.
+- Volume shortcuts default to mute `m`, volume down `-`, and volume up `=`.
+  They adjust the player volume, or the selected macOS output volume while
+  system-volume control is active. Volume changes use 2% steps and may repeat
+  while a volume key is held.
+- Settings > Shortcuts uses standard AppKit shortcut recorders
+  (`KeyboardShortcut.swift`): click a field, press a key combination, Escape
+  cancels, and bare Delete clears the shortcut. Modifiers and shifted symbols
+  are supported. Each shortcut is stored as JSON under its own UserDefaults key
+  (`shortcut.starCurrent.v2`, `shortcut.mute.v1`, `shortcut.volumeDown.v1`,
+  `shortcut.volumeUp.v1`). Reset restores that row's default. The global handler
+  skips text editing and returns events untouched while a recorder is active.
 
 ## 7. Artwork cache and Settings
 
@@ -331,14 +337,14 @@ may be connected.
 
 ### MPD remote system volume
 
-Settings > MPD Server has a `Use MPD remote to control system volume` toggle,
-default off. It only applies while MPD itself is enabled.
+Settings > MPD Server has a `Use MPD remote to control system default device
+volume` toggle, default off. It only applies while MPD itself is enabled.
 
 - When off, `setvol`/`volume` adjust `PlayerState.volume` as before.
-- When on, the player volume is locked at 100%, the app's volume controls are
-  disabled, and `setvol`/`volume` requests change the volume of the selected
-  macOS output device through Core Audio (the system default when no explicit
-  output is selected).
+- When on, the player volume is locked at 100% and `setvol`/`volume` requests
+  change the volume of the selected macOS output device through Core Audio (the
+  system default when no explicit output is selected). The in-app and mini-player
+  volume sliders remain usable and display/control the same macOS output volume.
 - MPD's `volume` command is treated as a **relative** change even when the value
   has no leading `+`; libmpdclient/ncmpcpp sends `volume 2` for `+2`. `setvol`
   is absolute, with a leading sign allowed as a relative convenience. A literal
@@ -350,8 +356,7 @@ default off. It only applies while MPD itself is enabled.
   the scalar volume is raised, so `SystemVolume` explicitly reads/writes
   `kAudioDevicePropertyMute` as well as the scalar volume. `AVPlayer.isMuted` is
   synchronized too, so mute remains effective even when the output device does
-  not honor the system mute flag. The app volume slider stays locked at 100%;
-  only the mute control is active.
+  not honor the system mute flag.
 - `status`, `getvol`, and the `volume` query report the live system volume, not
   the 100% player volume. `setvol`/`volume` changes broadcast `changed: mixer`
   to idle clients, keeping remote volume displays in sync after MPD or external
@@ -359,6 +364,11 @@ default off. It only applies while MPD itself is enabled.
 - The remote system volume control does not use AVPlayer attenuation.
 - The option is stored under `mpd.systemVolume`; the effective mode requires
   `mpd.enabled` as well.
+- MPD's output list contains `System Default`, `System Default (Volume Control)`,
+  then the real output devices. Selecting `System Default (Volume Control)`
+  selects the system-default output, enables this setting, and updates Settings;
+  selecting plain `System Default` disables it. Selecting a real device preserves
+  the current system-volume mode.
 
 Supported areas:
 
@@ -374,11 +384,12 @@ Supported areas:
   honor an optional directory URI. `lsinfo` on a directory returns full song
   metadata including `Track`/`Disc`; the root `lsinfo` remains file-only plus
   playlist entries to keep `mpc lsplaylists` fast.
-- Audio outputs: `outputs` lists the system output devices (plus the synthetic
-  System Default) with `outputid`, `outputname`, `plugin: coreaudio`, and
-  `outputenabled`. `enableoutput`, `disableoutput`, and `toggleoutput` switch the
-  app's selected Core Audio output. Selecting a non-default output also points
-  MPD system-volume control at that device.
+- Audio outputs: `outputs` lists `System Default`, `System Default (Volume
+  Control)`, then the real output devices, with `outputid`, `outputname`,
+  `plugin: coreaudio`, and `outputenabled`. `enableoutput`, `disableoutput`, and
+  `toggleoutput` switch the app's selected Core Audio output. The volume-control
+  entry also enables MPD system-volume mode; plain System Default disables it.
+  Selecting a real device preserves the current volume-control mode.
 - Album art: `albumart`, `readpicture`, `binarylimit`. Responses use the 500x500
   JPEG cache, correct size/type, and JPEG magic. The default chunk size is
   262144 bytes so a typical cover fits in one response; clients can still request

@@ -112,6 +112,13 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
         idleSessions.removeValue(forKey: ObjectIdentifier(session))
     }
 
+    /// Tells connected clients that the output list or volume-control mode
+    /// changed outside an MPD command, for example from Settings.
+    func notifyOutputConfigurationChanged() {
+        broadcastIdle("output")
+        broadcastIdle("mixer")
+    }
+
     func registerIdle(_ session: MPDClientSession) {
         idleSessions[ObjectIdentifier(session)] = session
     }
@@ -178,28 +185,25 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
             guard let id = args.first.flatMap(Int.init) else {
                 return ack(2, command, "wrong number of arguments")
             }
-            let devices = AudioDevices.shared.devices
-            guard devices.indices.contains(id) else {
+            let entries = outputEntries
+            guard entries.indices.contains(id) else {
                 return ack(2, command, "No such audio output")
             }
-            let wasEnabled = outputEnabled(id, in: devices)
+            let wasEnabled = outputEnabled(id)
             switch command {
             case "enableoutput":
-                AudioDevices.shared.select(devices[id])
+                selectOutput(at: id)
             case "disableoutput":
-                if wasEnabled, let systemDefault = devices.first(where: { $0.isSystemDefault }) {
-                    AudioDevices.shared.select(systemDefault)
-                }
+                if wasEnabled { selectSystemDefault() }
             default:
                 if wasEnabled {
-                    if let systemDefault = devices.first(where: { $0.isSystemDefault }) {
-                        AudioDevices.shared.select(systemDefault)
-                    }
+                    selectSystemDefault()
                 } else {
-                    AudioDevices.shared.select(devices[id])
+                    selectOutput(at: id)
                 }
             }
             broadcastIdle("output")
+            broadcastIdle("mixer")
             return ok()
         case "replay_gain_status":
             return lines(["replay_gain_mode: off"])
@@ -729,26 +733,84 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
         return Int((min(max(value, 0), 1) * 100).rounded())
     }
 
-    private func outputEnabled(_ id: Int, in devices: [AudioOutputDevice]) -> Bool {
-        guard devices.indices.contains(id) else { return false }
+    private enum OutputEntry {
+        case systemDefault
+        case systemDefaultVolumeControl
+        case device(AudioOutputDevice)
+    }
+
+    private var outputEntries: [OutputEntry] {
+        let devices = AudioDevices.shared.devices.filter { !$0.isSystemDefault }
+        return [.systemDefault, .systemDefaultVolumeControl] + devices.map { .device($0) }
+    }
+
+    private func outputName(_ entry: OutputEntry) -> String {
+        let name: String
+        switch entry {
+        case .systemDefault:
+            name = "System Default"
+        case .systemDefaultVolumeControl:
+            name = "System Default (Volume Control)"
+        case .device(let device):
+            name = device.name
+        }
+        return name
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\r", with: " ")
+    }
+
+    private func outputEnabled(_ id: Int) -> Bool {
+        let entries = outputEntries
+        guard entries.indices.contains(id) else { return false }
         let selected = AudioDevices.shared.selectedUID
-        let device = devices[id]
-        return selected == device.uid || (selected == nil && device.isSystemDefault)
+        let systemMode = PlayerState.shared.isVolumeLocked
+        switch entries[id] {
+        case .systemDefault:
+            return selected == nil && !systemMode
+        case .systemDefaultVolumeControl:
+            return selected == nil && systemMode
+        case .device(let device):
+            return selected == device.uid
+        }
     }
 
     private func outputLines() -> [String] {
-        let devices = AudioDevices.shared.devices
         var lines: [String] = []
-        for (index, device) in devices.enumerated() {
-            let name = device.name
-                .replacingOccurrences(of: "\n", with: " ")
-                .replacingOccurrences(of: "\r", with: " ")
+        for (index, entry) in outputEntries.enumerated() {
             lines.append("outputid: \(index)")
-            lines.append("outputname: \(name)")
+            lines.append("outputname: \(outputName(entry))")
             lines.append("plugin: coreaudio")
-            lines.append("outputenabled: \(outputEnabled(index, in: devices) ? 1 : 0)")
+            lines.append("outputenabled: \(outputEnabled(index) ? 1 : 0)")
         }
         return lines
+    }
+
+    private func selectSystemDefault() {
+        if let systemDefault = AudioDevices.shared.devices.first(where: { $0.isSystemDefault }) {
+            AudioDevices.shared.select(systemDefault)
+        }
+        setSystemVolumeMode(false)
+    }
+
+    private func selectOutput(at index: Int) {
+        let entries = outputEntries
+        guard entries.indices.contains(index) else { return }
+        switch entries[index] {
+        case .systemDefault:
+            selectSystemDefault()
+        case .systemDefaultVolumeControl:
+            if let systemDefault = AudioDevices.shared.devices.first(where: { $0.isSystemDefault }) {
+                AudioDevices.shared.select(systemDefault)
+            }
+            setSystemVolumeMode(true)
+        case .device(let device):
+            AudioDevices.shared.select(device)
+        }
+    }
+
+    private func setSystemVolumeMode(_ enabled: Bool) {
+        UserDefaults.standard.set(enabled, forKey: SystemVolume.defaultsKey)
+        PlayerState.shared.setSystemVolumeControl(enabled)
     }
 
     private func statusLines() -> [String] {

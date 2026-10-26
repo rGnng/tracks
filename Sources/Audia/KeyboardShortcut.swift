@@ -11,6 +11,9 @@ struct KeyboardShortcut: Codable, Equatable {
     var display: String
 
     static let defaultStar = KeyboardShortcut(key: "*", modifiers: [], display: "*")
+    static let defaultMute = KeyboardShortcut(key: "m", modifiers: [], display: "M")
+    static let defaultVolumeDown = KeyboardShortcut(key: "-", modifiers: [], display: "-")
+    static let defaultVolumeUp = KeyboardShortcut(key: "=", modifiers: [], display: "=")
 
     var modifierFlags: NSEvent.ModifierFlags {
         NSEvent.ModifierFlags(rawValue: modifiers)
@@ -108,25 +111,61 @@ struct KeyboardShortcut: Codable, Equatable {
 }
 
 enum KeyboardShortcutStore {
-    private static let storageKey = "shortcut.starCurrent.v2"
+    private static let starKey = "shortcut.starCurrent.v2"
+    private static let muteKey = "shortcut.mute.v1"
+    private static let volumeDownKey = "shortcut.volumeDown.v1"
+    private static let volumeUpKey = "shortcut.volumeUp.v1"
 
     private struct Setting: Codable {
         var shortcut: KeyboardShortcut?
     }
 
-    static func load() -> KeyboardShortcut? {
+    static func loadStar() -> KeyboardShortcut? {
+        load(key: starKey, fallback: .defaultStar)
+    }
+
+    static func saveStar(_ shortcut: KeyboardShortcut?) {
+        save(shortcut, key: starKey)
+    }
+
+    static func loadMute() -> KeyboardShortcut? {
+        load(key: muteKey, fallback: .defaultMute)
+    }
+
+    static func saveMute(_ shortcut: KeyboardShortcut?) {
+        save(shortcut, key: muteKey)
+    }
+
+    static func loadVolumeDown() -> KeyboardShortcut? {
+        load(key: volumeDownKey, fallback: .defaultVolumeDown)
+    }
+
+    static func saveVolumeDown(_ shortcut: KeyboardShortcut?) {
+        save(shortcut, key: volumeDownKey)
+    }
+
+    static func loadVolumeUp() -> KeyboardShortcut? {
+        load(key: volumeUpKey, fallback: .defaultVolumeUp)
+    }
+
+    static func saveVolumeUp(_ shortcut: KeyboardShortcut?) {
+        save(shortcut, key: volumeUpKey)
+    }
+
+    private static func load(key: String,
+                             fallback: KeyboardShortcut) -> KeyboardShortcut? {
         let defaults = UserDefaults.standard
-        if let data = defaults.data(forKey: storageKey),
+        if let data = defaults.data(forKey: key),
            let setting = try? JSONDecoder().decode(Setting.self, from: data) {
             return setting.shortcut
         }
-        return .defaultStar
+        return fallback
     }
 
-    static func save(_ shortcut: KeyboardShortcut?) {
+    private static func save(_ shortcut: KeyboardShortcut?, key: String) {
         let setting = Setting(shortcut: shortcut)
         guard let data = try? JSONEncoder().encode(setting) else { return }
-        UserDefaults.standard.set(data, forKey: storageKey)
+        UserDefaults.standard.set(data, forKey: key)
     }
 }
 
@@ -137,16 +176,19 @@ enum ShortcutRecorderState {
 
 struct ShortcutRecorder: NSViewRepresentable {
     @Binding var shortcut: KeyboardShortcut?
+    var label: String = "Shortcut"
 
     func makeNSView(context: Context) -> ShortcutRecorderView {
         let view = ShortcutRecorderView()
         view.onChange = { shortcut = $0 }
+        view.setAccessibilityLabel(label)
         view.setShortcut(shortcut)
         return view
     }
 
     func updateNSView(_ view: ShortcutRecorderView, context: Context) {
         view.onChange = { shortcut = $0 }
+        view.setAccessibilityLabel(label)
         view.setShortcut(shortcut)
     }
 
@@ -178,7 +220,7 @@ final class ShortcutRecorderView: NSView {
         focusRingType = .default
         toolTip = "Click, then press a key combination."
         setAccessibilityRole(.button)
-        setAccessibilityLabel("Star current item shortcut")
+        setAccessibilityLabel("Shortcut")
         setAccessibilityHelp("Click, then press a key combination.")
         setShortcut(.defaultStar)
     }

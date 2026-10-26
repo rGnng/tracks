@@ -563,10 +563,8 @@ private struct VolumeControl: View {
 
     private var icon: String {
         if player.isMutedForUI { return "speaker.slash.fill" }
-        if !player.isVolumeLocked {
-            if player.volume < 0.34 { return "speaker.wave.1.fill" }
-            if player.volume < 0.67 { return "speaker.wave.2.fill" }
-        }
+        if player.displayVolume < 0.34 { return "speaker.wave.1.fill" }
+        if player.displayVolume < 0.67 { return "speaker.wave.2.fill" }
         return "speaker.wave.3.fill"
     }
 
@@ -584,8 +582,6 @@ private struct VolumeControl: View {
                   : "Mute")
 
             VolumeBar()
-                .disabled(player.isVolumeLocked)
-                .opacity(player.isVolumeLocked ? 0.55 : 1)
         }
     }
 }
@@ -596,14 +592,14 @@ private struct VolumeBar: View {
     var body: some View {
         GeometryReader { geo in
             let w = geo.size.width
-            let thumbX = min(max(w * player.volume - 5.5, 0), max(w - 11, 0))
+            let thumbX = min(max(w * player.displayVolume - 5.5, 0), max(w - 11, 0))
             ZStack(alignment: .leading) {
                 Capsule()
                     .fill(Theme.track)
                     .frame(height: 3)
                 Capsule()
                     .fill(Theme.lcdProgress)
-                    .frame(width: w * player.volume, height: 3)
+                    .frame(width: w * player.displayVolume, height: 3)
                 // The thumb is always visible, not just on hover.
                 Circle()
                     .fill(.white)
@@ -620,7 +616,7 @@ private struct VolumeBar: View {
         .frame(width: 60, height: 24)
         .overlay(
             FractionDragControl { fraction in
-                player.setVolume(Double(fraction))
+                player.setDisplayVolume(Double(fraction))
             }
         )
     }

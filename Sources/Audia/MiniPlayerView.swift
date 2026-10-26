@@ -181,11 +181,7 @@ struct MiniPlayerView: View {
                 TapGesture(count: 2)
                     .onEnded { player.toggleMute() }
                     .exclusively(before: TapGesture().onEnded {
-                        if player.isVolumeLocked {
-                            player.toggleMute()
-                        } else {
-                            showVolume.toggle()
-                        }
+                        showVolume.toggle()
                     })
             )
             .popover(isPresented: $showVolume, arrowEdge: .bottom) {
@@ -194,11 +190,10 @@ struct MiniPlayerView: View {
                         .font(.system(size: 11, weight: .medium))
                         .foregroundColor(Theme.secondaryText)
                     Slider(value: Binding(
-                        get: { player.volume },
-                        set: { player.setVolume($0) }
+                        get: { player.displayVolume },
+                        set: { player.setDisplayVolume($0) }
                     ), in: 0...1)
                     .frame(width: 150)
-                    .disabled(player.isVolumeLocked)
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
@@ -318,10 +313,8 @@ struct MiniPlayerView: View {
 
     private var volumeIcon: String {
         if player.isMutedForUI { return "speaker.slash.fill" }
-        if !player.isVolumeLocked {
-            if player.volume < 0.34 { return "speaker.wave.1.fill" }
-            if player.volume < 0.67 { return "speaker.wave.2.fill" }
-        }
+        if player.displayVolume < 0.34 { return "speaker.wave.1.fill" }
+        if player.displayVolume < 0.67 { return "speaker.wave.2.fill" }
         return "speaker.wave.3.fill"
     }
 }

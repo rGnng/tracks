@@ -25,9 +25,10 @@ final class PlayerState: ObservableObject {
     @Published var elapsed: TimeInterval = 0
     @Published var volume: Double = 0.65
     /// While MPD owns the system volume, AVPlayer stays at 100% and the app's
-    /// volume controls are locked.
+    /// volume controls operate on the macOS output instead.
     @Published private(set) var isVolumeLocked = false
     @Published private(set) var isSystemMuted = false
+    @Published private(set) var systemVolume: Double = 1
     @Published private(set) var isShuffleOn = false
     @Published private(set) var repeatMode: RepeatMode = .off
     /// Most-recent-first play history, independent of the active queue.
@@ -51,6 +52,7 @@ final class PlayerState: ObservableObject {
     private var volumeBeforeMute: Double = 0.65
     private var volumeBeforeSystemControl: Double = 0.65
     private var systemVolumeBeforeMute: Double = 0.5
+    private var systemVolumeTimer: Timer?
     private var deviceCancellable: AnyCancellable?
     /// While the seek bar is being dragged, don't let the timer overwrite the
     /// dragged position with AVPlayer's still-old current time.
@@ -69,6 +71,7 @@ final class PlayerState: ObservableObject {
             isVolumeLocked = true
             volume = 1
             let currentSystem = SystemVolume.current(deviceID: AudioDevices.shared.effectiveDeviceID) ?? 0
+            systemVolume = currentSystem
             isSystemMuted = currentSystem <= 0
             if currentSystem > 0 { systemVolumeBeforeMute = currentSystem }
         }
@@ -80,6 +83,7 @@ final class PlayerState: ObservableObject {
             .sink { [weak self] _ in
                 Task { @MainActor in self?.applyOutputDevice() }
             }
+        if isVolumeLocked { startSystemVolumeTimer() }
     }
 
     var currentSong: Song? {
@@ -134,6 +138,22 @@ final class PlayerState: ObservableObject {
     /// The mute state the volume UI should display. In system-volume mode this
     /// comes from the macOS output rather than the locked player volume.
     var isMutedForUI: Bool { isVolumeLocked ? isSystemMuted : isMuted }
+
+    /// Volume shown by the player UI. In system mode this is the macOS output
+    /// volume, not the locked AVPlayer volume.
+    var displayVolume: Double { isVolumeLocked ? systemVolume : volume }
+
+    func setDisplayVolume(_ value: Double) {
+        if isVolumeLocked {
+            setSystemVolume(value)
+        } else {
+            setVolume(value)
+        }
+    }
+
+    func adjustDisplayVolume(by delta: Double) {
+        setDisplayVolume(min(max(displayVolume + delta, 0), 1))
+    }
 
     private func syncPlayerMuteState() {
         avPlayer?.isMuted = isVolumeLocked && isSystemMuted
@@ -620,6 +640,7 @@ final class PlayerState: ObservableObject {
     /// Applies volume directly to the macOS output while system mode is active.
     func setSystemVolume(_ value: Double) {
         let clamped = min(max(value, 0), 1)
+        systemVolume = clamped
         if clamped > 0 {
             systemVolumeBeforeMute = clamped
             isSystemMuted = false
@@ -637,6 +658,9 @@ final class PlayerState: ObservableObject {
             if enabled {
                 volume = 1
                 avPlayer?.volume = 1
+                systemVolume = SystemVolume.current(deviceID: AudioDevices.shared.effectiveDeviceID) ?? systemVolume
+                isSystemMuted = systemVolume <= 0
+                startSystemVolumeTimer()
             }
             return
         }
@@ -647,11 +671,14 @@ final class PlayerState: ObservableObject {
             isVolumeLocked = true
             volume = 1
             let currentSystem = SystemVolume.current(deviceID: AudioDevices.shared.effectiveDeviceID) ?? 0
+            systemVolume = currentSystem
             isSystemMuted = currentSystem <= 0
             if currentSystem > 0 { systemVolumeBeforeMute = currentSystem }
+            startSystemVolumeTimer()
         } else {
             isVolumeLocked = false
             isSystemMuted = false
+            stopSystemVolumeTimer()
             let stored = UserDefaults.standard.object(forKey: Self.volumeBeforeSystemControlKey) as? Double
             volume = min(max(stored ?? 0.65, 0), 1)
             volumeBeforeMute = volume > 0 ? volume : 0.65
@@ -659,6 +686,33 @@ final class PlayerState: ObservableObject {
         }
         avPlayer?.volume = Float(volume)
         syncPlayerMuteState()
+    }
+
+    private func startSystemVolumeTimer() {
+        systemVolumeTimer?.invalidate()
+        systemVolumeTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.refreshSystemVolume() }
+        }
+    }
+
+    private func stopSystemVolumeTimer() {
+        systemVolumeTimer?.invalidate()
+        systemVolumeTimer = nil
+    }
+
+    private func refreshSystemVolume() {
+        guard isVolumeLocked else { return }
+        let value = SystemVolume.current(deviceID: AudioDevices.shared.effectiveDeviceID) ?? systemVolume
+        let clamped = min(max(value, 0), 1)
+        if abs(clamped - systemVolume) > 0.0005 {
+            systemVolume = clamped
+        }
+        let muted = clamped <= 0
+        if muted != isSystemMuted {
+            isSystemMuted = muted
+            syncPlayerMuteState()
+        }
+        if clamped > 0 { systemVolumeBeforeMute = clamped }
     }
 
     private func persistVolume() {
