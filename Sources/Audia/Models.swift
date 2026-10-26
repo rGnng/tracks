@@ -294,3 +294,34 @@ enum SidebarSelectionStore {
         UserDefaults.standard.set(selection.persistenceValue, forKey: defaultsKey)
     }
 }
+
+/// Persists lightweight view anchors across launches. We store the item at the
+/// top of each scroll view rather than a pixel offset; this survives font,
+/// column-width, and window-size changes and avoids a forced recenter.
+enum ViewPositionStore {
+    private static func topKey(_ name: String) -> String {
+        "viewPosition.\(name).top"
+    }
+
+    private static func selectionKey(_ name: String) -> String {
+        "viewPosition.\(name).selection"
+    }
+
+    static func topID(for name: String) -> String? {
+        UserDefaults.standard.string(forKey: topKey(name))
+    }
+
+    static func setTopID(_ id: String?, for name: String) {
+        guard let id else { return }
+        UserDefaults.standard.set(id, forKey: topKey(name))
+    }
+
+    static func selectionID(for name: String) -> String? {
+        UserDefaults.standard.string(forKey: selectionKey(name))
+    }
+
+    static func setSelectionID(_ id: String?, for name: String) {
+        guard let id else { return }
+        UserDefaults.standard.set(id, forKey: selectionKey(name))
+    }
+}

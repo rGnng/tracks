@@ -297,6 +297,12 @@ Important schema decisions:
   `library:<section>`, `starred`, or `playlist:<uuid>`. A missing, malformed,
   or deleted-playlist value falls back to **Recently Added**. The first launch
   and library switches also use Recently Added as the default view.
+- Scrollable content remembers its top visible item under
+  `viewPosition.<view>.top` (Albums, Recently Added, each song-table context,
+  Artists, Genres, and artist/genre album panes). Artists/Genres also persist
+  the selected browser row under `viewPosition.<view>.selection`. Views restore
+  with `scrollPosition(id:anchor:)` plus a `ScrollViewReader.scrollTo` fallback
+  on appear, so launch restores the last viewport without centering an item.
 - Album cards/rows use single click for selection or album-detail navigation.
   Double-click no longer starts album playback; use the hover Play button or the
   context menu instead.

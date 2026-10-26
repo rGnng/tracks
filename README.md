@@ -30,6 +30,8 @@ SQLite, and includes a built-in MPD server.
   previous/next track, not skip-by-15-second buttons.
 - Album detail keeps the underlying grid mounted, so returning restores the
   previous scroll position instead of recentering an already-visible album.
+- The active sidebar view and the top visible item in Albums, Recently Added,
+  Songs/playlists, Artists, and Genres are remembered across launches.
 - Internal Library (writable) and External Libraries (read-only), with an
   organizer for imports and tag editing.
 - Built-in MPD server for browsing and controlling the library over TCP.

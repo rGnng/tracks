@@ -49,18 +49,18 @@ struct ContentPane: View {
         switch selection {
         case .library(.albums):
             if isGrid || navigationDetail {
-                AlbumGrid(albums: sortedAlbums, openAlbumID: $openAlbumID)
+                AlbumGrid(albums: sortedAlbums, openAlbumID: $openAlbumID, scrollKey: "albums")
                     .id(selection)
             } else {
-                AlbumList(albums: sortedAlbums)
+                AlbumList(albums: sortedAlbums, scrollKey: "albums")
                     .id(selection)
             }
         case .library(.recentlyAdded):
             if isGrid || navigationDetail {
-                AlbumGrid(albums: recentAlbums, openAlbumID: $openAlbumID)
+                AlbumGrid(albums: recentAlbums, openAlbumID: $openAlbumID, scrollKey: "recentlyAdded")
                     .id(selection)
             } else {
-                AlbumList(albums: recentAlbums)
+                AlbumList(albums: recentAlbums, scrollKey: "recentlyAdded")
                     .id(selection)
             }
         case .library(.artists):

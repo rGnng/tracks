@@ -16,7 +16,10 @@ struct ArtistsBrowser: View {
         let requested = initialArtistID.flatMap { id in
             artists.contains(where: { $0.id == id }) ? id : nil
         }
-        _selectedID = State(initialValue: requested ?? artists.first?.id)
+        let stored = ViewPositionStore.selectionID(for: "artists").flatMap { id in
+            artists.contains(where: { $0.id == id }) ? id : nil
+        }
+        _selectedID = State(initialValue: requested ?? stored ?? artists.first?.id)
     }
 
     private var selectedArtist: ArtistSummary? {
@@ -30,7 +33,8 @@ struct ArtistsBrowser: View {
                 items: artists,
                 selectedID: $selectedID,
                 title: { $0.name },
-                detail: { "\($0.albums.count)" }
+                detail: { "\($0.albums.count)" },
+                positionKey: "artists.list"
             ) { artist in
                 player.play(artist.albums.flatMap(\.songs))
             }
@@ -42,7 +46,8 @@ struct ArtistsBrowser: View {
                 BrowserAlbumPane(
                     title: artist.name,
                     subtitle: "\(artist.albums.count) albums",
-                    albums: artist.albums
+                    albums: artist.albums,
+                    positionKey: "artists.albums.\(artist.name)"
                 )
                 .id(artist.name)
             } else {
@@ -56,9 +61,13 @@ struct ArtistsBrowser: View {
             }
             updateStatusBar()
         }
-        .onChange(of: selectedID) { _, _ in updateStatusBar() }
+        .onChange(of: selectedID) { _, id in
+            ViewPositionStore.setSelectionID(id, for: "artists")
+            updateStatusBar()
+        }
         .onAppear {
             consumePendingArtist()
+            ViewPositionStore.setSelectionID(selectedID, for: "artists")
             updateStatusBar()
         }
         .onChange(of: navigation.artistToOpen) { _, _ in
@@ -92,7 +101,10 @@ struct GenresBrowser: View {
 
     init(genres: [GenreItem]) {
         self.genres = genres
-        _selectedID = State(initialValue: genres.first?.name)
+        let stored = ViewPositionStore.selectionID(for: "genres").flatMap { id in
+            genres.contains(where: { $0.id == id }) ? id : nil
+        }
+        _selectedID = State(initialValue: stored ?? genres.first?.name)
     }
 
     private var selectedGenre: GenreItem? {
@@ -111,7 +123,8 @@ struct GenresBrowser: View {
                 items: genres,
                 selectedID: $selectedID,
                 title: { $0.name },
-                detail: { "\($0.count)" }
+                detail: { "\($0.count)" },
+                positionKey: "genres.list"
             ) { genre in
                 player.play(library.albums.filter { $0.genre == genre.name }.flatMap(\.songs))
             }
@@ -123,7 +136,8 @@ struct GenresBrowser: View {
                 BrowserAlbumPane(
                     title: genre.name,
                     subtitle: "\(albumsForSelected.count) albums",
-                    albums: albumsForSelected
+                    albums: albumsForSelected,
+                    positionKey: "genres.albums.\(genre.name)"
                 )
                 .id(genre.name)
             } else {
@@ -137,8 +151,14 @@ struct GenresBrowser: View {
             }
             updateStatusBar()
         }
-        .onChange(of: selectedID) { _, _ in updateStatusBar() }
-        .onAppear { updateStatusBar() }
+        .onChange(of: selectedID) { _, id in
+            ViewPositionStore.setSelectionID(id, for: "genres")
+            updateStatusBar()
+        }
+        .onAppear {
+            ViewPositionStore.setSelectionID(selectedID, for: "genres")
+            updateStatusBar()
+        }
     }
 
     private func updateStatusBar() {
@@ -152,14 +172,33 @@ struct GenresBrowser: View {
 
 // MARK: - Left list
 
-private struct BrowserList<Item: Identifiable>: View {
+private struct BrowserList<Item: Identifiable>: View where Item.ID == String {
     let items: [Item]
     @Binding var selectedID: Item.ID?
     let title: (Item) -> String
     let detail: (Item) -> String
+    let positionKey: String
     let onDoubleTap: (Item) -> Void
 
     @ObservedObject private var navigator = KeyboardNavigator.shared
+    @State private var topID: Item.ID?
+
+    init(items: [Item], selectedID: Binding<Item.ID?>,
+         title: @escaping (Item) -> String,
+         detail: @escaping (Item) -> String,
+         positionKey: String,
+         onDoubleTap: @escaping (Item) -> Void) {
+        self.items = items
+        self._selectedID = selectedID
+        self.title = title
+        self.detail = detail
+        self.positionKey = positionKey
+        self.onDoubleTap = onDoubleTap
+        let saved = ViewPositionStore.topID(for: positionKey)
+        _topID = State(initialValue: saved.flatMap { id in
+            items.contains(where: { $0.id == id }) ? id : nil
+        })
+    }
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -179,7 +218,15 @@ private struct BrowserList<Item: Identifiable>: View {
                         .simultaneousGesture(TapGesture(count: 2).onEnded { onDoubleTap(item) })
                     }
                 }
+                .scrollTargetLayout()
                 .padding(.vertical, 6)
+            }
+            .scrollPosition(id: $topID, anchor: .top)
+            .onAppear {
+                guard let topID else { return }
+                DispatchQueue.main.async {
+                    proxy.scrollTo(topID, anchor: .top)
+                }
             }
             .onChange(of: navigator.moveCount) { _, _ in
                 guard moveSelection(), let id = selectedID else { return }
@@ -192,6 +239,10 @@ private struct BrowserList<Item: Identifiable>: View {
             }
         }
         .background(Theme.contentBackground)
+        .onChange(of: topID) { _, id in
+            guard let id else { return }
+            ViewPositionStore.setTopID(id, for: positionKey)
+        }
     }
 
     private func activateSelection() {
@@ -252,6 +303,7 @@ private struct BrowserAlbumPane: View {
     let title: String
     let subtitle: String
     let albums: [Album]
+    let positionKey: String
 
     @EnvironmentObject private var player: PlayerState
     @AppStorage("albumSort") private var albumSort = GridSort.album.rawValue
@@ -259,6 +311,18 @@ private struct BrowserAlbumPane: View {
         GridSortDirection.ascending.rawValue
     @State private var selectedSongIDs: Set<UUID> = []
     @State private var selectionAnchor: UUID?
+    @State private var topAlbumID: UUID?
+
+    init(title: String, subtitle: String, albums: [Album], positionKey: String) {
+        self.title = title
+        self.subtitle = subtitle
+        self.albums = albums
+        self.positionKey = positionKey
+        let saved = ViewPositionStore.topID(for: positionKey).flatMap(UUID.init)
+        _topAlbumID = State(initialValue: saved.flatMap { id in
+            albums.contains(where: { $0.id == id }) ? id : nil
+        })
+    }
 
     private var allSongs: [Song] { albums.flatMap(\.songs) }
     private var orderedSongs: [Song] { sortedAlbums.flatMap(\.songs) }
@@ -275,25 +339,39 @@ private struct BrowserAlbumPane: View {
         VStack(spacing: 0) {
             header
             Hairline()
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    ForEach(sortedAlbums) { album in
-                        BrowserAlbumSection(
-                            album: album,
-                            selectedSongIDs: $selectedSongIDs,
-                            selectedSongs: orderedSongs.filter { selectedSongIDs.contains($0.id) },
-                            onRowTap: { song in handleRowTap(song) }
-                        )
-                        Hairline()
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(sortedAlbums) { album in
+                            BrowserAlbumSection(
+                                album: album,
+                                selectedSongIDs: $selectedSongIDs,
+                                selectedSongs: orderedSongs.filter { selectedSongIDs.contains($0.id) },
+                                onRowTap: { song in handleRowTap(song) }
+                            )
+                            Hairline()
+                        }
+                    }
+                    .scrollTargetLayout()
+                    .padding(.bottom, 8)
+                    .onTapGesture { clearSelection() }
+                    .marqueeSelectable(selection: $selectedSongIDs, space: "browserTrackSpace")
+                }
+                .scrollPosition(id: $topAlbumID, anchor: .top)
+                .onAppear {
+                    guard let topAlbumID else { return }
+                    DispatchQueue.main.async {
+                        proxy.scrollTo(topAlbumID, anchor: .top)
                     }
                 }
-                .padding(.bottom, 8)
                 .onTapGesture { clearSelection() }
-                .marqueeSelectable(selection: $selectedSongIDs, space: "browserTrackSpace")
             }
-            .onTapGesture { clearSelection() }
         }
         .background(Theme.contentBackground)
+        .onChange(of: topAlbumID) { _, id in
+            guard let id else { return }
+            ViewPositionStore.setTopID(id.uuidString, for: positionKey)
+        }
     }
 
     private func clearSelection() {

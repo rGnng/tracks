@@ -13,6 +13,7 @@ private struct AlbumCardFramesKey: PreferenceKey {
 struct AlbumGrid: View {
     let albums: [Album]
     @Binding var openAlbumID: UUID?
+    let scrollKey: String
 
     @EnvironmentObject private var player: PlayerState
     @ObservedObject private var navigator = KeyboardNavigator.shared
@@ -26,8 +27,19 @@ struct AlbumGrid: View {
     @State private var marqueeCurrent: CGPoint?
     @State private var marqueeBaseSelection: Set<UUID> = []
     @State private var gridGlobalOrigin: CGPoint = .zero
+    @State private var topAlbumID: UUID?
 
     private let columns = [GridItem(.adaptive(minimum: 158, maximum: 240), spacing: 22)]
+
+    init(albums: [Album], openAlbumID: Binding<UUID?>, scrollKey: String) {
+        self.albums = albums
+        self._openAlbumID = openAlbumID
+        self.scrollKey = scrollKey
+        let saved = ViewPositionStore.topID(for: scrollKey).flatMap(UUID.init)
+        _topAlbumID = State(initialValue: saved.flatMap { id in
+            albums.contains(where: { $0.id == id }) ? id : nil
+        })
+    }
 
     var body: some View {
         ZStack {
@@ -75,6 +87,10 @@ struct AlbumGrid: View {
                 self.expandedAlbum = nil
             }
             updateStatusBar()
+        }
+        .onChange(of: topAlbumID) { _, id in
+            guard let id else { return }
+            ViewPositionStore.setTopID(id.uuidString, for: scrollKey)
         }
     }
 
@@ -143,6 +159,7 @@ struct AlbumGrid: View {
                                 .longPressArmable { dragPayload(for: album) }
                             }
                         }
+                        .scrollTargetLayout()
                         .padding(22)
                         .background(
                             GeometryReader { geo in
@@ -175,6 +192,7 @@ struct AlbumGrid: View {
                     .overlay { marqueeOverlay }
                     .simultaneousGesture(marqueeGesture)
                 }
+                .scrollPosition(id: $topAlbumID, anchor: .top)
                 .onChange(of: navigator.moveCount) { _, _ in
                     guard expandedAlbum == nil else { return }
                     moveSelection(proxy: proxy)
@@ -188,6 +206,7 @@ struct AlbumGrid: View {
                     activateSelection()
                 }
                 .onAppear {
+                    restoreSavedTop(proxy: proxy)
                     scrollToFirstSelectedAlbum(proxy: proxy, animated: false)
                 }
                 .onChange(of: albums) { _, _ in
@@ -200,6 +219,13 @@ struct AlbumGrid: View {
 
     private func firstSelectedAlbumID() -> UUID? {
         albums.first { selectedIDs.contains($0.id) }?.id
+    }
+
+    private func restoreSavedTop(proxy: ScrollViewProxy) {
+        guard let topAlbumID else { return }
+        DispatchQueue.main.async {
+            proxy.scrollTo(topAlbumID, anchor: .top)
+        }
     }
 
     private func scrollToFirstSelectedAlbum(proxy: ScrollViewProxy, animated: Bool) {
@@ -776,6 +802,7 @@ private struct AlbumTrackRow: View {
 
 struct AlbumList: View {
     let albums: [Album]
+    let scrollKey: String
 
     @EnvironmentObject private var player: PlayerState
     @ObservedObject private var navigator = KeyboardNavigator.shared
@@ -787,6 +814,16 @@ struct AlbumList: View {
     @State private var marqueeCurrent: CGPoint?
     @State private var marqueeBaseSelection: Set<UUID> = []
     @State private var listGlobalOrigin: CGPoint = .zero
+    @State private var topAlbumID: UUID?
+
+    init(albums: [Album], scrollKey: String) {
+        self.albums = albums
+        self.scrollKey = scrollKey
+        let saved = ViewPositionStore.topID(for: scrollKey).flatMap(UUID.init)
+        _topAlbumID = State(initialValue: saved.flatMap { id in
+            albums.contains(where: { $0.id == id }) ? id : nil
+        })
+    }
 
     var body: some View {
         GeometryReader { viewport in
@@ -853,6 +890,7 @@ struct AlbumList: View {
                                 .longPressArmable { dragPayload(for: album) }
                             }
                         }
+                        .scrollTargetLayout()
                         .padding(.vertical, 6)
                     }
                     .frame(minHeight: viewport.size.height, alignment: .top)
@@ -876,6 +914,7 @@ struct AlbumList: View {
                     .overlay { marqueeOverlay }
                     .simultaneousGesture(marqueeGesture)
                 }
+                .scrollPosition(id: $topAlbumID, anchor: .top)
                 .onChange(of: navigator.moveCount) { _, _ in
                     moveSelection()
                     if let id = selectionAnchor {
@@ -888,6 +927,7 @@ struct AlbumList: View {
                     activateSelection()
                 }
                 .onAppear {
+                    restoreSavedTop(proxy: proxy)
                     scrollToFirstSelectedAlbum(proxy: proxy, animated: false)
                 }
                 .onChange(of: albums) { _, _ in
@@ -906,10 +946,21 @@ struct AlbumList: View {
             }
             updateStatusBar()
         }
+        .onChange(of: topAlbumID) { _, id in
+            guard let id else { return }
+            ViewPositionStore.setTopID(id.uuidString, for: scrollKey)
+        }
     }
 
     private func firstSelectedAlbumID() -> UUID? {
         albums.first { selectedIDs.contains($0.id) }?.id
+    }
+
+    private func restoreSavedTop(proxy: ScrollViewProxy) {
+        guard let topAlbumID else { return }
+        DispatchQueue.main.async {
+            proxy.scrollTo(topAlbumID, anchor: .top)
+        }
     }
 
     private func scrollToFirstSelectedAlbum(proxy: ScrollViewProxy, animated: Bool) {
@@ -1113,6 +1164,10 @@ enum SongTableContext: Hashable {
         }
     }
 
+    var scrollPositionKey: String {
+        "songTable.\(sortStorageKey)"
+    }
+
     var playlistID: UUID? {
         if case .playlist(let id) = self { return id }
         return nil
@@ -1179,6 +1234,7 @@ struct SongTable: View {
     @AppStorage private var sortKeyRaw: String
     @AppStorage private var sortAscending: Bool
     @State private var sortedSongs: [Song] = []
+    @State private var topSongID: UUID?
 
     @AppStorage private var nameWidth: Double
     @AppStorage private var trackWidth: Double
@@ -1249,6 +1305,10 @@ struct SongTable: View {
                                                        by: initialKey,
                                                        ascending: initialAscending,
                                                        playlistInfo: playlistInfo))
+        let savedTop = ViewPositionStore.topID(for: context.scrollPositionKey).flatMap(UUID.init)
+        _topSongID = State(initialValue: savedTop.flatMap { id in
+            songs.contains(where: { $0.id == id }) ? id : nil
+        })
     }
 
     // MARK: Column metadata
@@ -1383,6 +1443,10 @@ struct SongTable: View {
         }
         .onChange(of: playlistInfo) { _, _ in
             rebuildSorted()
+        }
+        .onChange(of: topSongID) { _, id in
+            guard let id else { return }
+            ViewPositionStore.setTopID(id.uuidString, for: context.scrollPositionKey)
         }
     }
 
@@ -1612,9 +1676,17 @@ struct SongTable: View {
                         rowView(song, index: index)
                     }
                 }
+                .scrollTargetLayout()
                 .padding(.vertical, 6)
                 .onTapGesture { clearSelection() }
                 .marqueeSelectable(selection: $selectedIDs, space: "songTableSpace")
+            }
+            .scrollPosition(id: $topSongID, anchor: .top)
+            .onAppear {
+                guard let topSongID else { return }
+                DispatchQueue.main.async {
+                    proxy.scrollTo(topSongID, anchor: .top)
+                }
             }
             .onChange(of: navigator.moveCount) { _, _ in
                 moveSelection()
