@@ -144,9 +144,10 @@ enum Theme {
     /// Played portion of the seek bar inside the now-playing panel (neutral gray).
     static let lcdProgress = c((0.55, 0.55, 0.58), (0.62, 0.62, 0.66))
 
-    // Selection / accent. `.accentColor` resolves from the environment, so
-    // changing the Highlights setting updates every selection surface.
-    static var highlight: Color { .accentColor }
+    // Custom-drawn highlight surfaces read the saved choice directly. Native
+    // SwiftUI controls still use the scene-root `.accentColor`; this direct
+    // value also works inside popovers, where the accent environment can be lost.
+    static var highlight: Color { HighlightColor.current.color }
     static var selectionFill: Color { HighlightColor.current.selectionColor }
     static var highlightForeground: Color {
         Color(nsColor: NSColor(name: nil) { appearance in

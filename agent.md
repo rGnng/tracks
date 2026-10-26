@@ -338,14 +338,19 @@ Important schema decisions:
 - Settings uses a normal numeric field and a `%` label; no Stepper.
 - Appearance > Highlights selects `highlightColor` (default `system`) and offers
   the macOS accent choices: System/Multicolor, Blue, Purple, Pink, Red, Orange,
-  Yellow, Green, Graphite. Scene roots apply `.accentColor`, and `Theme.highlight`
-  resolves to `Color.accentColor`, so outlines, links, active buttons, row hover,
-  and native controls update live. Filled selections use `Theme.selectionFill`,
+  Yellow, Green, Graphite. Scene roots apply `.accentColor` for native SwiftUI
+  controls; custom views use `Theme.highlight`, which reads the saved choice
+  directly so popovers and overlays do not depend on accent-environment
+  propagation. Outlines, links, active buttons, row hover, and custom controls
+  update live. Filled selections use `Theme.selectionFill`,
   which is the raw accent in light mode and a 35%-darkened accent in dark mode so
   large rows do not look neon. The selected sidebar row uses a 20% tint.
   `Theme.highlightForeground` switches selected-row text to black for bright
   choices. Queue/History and Get Info tabs use `AccentSegmentedControl` because
   AppKit's segmented picker ignores `.tint` and always uses the bright system accent.
+  Native AppKit context menus, menu-item highlights, text selection, and panels
+  use the macOS system accent; there is no supported per-app override. Forcing
+  those would require custom menus that lose native behavior.
 - View > Appearance has Automatic/Light/Dark. `AppearanceController` applies the
   choice at the AppKit level (`NSApp.appearance` and every window's appearance).
   Automatic sets these to nil so live system appearance changes propagate to all
