@@ -509,8 +509,8 @@ private struct MiniQueueRow: View {
         .contentShape(Rectangle())
         .onTapGesture(perform: action)
         .onHover { hover = $0 }
-        .appContextMenu {
-            queueSongMenuItems(for: song)
+        .contextMenu {
+            QueueSongContextMenu(song: song)
         }
     }
 }

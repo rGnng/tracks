@@ -8,26 +8,23 @@ struct AlbumContextMenu: ViewModifier {
     @Environment(\.openWindow) private var openWindow
 
     func body(content: Content) -> some View {
-        content.appContextMenu {
-            [
-                .action("Play") { player.play(album.songs) },
-                .action("Shuffle") { player.playShuffled(album.songs) },
-                .separator,
-            ] + addToPlaylistMenuItems(songs: album.songs) + [
-                .action("Play Next") { player.playNext(album.songs) },
-                .action("Play Later") { player.playLater(album.songs) },
-                .separator,
-                .action("Get Info…") {
-                    InfoCenter.shared.target = .album(album.id)
-                    openWindow(id: "get-info")
-                },
-                .separator,
-                .action("Delete…",
-                        enabled: LibraryDeletion.canDelete(albums: [album]),
-                        destructive: true) {
-                    LibraryDeletion.confirmDelete(albums: [album])
-                },
-            ]
+        content.contextMenu {
+            Button("Play") { player.play(album.songs) }
+            Button("Shuffle") { player.playShuffled(album.songs) }
+            Divider()
+            AddToPlaylistMenu(songs: album.songs)
+            Button("Play Next") { player.playNext(album.songs) }
+            Button("Play Later") { player.playLater(album.songs) }
+            Divider()
+            Button("Get Info…") {
+                InfoCenter.shared.target = .album(album.id)
+                openWindow(id: "get-info")
+            }
+            Divider()
+            Button("Delete…") {
+                LibraryDeletion.confirmDelete(albums: [album])
+            }
+            .disabled(!LibraryDeletion.canDelete(albums: [album]))
         }
     }
 }
@@ -44,31 +41,28 @@ struct SongContextMenu: ViewModifier {
     @Environment(\.openWindow) private var openWindow
 
     func body(content: Content) -> some View {
-        content.appContextMenu {
-            [
-                .action("Play") {
-                    if selection.isEmpty {
-                        player.play(song, in: queue)
-                    } else {
-                        player.play(selection)
-                    }
-                },
-                .separator,
-            ] + addToPlaylistMenuItems(songs: targets) + [
-                .action("Play Next") { player.playNext(targets) },
-                .action("Play Later") { player.playLater(targets) },
-                .separator,
-                .action("Get Info…") {
-                    InfoCenter.shared.target = .song(song.id)
-                    openWindow(id: "get-info")
-                },
-                .separator,
-                .action("Delete…",
-                        enabled: LibraryDeletion.canDelete(songs: targets),
-                        destructive: true) {
-                    LibraryDeletion.confirmDelete(songs: targets)
-                },
-            ]
+        content.contextMenu {
+            Button("Play") {
+                if selection.isEmpty {
+                    player.play(song, in: queue)
+                } else {
+                    player.play(selection)
+                }
+            }
+            Divider()
+            AddToPlaylistMenu(songs: targets)
+            Button("Play Next") { player.playNext(targets) }
+            Button("Play Later") { player.playLater(targets) }
+            Divider()
+            Button("Get Info…") {
+                InfoCenter.shared.target = .song(song.id)
+                openWindow(id: "get-info")
+            }
+            Divider()
+            Button("Delete…") {
+                LibraryDeletion.confirmDelete(songs: targets)
+            }
+            .disabled(!LibraryDeletion.canDelete(songs: targets))
         }
     }
 }

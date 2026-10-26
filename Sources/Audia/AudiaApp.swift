@@ -5,7 +5,7 @@ import SwiftUI
 struct AudiaApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @AppStorage("appearanceMode") private var appearanceMode = "auto"
-    @AppStorage("highlightColor") private var highlightColorRaw = HighlightColor.system.rawValue
+    @AppStorage("highlightColor") private var highlightColorRaw = HighlightColor.graphite.rawValue
     @AppStorage("showStatusBar") private var showStatusBar = true
 
     private var highlightColor: Color {
@@ -139,7 +139,7 @@ struct SettingsView: View {
     @AppStorage("albumSort") private var albumSort = GridSort.album.rawValue
     @AppStorage("albumSortDirection") private var albumSortDirection =
         GridSortDirection.ascending.rawValue
-    @AppStorage("highlightColor") private var highlightColor = HighlightColor.system.rawValue
+    @AppStorage("highlightColor") private var highlightColor = HighlightColor.graphite.rawValue
     @AppStorage("mpd.enabled") private var mpdEnabled = false
     @AppStorage("mpd.allInterfaces") private var mpdAllInterfaces = false
     @AppStorage("mpd.addresses") private var mpdAddresses = "127.0.0.1"
@@ -193,10 +193,8 @@ struct SettingsView: View {
                 .pickerStyle(.menu)
                 .frame(width: 260, alignment: .leading)
 
-                VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 10) {
                     Text("Highlights")
-                        .font(.system(size: 11))
-                        .foregroundColor(Theme.secondaryText)
 
                     HStack(spacing: 2) {
                         ForEach(HighlightColor.allCases) { choice in
@@ -1088,7 +1086,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 @MainActor
 enum KeyboardShortcuts {
     static func handle(_ event: NSEvent) -> NSEvent? {
-        if ContextMenuController.shared.handleKeyEvent(event) { return nil }
         if ShortcutRecorderState.isRecording { return event }
         guard let window = event.window else { return event }
         // Arrow/Page/Home keys carry `.function`/`.numericPad`; ignore those so

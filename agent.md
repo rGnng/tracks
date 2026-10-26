@@ -114,8 +114,7 @@ Sources/Audia/
   ContentPane.swift          Content routing and album sort/view settings
   ContentViews.swift         Album grid/list, album detail, song table, selection
   BrowserViews.swift         Artists/Genres master-detail browsers
-  ContextMenus.swift         Shared album/song context menu item definitions
-  AppContextMenu.swift       Custom accent-colored right-click menu panel and catcher
+  ContextMenus.swift         Shared album/song context menus
   KeyboardShortcut.swift     Standard AppKit shortcut recorder, matching, persistence
   SettingsFocusSink.swift    Invisible initial first responder for Settings
   GetInfo.swift              Details/Artwork/File inspector and tag editing
@@ -337,30 +336,26 @@ Important schema decisions:
   - The quality text field remains clickable and editable. Tested values include
     75, 80, 5 (clamps to 15), and 200 (clamps to 100).
 - Settings uses a normal numeric field and a `%` label; no Stepper.
-- Appearance > Highlights selects `highlightColor` (default `system`) and offers
-  the macOS accent choices: System/Multicolor, Blue, Purple, Pink, Red, Orange,
+- Appearance > Highlights is a normal label with the color circles to its right,
+  matching the other Settings rows. It selects `highlightColor` (default
+  `graphite`) and offers System/Multicolor, Blue, Purple, Pink, Red, Orange,
   Yellow, Green, Graphite. Scene roots apply `.accentColor` for native SwiftUI
   controls; custom views use `Theme.highlight`, which reads the saved choice
   directly so popovers and overlays do not depend on accent-environment
   propagation. Outlines, links, active buttons, row hover, and custom controls
-  update live. Filled selections use `Theme.selectionFill`,
-  which is the raw accent in light mode and a 28%-darkened accent in dark mode so
-  large rows do not look neon. The selected sidebar row uses a 20% tint.
-  `Theme.highlightForeground` switches selected-row text to black for bright
-  choices. Queue/History and Get Info tabs use `AccentSegmentedControl` because
-  AppKit's segmented picker ignores `.tint` and always uses the bright system accent.
-- Right-click context menus are app-drawn (`AppContextMenu`) in a borderless
-  nonactivating panel, using `Theme.selectionFill` for the hovered row. The
-  flattened "Add to Playlist" section replaces the former native submenu so it
-  follows the app color. Keyboard Up/Down/Return/Escape are routed through
-  `KeyboardShortcuts.handle` while the menu is open; all other keys are consumed.
-  Native NSMenu popups (app menus, the NowPlaying overflow menu), text selection,
-  and system panels still use the macOS system accent. A native NSMenu *can* be
-  tinted by shipping an app-level `AccentColor` asset plus `NSAccentColorName`
-  (tested with a green native menu highlight), but that is a static bundle-level
-  color, not a runtime-switchable setting; `.tint()`/SwiftUI `.accentColor` alone
-  do not change native menu selection. Dynamic per-app Highlights therefore
-  require the custom menu.
+  update live. Filled selections use `Theme.selectionFill`: the raw accent in
+  light mode and only 5%-darkened in dark mode. The selected sidebar row uses a
+  20% tint. `Theme.highlightForeground` switches selected-row text to black for
+  bright choices. Queue/History and Get Info tabs use `AccentSegmentedControl`
+  because AppKit's segmented picker ignores `.tint` and always uses the system accent.
+- Right-click context menus are native SwiftUI `.contextMenu` again. The app
+  declares one static `AccentColor` asset (Graphite) via `NSAccentColorName`, so
+  native menus use a neutral graphite highlight that works beside any dynamic
+  in-app highlight. `scripts/build.sh` compiles
+  `Assets/AccentColors.xcassets` into `Assets.car`; this is build-time static and
+  does not modify the signed bundle at runtime. Do not make `NSAccentColorName`
+  follow the runtime setting: rewriting Info.plist/Assets.car invalidates code
+  signing and was rejected.
 - View > Appearance has Automatic/Light/Dark. `AppearanceController` applies the
   choice at the AppKit level (`NSApp.appearance` and every window's appearance).
   Automatic sets these to nil so live system appearance changes propagate to all

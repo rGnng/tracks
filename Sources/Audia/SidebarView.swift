@@ -25,16 +25,13 @@ struct SidebarView: View {
                 ) {
                     selection = .library(section)
                 }
-                .appContextMenu {
-                    guard section == .albums || section == .recentlyAdded else { return [] }
-                    return [
-                        .action("Play", enabled: !library.albums.isEmpty) {
-                            player.play(songs(for: section))
-                        },
-                        .action("Shuffle", enabled: !library.albums.isEmpty) {
-                            player.playShuffled(songs(for: section))
-                        },
-                    ]
+                .contextMenu {
+                    if section == .albums || section == .recentlyAdded {
+                        Button("Play") { player.play(songs(for: section)) }
+                            .disabled(library.albums.isEmpty)
+                        Button("Shuffle") { player.playShuffled(songs(for: section)) }
+                            .disabled(library.albums.isEmpty)
+                    }
                 }
             }
 
@@ -77,15 +74,11 @@ struct SidebarView: View {
                     )
                 }
             )
-            .appContextMenu {
-                [
-                    .action("Play", enabled: !library.starredSongs.isEmpty) {
-                        player.play(library.starredSongs)
-                    },
-                    .action("Shuffle", enabled: !library.starredSongs.isEmpty) {
-                        player.playShuffled(library.starredSongs)
-                    },
-                ]
+            .contextMenu {
+                Button("Play") { player.play(library.starredSongs) }
+                    .disabled(library.starredSongs.isEmpty)
+                Button("Shuffle") { player.playShuffled(library.starredSongs) }
+                    .disabled(library.starredSongs.isEmpty)
             }
 
             ForEach(library.playlists) { playlist in
@@ -115,26 +108,22 @@ struct SidebarView: View {
                             )
                         }
                     )
-                    .appContextMenu {
-                        [
-                            .action("Play", enabled: !playlist.songs.isEmpty) {
-                                player.play(playlist.songs)
-                            },
-                            .action("Shuffle", enabled: !playlist.songs.isEmpty) {
-                                player.playShuffled(playlist.songs)
-                            },
-                            .separator,
-                            .action("Rename") {
-                                creatingPlaylist = false
-                                editingPlaylistID = playlist.id
-                            },
-                            .action("Delete", destructive: true) {
-                                library.deletePlaylist(playlist.id)
-                                if selection == .playlist(playlist.id) {
-                                    selection = .library(.recentlyAdded)
-                                }
-                            },
-                        ]
+                    .contextMenu {
+                        Button("Play") { player.play(playlist.songs) }
+                            .disabled(playlist.songs.isEmpty)
+                        Button("Shuffle") { player.playShuffled(playlist.songs) }
+                            .disabled(playlist.songs.isEmpty)
+                        Divider()
+                        Button("Rename") {
+                            creatingPlaylist = false
+                            editingPlaylistID = playlist.id
+                        }
+                        Button("Delete", role: .destructive) {
+                            library.deletePlaylist(playlist.id)
+                            if selection == .playlist(playlist.id) {
+                                selection = .library(.recentlyAdded)
+                            }
+                        }
                     }
                 }
             }

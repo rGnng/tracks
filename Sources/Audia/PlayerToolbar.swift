@@ -350,8 +350,8 @@ private struct QueuePopover: View {
         let row = QueueRow(song: song) {
             player.playFromQueue(song)
         }
-        .appContextMenu {
-            queueSongMenuItems(for: song)
+        .contextMenu {
+            QueueSongContextMenu(song: song)
         }
 
         if tab == .upNext {
@@ -484,6 +484,52 @@ private struct QueueRow: View {
         .contentShape(Rectangle())
         .onTapGesture(perform: onPlay)
         .onHover { hover = $0 }
+    }
+}
+
+/// Shared right-click menu for songs shown in the queue panel.
+struct QueueSongContextMenu: View {
+    let song: Song
+    @EnvironmentObject private var player: PlayerState
+
+    private var albumID: UUID? {
+        Library.shared.song(withID: song.id)?.album.id
+    }
+
+    private var artistTarget: String {
+        let source = Library.shared.song(withID: song.id)?.song ?? song
+        let albumArtist = source.albumArtist.trimmingCharacters(in: .whitespacesAndNewlines)
+        return albumArtist.isEmpty ? source.artist : albumArtist
+    }
+
+    private var isInQueue: Bool {
+        player.queue.contains { $0.id == song.id }
+    }
+
+    var body: some View {
+        Button("Play Next") {
+            player.playNextFromQueue(song)
+        }
+        .disabled(player.currentSong?.id == song.id)
+
+        Button("Go to Album") {
+            guard let albumID else { return }
+            NavigationCenter.shared.albumToOpen = albumID
+        }
+        .disabled(albumID == nil)
+
+        Button("Go to Artist") {
+            guard !artistTarget.isEmpty else { return }
+            NavigationCenter.shared.artistToOpen = artistTarget
+        }
+        .disabled(artistTarget.isEmpty)
+
+        Divider()
+
+        Button("Delete from Queue") {
+            player.removeFromQueue(song)
+        }
+        .disabled(!isInQueue)
     }
 }
 

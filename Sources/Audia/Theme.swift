@@ -32,7 +32,7 @@ enum HighlightColor: String, CaseIterable, Identifiable {
 
     static var current: HighlightColor {
         let raw = UserDefaults.standard.string(forKey: "highlightColor") ?? ""
-        return HighlightColor(rawValue: raw) ?? .system
+        return HighlightColor(rawValue: raw) ?? .graphite
     }
 
     var nsColor: NSColor {
@@ -61,7 +61,7 @@ enum HighlightColor: String, CaseIterable, Identifiable {
         guard appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua else {
             return resolved
         }
-        return resolved.blended(withFraction: 0.28, of: .black) ?? resolved
+        return resolved.blended(withFraction: 0.05, of: .black) ?? resolved
     }
 
     var selectionColor: Color {
@@ -88,10 +88,7 @@ enum HighlightColor: String, CaseIterable, Identifiable {
         let brightness = 0.299 * rgb.redComponent
             + 0.587 * rgb.greenComponent
             + 0.114 * rgb.blueComponent
-        let threshold: CGFloat = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            ? 0.45
-            : 0.55
-        return brightness > threshold
+        return brightness > 0.55
     }
 }
 
