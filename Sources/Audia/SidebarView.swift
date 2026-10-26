@@ -9,6 +9,9 @@ struct SidebarView: View {
     @ObservedObject private var drag = DragController.shared
     @ObservedObject private var importer = MediaImporter.shared
     @EnvironmentObject private var player: PlayerState
+    @AppStorage("albumSort") private var albumSort = GridSort.album.rawValue
+    @AppStorage("albumSortDirection") private var albumSortDirection =
+        GridSortDirection.ascending.rawValue
     @State private var hoveringPlaylistHeader = false
 
     @State private var editingPlaylistID: UUID?
@@ -25,6 +28,10 @@ struct SidebarView: View {
                 ) {
                     selection = .library(section)
                 }
+                .simultaneousGesture(TapGesture(count: 2).onEnded {
+                    guard section == .albums || section == .recentlyAdded else { return }
+                    player.play(songs(for: section))
+                })
                 .contextMenu {
                     if section == .albums || section == .recentlyAdded {
                         Button("Play") { player.play(songs(for: section)) }
@@ -66,6 +73,9 @@ struct SidebarView: View {
             ) {
                 selection = .starred
             }
+            .simultaneousGesture(TapGesture(count: 2).onEnded {
+                player.play(SongSortStore.sorted(library.starredSongs, for: .starred))
+            })
             .background(
                 GeometryReader { proxy in
                     Color.clear.preference(
@@ -100,6 +110,10 @@ struct SidebarView: View {
                     ) {
                         selection = .playlist(playlist.id)
                     }
+                    .simultaneousGesture(TapGesture(count: 2).onEnded {
+                        player.play(SongSortStore.sorted(playlist.songs,
+                                                         for: .playlist(playlist.id)))
+                    })
                     .background(
                         GeometryReader { proxy in
                             Color.clear.preference(
@@ -162,22 +176,17 @@ struct SidebarView: View {
         }
     }
 
-    /// Whole-library Play/Shuffle targets for the sidebar sections. Recently
-    /// Added follows the same album order as its content view.
+    /// Whole-library Play/Shuffle targets for the sidebar sections. The
+    /// returned order mirrors the corresponding content view.
     private func songs(for section: LibrarySection) -> [Song] {
         switch section {
         case .albums:
-            return library.allSongs
+            let sort = GridSort(rawValue: albumSort) ?? .album
+            let direction = GridSortDirection(rawValue: albumSortDirection) ?? .ascending
+            return albumsSorted(library.albums, by: sort, direction: direction)
+                .flatMap(\.songs)
         case .recentlyAdded:
-            let albums = library.albums.sorted {
-                let a = $0.addedAt
-                let b = $1.addedAt
-                if abs(a - b) < 0.5 {
-                    return $0.title.localizedStandardCompare($1.title) == .orderedAscending
-                }
-                return a > b
-            }
-            return albums.flatMap(\.songs)
+            return recentAlbumsSorted(library.albums).flatMap(\.songs)
         default:
             return []
         }

@@ -88,14 +88,7 @@ struct ContentPane: View {
     }
 
     private var recentAlbums: [Album] {
-        filteredAlbums.sorted {
-            let a = $0.addedAt
-            let b = $1.addedAt
-            if abs(a - b) < 0.5 {
-                return $0.title.localizedStandardCompare($1.title) == .orderedAscending
-            }
-            return a > b
-        }
+        recentAlbumsSorted(filteredAlbums)
     }
 
     // MARK: Search filtering
@@ -191,4 +184,15 @@ func albumsSorted(_ albums: [Album],
         ascending = albums.sorted { $0.yearNumber < $1.yearNumber }
     }
     return direction == .descending ? Array(ascending.reversed()) : ascending
+}
+
+func recentAlbumsSorted(_ albums: [Album]) -> [Album] {
+    albums.sorted {
+        let a = $0.addedAt
+        let b = $1.addedAt
+        if abs(a - b) < 0.5 {
+            return $0.title.localizedStandardCompare($1.title) == .orderedAscending
+        }
+        return a > b
+    }
 }

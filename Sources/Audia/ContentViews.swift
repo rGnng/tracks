@@ -1082,6 +1082,16 @@ enum SongTableContext: Hashable {
         }
     }
 
+    /// Sorting is remembered per playlist, while column widths and visibility
+    /// remain shared by the table kind.
+    var sortStorageKey: String {
+        switch self {
+        case .songs: return "songs"
+        case .starred: return "starred"
+        case .playlist(let id): return "playlist.\(id.uuidString)"
+        }
+    }
+
     var playlistID: UUID? {
         if case .playlist(let id) = self { return id }
         return nil
@@ -1136,8 +1146,8 @@ struct SongTable: View {
     @Environment(\.openWindow) private var openWindow
     @State private var selectedIDs: Set<UUID> = []
     @State private var selectionAnchor: UUID?
-    @State private var sortKey: SongSortKey = .name
-    @State private var ascending = true
+    @AppStorage private var sortKeyRaw: String
+    @AppStorage private var sortAscending: Bool
     @State private var sortedSongs: [Song] = []
 
     @AppStorage private var nameWidth: Double
@@ -1171,6 +1181,7 @@ struct SongTable: View {
         self.songs = songs
         self.context = context
         let prefix = "songTable2.\(context.storageKey)"
+        let sortPrefix = "songTable2.\(context.sortStorageKey)"
         _nameWidth = AppStorage(wrappedValue: 300, "\(prefix).nameWidth")
         _trackWidth = AppStorage(wrappedValue: 32, "\(prefix).trackWidth")
         _timeWidth = AppStorage(wrappedValue: 52, "\(prefix).timeWidth")
@@ -1190,7 +1201,13 @@ struct SongTable: View {
         let orderKey = "\(prefix).columnOrder"
         let newDefault = SongColumn.defaultOrder.map(\.rawValue).joined(separator: ",")
         _columnOrderCSV = AppStorage(wrappedValue: newDefault, orderKey)
-        _sortedSongs = State(initialValue: Self.sortSongs(songs, by: .name, ascending: true))
+        _sortKeyRaw = AppStorage(wrappedValue: SongSortKey.name.rawValue, "\(sortPrefix).sortKey")
+        _sortAscending = AppStorage(wrappedValue: true, "\(sortPrefix).sortAscending")
+        let initialKey = SongSortStore.key(for: context)
+        let initialAscending = SongSortStore.ascending(for: context)
+        _sortedSongs = State(initialValue: songsSorted(songs,
+                                                       by: initialKey,
+                                                       ascending: initialAscending))
     }
 
     // MARK: Column metadata
@@ -1260,35 +1277,16 @@ struct SongTable: View {
         }
     }
 
+    private var sortKey: SongSortKey {
+        SongSortKey(rawValue: sortKeyRaw) ?? .name
+    }
+
+    private var ascending: Bool { sortAscending }
+
     private var sorted: [Song] { sortedSongs }
 
     private func rebuildSorted() {
-        sortedSongs = Self.sortSongs(songs, by: sortKey, ascending: ascending)
-    }
-
-    private static func sortSongs(_ songs: [Song], by key: SongSortKey, ascending: Bool) -> [Song] {
-        songs.sorted { a, b in
-            switch key {
-            case .name:
-                return ascending ? a.title < b.title : a.title > b.title
-            case .time:
-                return ascending ? a.duration < b.duration : a.duration > b.duration
-            case .artist:
-                let x = a.artist + a.album
-                let y = b.artist + b.album
-                return ascending ? x < y : x > y
-            case .albumArtist:
-                let x = a.albumArtist + a.album + String(a.trackNumber)
-                let y = b.albumArtist + b.album + String(b.trackNumber)
-                return ascending ? x < y : x > y
-            case .album:
-                let x = a.album + String(a.trackNumber)
-                let y = b.album + String(b.trackNumber)
-                return ascending ? x < y : x > y
-            case .genre:
-                return ascending ? a.genre < b.genre : a.genre > b.genre
-            }
-        }
+        sortedSongs = songsSorted(songs, by: sortKey, ascending: ascending)
     }
 
     var body: some View {
@@ -1772,18 +1770,64 @@ struct SongTable: View {
 
     private func setSort(_ key: SongSortKey) {
         if sortKey == key {
-            ascending.toggle()
+            sortAscending.toggle()
         } else {
-            sortKey = key
-            ascending = true
+            sortKeyRaw = key.rawValue
+            sortAscending = true
         }
         rebuildSorted()
     }
 }
 
 
-private enum SongSortKey {
+enum SongSortKey: String, CaseIterable {
     case name, time, artist, albumArtist, album, genre
+}
+
+func songsSorted(_ songs: [Song], by key: SongSortKey, ascending: Bool) -> [Song] {
+    songs.sorted { a, b in
+        switch key {
+        case .name:
+            return ascending ? a.title < b.title : a.title > b.title
+        case .time:
+            return ascending ? a.duration < b.duration : a.duration > b.duration
+        case .artist:
+            let x = a.artist + a.album
+            let y = b.artist + b.album
+            return ascending ? x < y : x > y
+        case .albumArtist:
+            let x = a.albumArtist + a.album + String(a.trackNumber)
+            let y = b.albumArtist + b.album + String(b.trackNumber)
+            return ascending ? x < y : x > y
+        case .album:
+            let x = a.album + String(a.trackNumber)
+            let y = b.album + String(b.trackNumber)
+            return ascending ? x < y : x > y
+        case .genre:
+            return ascending ? a.genre < b.genre : a.genre > b.genre
+        }
+    }
+}
+
+enum SongSortStore {
+    static func key(for context: SongTableContext) -> SongSortKey {
+        let raw = UserDefaults.standard.string(forKey: "\(prefix(for: context)).sortKey") ?? ""
+        return SongSortKey(rawValue: raw) ?? .name
+    }
+
+    static func ascending(for context: SongTableContext) -> Bool {
+        let key = "\(prefix(for: context)).sortAscending"
+        guard UserDefaults.standard.object(forKey: key) != nil else { return true }
+        return UserDefaults.standard.bool(forKey: key)
+    }
+
+    static func sorted(_ songs: [Song], for context: SongTableContext) -> [Song] {
+        songsSorted(songs, by: key(for: context), ascending: ascending(for: context))
+    }
+
+    private static func prefix(for context: SongTableContext) -> String {
+        "songTable2.\(context.sortStorageKey)"
+    }
 }
 
 private struct SongHeaderLabel: View {
