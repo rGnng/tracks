@@ -19,6 +19,10 @@ APP="build/Tracks.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/Audia"
+if [[ -f Resources/AppIcon.icns ]]; then
+  cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+fi
+
 if [[ -d Assets/AccentColors.xcassets ]]; then
   xcrun actool Assets/AccentColors.xcassets \
     --compile "$APP/Contents/Resources" \
@@ -41,6 +45,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <string>com.audia.tracks</string>
     <key>CFBundleExecutable</key>
     <string>Audia</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>NSAccentColorName</key>
     <string>AccentColor</string>
     <key>CFBundlePackageType</key>

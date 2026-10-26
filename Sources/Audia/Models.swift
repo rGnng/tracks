@@ -17,26 +17,6 @@ struct Artwork: Hashable {
         self.imageData = imageData
         self.cacheKey = cacheKey
     }
-
-    static func make(_ seed: Int) -> Artwork {
-        let p = palettes[abs(seed) % palettes.count]
-        return Artwork(colors: p)
-    }
-
-    private static let palettes: [[Color]] = [
-        [Color(red: 0.95, green: 0.42, blue: 0.34), Color(red: 0.45, green: 0.18, blue: 0.55)],
-        [Color(red: 0.20, green: 0.45, blue: 0.90), Color(red: 0.10, green: 0.70, blue: 0.85)],
-        [Color(red: 0.20, green: 0.70, blue: 0.45), Color(red: 0.10, green: 0.45, blue: 0.55)],
-        [Color(red: 1.00, green: 0.62, blue: 0.20), Color(red: 0.90, green: 0.30, blue: 0.30)],
-        [Color(red: 0.75, green: 0.35, blue: 0.85), Color(red: 0.95, green: 0.35, blue: 0.60)],
-        [Color(red: 0.15, green: 0.65, blue: 0.60), Color(red: 0.10, green: 0.40, blue: 0.70)],
-        [Color(red: 0.95, green: 0.78, blue: 0.30), Color(red: 0.85, green: 0.45, blue: 0.20)],
-        [Color(red: 0.35, green: 0.40, blue: 0.50), Color(red: 0.15, green: 0.18, blue: 0.30)],
-        [Color(red: 0.95, green: 0.45, blue: 0.55), Color(red: 0.65, green: 0.20, blue: 0.45)],
-        [Color(red: 0.20, green: 0.75, blue: 0.90), Color(red: 0.20, green: 0.45, blue: 0.75)],
-        [Color(red: 0.60, green: 0.80, blue: 0.30), Color(red: 0.25, green: 0.55, blue: 0.35)],
-        [Color(red: 0.40, green: 0.35, blue: 0.85), Color(red: 0.85, green: 0.45, blue: 0.75)],
-    ]
 }
 
 // MARK: - Models
@@ -312,85 +292,5 @@ enum SidebarSelectionStore {
 
     static func save(_ selection: SidebarSelection) {
         UserDefaults.standard.set(selection.persistenceValue, forKey: defaultsKey)
-    }
-}
-
-// MARK: - Mock data
-
-enum MockData {
-    static let albums: [Album] = [
-        Album(title: "Midnight Architecture", artist: "Lunar Veil", genre: "Electronic", year: "2023", artwork: .make(0),
-              songs: songs(["Glass Facade", "Neon Undertow", "Concrete Waves", "Halogen Sky", "Slow Circuit", "Rooftop Static", "Afterimage", "Parallel Rails"], "Lunar Veil", "Midnight Architecture", "Electronic", "2023")),
-        Album(title: "Paper Moons", artist: "The Paper Foxes", genre: "Indie Rock", year: "2022", artwork: .make(1),
-              songs: songs(["Origami Heart", "Cutout Stars", "Folded Light", "Paper Moons", "Ink & Ivory", "Crease", "Unwritten", "Second Draft", "Margins", "Epilogue"], "The Paper Foxes", "Paper Moons", "Indie Rock", "2022")),
-        Album(title: "Sol y Sombra", artist: "Mira Sol", genre: "Latin Pop", year: "2021", artwork: .make(2),
-              songs: songs(["Amanecer", "Corazón de Fuego", "Media Noche", "Bajo el Sol", "Viento Cálido", "La Orilla", "Sombra y Luz", "Despertar", "Mar Adentro"], "Mira Sol", "Sol y Sombra", "Latin Pop", "2021")),
-        Album(title: "Static Bloom", artist: "Copperfield", genre: "Alternative", year: "2024", artwork: .make(3),
-              songs: songs(["White Noise Garden", "Half Signal", "Static Bloom", "Copper Wire", "Fever Frequency", "Dandelion Radio", "Transmission", "Low Tide"], "Copperfield", "Static Bloom", "Alternative", "2024")),
-        Album(title: "Afterlight", artist: "Nova Reyes", genre: "Synthpop", year: "2023", artwork: .make(4),
-              songs: songs(["Afterlight", "Chrome Sunset", "Velvet Static", "Pulse", "Mirrorball", "Night Drive", "Electric Bloom", "Halcyon", "Last Call"], "Nova Reyes", "Afterlight", "Synthpop", "2023")),
-        Album(title: "Woodland Echoes", artist: "Fern & Fable", genre: "Folk", year: "2020", artwork: .make(5),
-              songs: songs(["Moss & Morning", "The Old Trail", "Woodland Echoes", "Birchlight", "River Song", "Lantern", "Hollow", "Wren"], "Fern & Fable", "Woodland Echoes", "Folk", "2020")),
-        Album(title: "Neon Reverie", artist: "Kai Drift", genre: "Electronic", year: "2022", artwork: .make(6),
-              songs: songs(["Neon Reverie", "Ghost Signal", "Prism", "Overdrive", "Bloom", "Wavelength", "Subsonic", "Aurora Grid", "Fade to Blue"], "Kai Drift", "Neon Reverie", "Electronic", "2022")),
-        Album(title: "Gravity Well", artist: "The Paper Foxes", genre: "Indie Rock", year: "2019", artwork: .make(7),
-              songs: songs(["Gravity Well", "Event Horizon", "Low Orbit", "Tidal", "Orbit Decay", "Starfall", "Escape Velocity", "Long Way Down"], "The Paper Foxes", "Gravity Well", "Indie Rock", "2019")),
-        Album(title: "Saltwater", artist: "Mira Sol", genre: "R&B", year: "2024", artwork: .make(8),
-              songs: songs(["Saltwater", "Tide & Time", "Undertow", "Pearl", "After the Rain", "High Noon", "Driftwood", "Silver Lining", "Horizon"], "Mira Sol", "Saltwater", "R&B", "2024")),
-        Album(title: "Glass Cathedral", artist: "Lunar Veil", genre: "Ambient", year: "2021", artwork: .make(9),
-              songs: songs(["Vestibule", "Stained Light", "Nave", "Choir of Glass", "Aisle", "Vesper", "Echo Chamber", "Sanctum"], "Lunar Veil", "Glass Cathedral", "Ambient", "2021")),
-    ]
-
-    static let allSongs: [Song] = albums.flatMap(\.songs)
-
-    static let playlists: [Playlist] = [
-        Playlist(name: "Favorites", songs: pick(seed: 3, count: 14)),
-        Playlist(name: "Late Night Drive", songs: pick(seed: 11, count: 12)),
-        Playlist(name: "Focus", songs: pick(seed: 21, count: 10)),
-        Playlist(name: "Road Trip", songs: pick(seed: 37, count: 16)),
-    ]
-
-    static func artworkColors(forAlbum title: String) -> [Color] {
-        albums.first { $0.title == title }?.artwork.colors ?? [Color(white: 0.82)]
-    }
-
-    static let genres: [GenreItem] = {
-        var counts: [String: Int] = [:]
-        for a in albums { counts[a.genre, default: 0] += 1 }
-        return counts.sorted { $0.key < $1.key }.map { GenreItem(name: $0.key, count: $0.value) }
-    }()
-
-    static let artists: [ArtistSummary] = {
-        var groups: [String: [Album]] = [:]
-        for a in albums { groups[a.artist, default: []].append(a) }
-        return groups
-            .map { ArtistSummary(name: $0.key, albums: $0.value.sorted { $0.yearNumber > $1.yearNumber }) }
-            .sorted { $0.name < $1.name }
-    }()
-
-    private static func songs(_ titles: [String], _ artist: String, _ album: String, _ genre: String, _ year: String) -> [Song] {
-        titles.enumerated().map { i, t in
-            Song(
-                title: t,
-                artist: artist,
-                album: album,
-                genre: genre,
-                duration: TimeInterval(Int.random(in: 158...341)),
-                trackNumber: i + 1,
-                year: year,
-                plays: Int.random(in: 4...480)
-            )
-        }
-    }
-
-    private static func pick(seed: Int, count: Int) -> [Song] {
-        var out: [Song] = []
-        var i = seed
-        while out.count < count {
-            let song = allSongs[i % allSongs.count]
-            if !out.contains(song) { out.append(song) }
-            i += 7
-        }
-        return out
     }
 }

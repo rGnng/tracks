@@ -1,0 +1,244 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <title>Tracks app icon — dark (floating case)</title>
+  <defs>
+    <linearGradient id="base" x1="0.12" y1="0.02" x2="0.88" y2="1">
+      <stop offset="0" stop-color="#3B414A"/>
+      <stop offset="0.55" stop-color="#2A2F36"/>
+      <stop offset="1" stop-color="#191C21"/>
+    </linearGradient>
+    <radialGradient id="baseSheen" cx="0.22" cy="0.1" r="0.72">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.14"/>
+      <stop offset="0.55" stop-color="#FFFFFF" stop-opacity="0.04"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+
+    <linearGradient id="caseFace" x1="0.05" y1="0" x2="0.9" y2="1">
+      <stop offset="0" stop-color="#535A65"/>
+      <stop offset="0.42" stop-color="#3A4049"/>
+      <stop offset="1" stop-color="#262B32"/>
+    </linearGradient>
+    <linearGradient id="caseSpine" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#1A1E23"/>
+      <stop offset="0.35" stop-color="#4E5661"/>
+      <stop offset="0.7" stop-color="#343B44"/>
+      <stop offset="1" stop-color="#1B1F25"/>
+    </linearGradient>
+    <linearGradient id="hingePanel" x1="0.2" y1="0" x2="0.8" y2="1">
+      <stop offset="0" stop-color="#171B20"/>
+      <stop offset="0.45" stop-color="#2B323A"/>
+      <stop offset="1" stop-color="#434B55"/>
+    </linearGradient>
+    <linearGradient id="hingeGap" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#000000" stop-opacity="0.45"/>
+      <stop offset="0.65" stop-color="#000000" stop-opacity="0.1"/>
+      <stop offset="1" stop-color="#8994A3" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="hingeTab" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#5C636E"/>
+      <stop offset="1" stop-color="#333A43"/>
+    </linearGradient>
+
+    <linearGradient id="tray" x1="0.2" y1="0" x2="0.8" y2="1">
+      <stop offset="0" stop-color="#171A1F"/>
+      <stop offset="0.5" stop-color="#22262C"/>
+      <stop offset="1" stop-color="#2F353D"/>
+    </linearGradient>
+    <linearGradient id="trayTopShade" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#000000" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#5F6A7B" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="trayLeftShade" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#000000" stop-opacity="0.45"/>
+      <stop offset="1" stop-color="#5F6A7B" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="trayBottomLight" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.14"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="trayRightLight" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0.06"/>
+    </linearGradient>
+
+    <radialGradient id="disc" cx="0.34" cy="0.26" r="0.85">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="0.3" stop-color="#F1F4F8"/>
+      <stop offset="0.62" stop-color="#D2D9E3"/>
+      <stop offset="0.86" stop-color="#A9B3C0"/>
+      <stop offset="1" stop-color="#7E8896"/>
+    </radialGradient>
+    <linearGradient id="discSweep" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0"/>
+      <stop offset="0.45" stop-color="#FFFFFF" stop-opacity="0.85"/>
+      <stop offset="0.6" stop-color="#FFFFFF" stop-opacity="0.15"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="hub" cx="0.38" cy="0.3" r="0.8">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.95"/>
+      <stop offset="0.55" stop-color="#E8ECF2" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#8B95A3" stop-opacity="0.8"/>
+    </radialGradient>
+    <radialGradient id="hole" cx="0.4" cy="0.3" r="0.9">
+      <stop offset="0" stop-color="#0F1216"/>
+      <stop offset="1" stop-color="#191D22"/>
+    </radialGradient>
+
+    <clipPath id="squircleClip">
+      <rect x="100" y="100" width="824" height="824" rx="186"/>
+    </clipPath>
+    <clipPath id="caseClip">
+      <rect x="299" y="284" width="408" height="456" rx="22"/>
+    </clipPath>
+    <clipPath id="trayClip">
+      <rect x="337" y="302" width="354" height="420" rx="14"/>
+    </clipPath>
+    <clipPath id="discClip">
+      <circle cx="512" cy="512" r="170"/>
+    </clipPath>
+
+    <filter id="iconShadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="10" stdDeviation="16" flood-color="#000000" flood-opacity="0.55"/>
+    </filter>
+    <filter id="caseDrop" x="-60%" y="-60%" width="220%" height="220%">
+      <feDropShadow dx="10" dy="20" stdDeviation="20" flood-color="#000000" flood-opacity="0.65"/>
+    </filter>
+    <filter id="caseGlow" x="-60%" y="-60%" width="220%" height="220%">
+      <feDropShadow dx="-8" dy="-10" stdDeviation="12" flood-color="#FFFFFF" flood-opacity="0.10"/>
+    </filter>
+    <filter id="tabShadow" x="-60%" y="-60%" width="220%" height="220%">
+      <feDropShadow dx="0" dy="2" stdDeviation="2.5" flood-color="#000000" flood-opacity="0.6"/>
+    </filter>
+    <filter id="softBlur" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="10"/>
+    </filter>
+    <filter id="rainbowBlur" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="7"/>
+    </filter>
+    <filter id="sweepBlur" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="14"/>
+    </filter>
+    <filter id="wedgeBlur" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="4"/>
+    </filter>
+  </defs>
+
+  <!-- macOS squircle plate -->
+  <g filter="url(#iconShadow)">
+    <rect x="100" y="100" width="824" height="824" rx="186" fill="url(#base)"/>
+  </g>
+
+  <g clip-path="url(#squircleClip)">
+    <rect x="100" y="100" width="824" height="824" fill="url(#base)"/>
+    <rect x="100" y="100" width="824" height="824" fill="url(#baseSheen)"/>
+    <rect x="101.5" y="101.5" width="821" height="821" rx="184.5" fill="none" stroke="#FFFFFF" stroke-opacity="0.12" stroke-width="3"/>
+    <rect x="100" y="100" width="824" height="824" rx="186" fill="none" stroke="#000000" stroke-opacity="0.55" stroke-width="2"/>
+  </g>
+
+  <!-- CD jewel case, hinge on the left, hole centred on the plate -->
+  <g filter="url(#caseGlow)" transform="translate(512 512) scale(1.28) translate(-512 -512)">
+    <g filter="url(#caseDrop)">
+      <rect x="299" y="284" width="408" height="456" rx="22" fill="url(#caseFace)"/>
+
+      <g clip-path="url(#caseClip)">
+        <!-- spine / hinge -->
+        <rect x="299" y="284" width="36" height="456" fill="url(#caseSpine)"/>
+        <path d="M 301 292 L 301 732" stroke="#FFFFFF" stroke-opacity="0.22" stroke-width="2"/>
+        <rect x="304" y="298" width="21" height="428" rx="10.5" fill="url(#hingePanel)"/>
+        <rect x="305" y="299" width="19" height="426" rx="9.5" fill="none" stroke="#FFFFFF" stroke-opacity="0.22" stroke-width="1.5"/>
+        <rect x="305" y="299" width="19" height="426" rx="9.5" fill="none" stroke="#000000" stroke-opacity="0.45" stroke-width="1"/>
+        <rect x="303" y="296" width="23" height="34" rx="10" fill="#000000" opacity="0.22"/>
+        <rect x="326" y="298" width="7" height="428" fill="url(#hingeGap)"/>
+        <path d="M 333 288 L 333 736" stroke="#FFFFFF" stroke-opacity="0.25" stroke-width="2"/>
+        <path d="M 336 292 L 336 732" stroke="#000000" stroke-opacity="0.45" stroke-width="1.5"/>
+
+        <!-- hinge shadow falling on the front cover -->
+        <rect x="335" y="292" width="18" height="432" fill="#000000" opacity="0.28"/>
+
+        <!-- bottom lip -->
+        <rect x="299" y="706" width="408" height="34" fill="#FFFFFF" opacity="0.05"/>
+        <path d="M 299 706 L 707 706" stroke="#000000" stroke-opacity="0.45" stroke-width="2"/>
+        <rect x="299" y="284" width="408" height="456" rx="22" fill="none" stroke="#FFFFFF" stroke-opacity="0.22" stroke-width="3"/>
+        <rect x="299" y="284" width="408" height="456" rx="22" fill="none" stroke="#000000" stroke-opacity="0.5" stroke-width="1"/>
+      </g>
+
+      <!-- recessed tray -->
+      <rect x="337" y="302" width="354" height="420" rx="14" fill="url(#tray)"/>
+      <rect x="337" y="302" width="354" height="420" rx="14" fill="none" stroke="#FFFFFF" stroke-opacity="0.25" stroke-width="2"/>
+      <rect x="338.5" y="303.5" width="351" height="417" rx="12.5" fill="none" stroke="#000000" stroke-opacity="0.45" stroke-width="1"/>
+      <g clip-path="url(#trayClip)">
+        <rect x="337" y="302" width="354" height="78" fill="url(#trayTopShade)"/>
+        <rect x="337" y="302" width="80" height="420" fill="url(#trayLeftShade)"/>
+        <rect x="337" y="660" width="354" height="62" fill="url(#trayBottomLight)"/>
+        <rect x="553" y="302" width="138" height="420" fill="url(#trayRightLight)"/>
+
+        <!-- disc shadow in tray -->
+        <circle cx="512" cy="524" r="172" fill="none" stroke="#000000" stroke-opacity="0.6" stroke-width="16" filter="url(#softBlur)"/>
+
+        <!-- unlabeled disc, hub exactly in the middle of the plate -->
+        <g>
+          <circle cx="512" cy="512" r="170" fill="url(#disc)"/>
+          <g clip-path="url(#discClip)">
+            <!-- fine grooves -->
+            <g fill="none" stroke-width="1.2">
+              <circle cx="512" cy="512" r="92" stroke="#FFFFFF" stroke-opacity="0.16"/>
+              <circle cx="512" cy="512" r="116" stroke="#4C5563" stroke-opacity="0.22"/>
+              <circle cx="512" cy="512" r="140" stroke="#FFFFFF" stroke-opacity="0.14"/>
+              <circle cx="512" cy="512" r="160" stroke="#4C5563" stroke-opacity="0.22"/>
+            </g>
+
+            <!-- diffraction ring -->
+            <g fill="none" stroke-width="30" stroke-opacity="0.34" filter="url(#rainbowBlur)" transform="translate(512 512) scale(1.02) translate(-512 -512)">
+              <path d="M 512 362 A 150 150 0 0 1 618.07 405.93" stroke="#8FE3FF"/>
+              <path d="M 618.07 405.93 A 150 150 0 0 1 662 512" stroke="#B6A6FF"/>
+              <path d="M 662 512 A 150 150 0 0 1 618.07 618.07" stroke="#FF9FD4"/>
+              <path d="M 618.07 618.07 A 150 150 0 0 1 512 662" stroke="#FFC98F"/>
+              <path d="M 512 662 A 150 150 0 0 1 405.93 618.07" stroke="#C6FFB8"/>
+              <path d="M 405.93 618.07 A 150 150 0 0 1 362 512" stroke="#8FFFE0"/>
+              <path d="M 362 512 A 150 150 0 0 1 405.93 405.93" stroke="#9ED8FF"/>
+              <path d="M 405.93 405.93 A 150 150 0 0 1 512 362" stroke="#D3B4FF"/>
+            </g>
+
+            <!-- broad specular sweep + radial highlights -->
+            <ellipse cx="430" cy="432" rx="250" ry="92" fill="url(#discSweep)" opacity="0.7" transform="rotate(-38 430 432)" filter="url(#sweepBlur)"/>
+            <g stroke="#FFFFFF" stroke-opacity="0.20" stroke-width="40" stroke-linecap="butt" filter="url(#wedgeBlur)">
+              <path d="M 566 557 L 639 619"/>
+              <path d="M 458 557 L 385 619"/>
+              <path d="M 458 467 L 385 405"/>
+              <path d="M 566 467 L 639 405"/>
+            </g>
+
+            <!-- outer rim -->
+            <circle cx="512" cy="512" r="168.5" fill="none" stroke="#FFFFFF" stroke-opacity="0.25" stroke-width="2"/>
+            <circle cx="512" cy="512" r="169" fill="none" stroke="#000000" stroke-opacity="0.5" stroke-width="2"/>
+            <circle cx="515" cy="516" r="164" fill="none" stroke="#000000" stroke-opacity="0.38" stroke-width="7" filter="url(#softBlur)"/>
+          </g>
+
+          <!-- clear hub, no label -->
+          <circle cx="512" cy="512" r="60" fill="none" stroke="#000000" stroke-opacity="0.55" stroke-width="5"/>
+          <circle cx="512" cy="512" r="57" fill="url(#hub)" stroke="#FFFFFF" stroke-opacity="0.3" stroke-width="2"/>
+          <circle cx="512" cy="512" r="57" fill="none" stroke="#000000" stroke-opacity="0.5" stroke-width="1.5"/>
+          <circle cx="512" cy="512" r="37" fill="none" stroke="#FFFFFF" stroke-opacity="0.4" stroke-width="2"/>
+          <circle cx="512" cy="512" r="39" fill="none" stroke="#000000" stroke-opacity="0.45" stroke-width="1.5"/>
+          <path d="M 462 484 A 57 57 0 0 1 536 459" fill="none" stroke="#FFFFFF" stroke-width="5" stroke-linecap="round" opacity="0.28"/>
+          <circle cx="512" cy="512" r="19" fill="url(#hole)"/>
+          <circle cx="512" cy="512" r="19" fill="none" stroke="#FFFFFF" stroke-opacity="0.22" stroke-width="1.5"/>
+          <path d="M 496 522 A 19 19 0 0 0 528 522" fill="none" stroke="#FFFFFF" stroke-opacity="0.25" stroke-width="2"/>
+        </g>
+      </g>
+
+      <!-- tray clips -->
+      <g fill="#0F1216" stroke="#FFFFFF" stroke-opacity="0.18" stroke-width="1.5">
+        <path d="M 419 302 A 11 11 0 0 1 441 302 Z"/>
+        <path d="M 583 302 A 11 11 0 0 1 605 302 Z"/>
+        <path d="M 419 722 A 11 11 0 0 0 441 722 Z"/>
+        <path d="M 583 722 A 11 11 0 0 0 605 722 Z"/>
+      </g>
+
+      <!-- hinge pins at the top and bottom of the spine -->
+      <g filter="url(#tabShadow)">
+        <rect x="318" y="287" width="26" height="9" rx="4.5" fill="url(#hingeTab)" stroke="#FFFFFF" stroke-opacity="0.32" stroke-width="1.2"/>
+        <rect x="318" y="728" width="26" height="9" rx="4.5" fill="url(#hingeTab)" stroke="#FFFFFF" stroke-opacity="0.32" stroke-width="1.2"/>
+      </g>
+    </g>
+  </g>
+</svg>

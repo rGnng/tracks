@@ -35,10 +35,16 @@ open build/Tracks.app
 ```
 
 `scripts/build.sh [debug|release]` builds with SPM, copies the executable to
-`build/Tracks.app/Contents/MacOS/Audia`, writes `Info.plist` with
-`CFBundleName=Tracks`, and ad-hoc signs the complete bundle. The code signature
-is required: MediaRemote/Now Playing rejects a linker-only signature for remote
-media commands.
+`build/Tracks.app/Contents/MacOS/Audia`, copies `Resources/AppIcon.icns`, writes
+`Info.plist` with `CFBundleName=Tracks` and `CFBundleIconFile=AppIcon`, and ad-hoc
+signs the complete bundle. The code signature is required: MediaRemote/Now
+Playing rejects a linker-only signature for remote media commands.
+
+Regenerate the icon after changing `design/app-icon.png`:
+
+```bash
+./scripts/make-icon.sh
+```
 
 Primary database:
 
@@ -54,6 +60,8 @@ If no Internal Library exists, the fallback database path is
 
 - App is running from `/Users/n/Documents/ws/tracks/build/Tracks.app`.
 - Main window frame at the time of this snapshot: about `1098 x 823`.
+- Appearance: system/automatic; highlight color: Red; sidebar: playlist `337845818`;
+  Add Time column hidden; playback queue empty.
 - MPD is enabled, listening on all interfaces, port `6600`, empty password.
 - Current database: `~/Music/Tracks/library.sqlite` (WAL while the app is running).
 - Database counts:
@@ -95,7 +103,13 @@ If no Internal Library exists, the fallback database path is
 Package.swift
 README.md
 agent.md
+Assets/AccentColors.xcassets
+Resources/AppIcon.icns
+design/app-icon.svg
+design/app-icon.png
+design/README.md
 scripts/build.sh
+scripts/make-icon.sh
 scripts/generate_library.swift
 Sources/Audia/
   AudiaApp.swift             App entry, AppDelegate, menus, Settings window, setup window
@@ -828,17 +842,16 @@ traffic lights are custom SwiftUI controls, not standard window buttons.
 - No security-scoped bookmarks; relevant only if the app is sandboxed later.
 - No per-library album isolation.
 - No undo for file deletion beyond the macOS Trash.
-- `MockData` may still be present as dead code in `Models.swift`.
-- The project is tracked on `main`. User-owned icon resources and icon-related
-  build-script edits may remain uncommitted.
+- The project is tracked on `main`; the app icon source, generated `.icns`, and
+  build-time icon handling are part of the repository.
 
 ## 15. Handoff summary
 
 Tracks is a native macOS iTunes-style player with a SQLite library, real AVPlayer
 playback, Internal/External libraries, organizer-based imports and tag edits,
 a 500x500 disk artwork cache, rich multi-selection and drag behavior, a MiniPlayer,
-queue/position persistence, macOS Now Playing/media-key integration, and a custom
-MPD server.
+queue/position persistence, macOS Now Playing/media-key integration, a bundled
+app icon, and a custom MPD server.
 
 The current MPD server is enabled on all interfaces at port 6600, supports album
 art, stored playlists, the virtual Stared playlist, and MPD 0.24 `added` timestamps.
