@@ -581,6 +581,11 @@ private struct VolumeControl: View {
 
             VolumeBar()
         }
+        .disabled(player.isVolumeLocked)
+        .opacity(player.isVolumeLocked ? 0.55 : 1)
+        .help(player.isVolumeLocked
+              ? "Volume is fixed at 100% while MPD controls system volume"
+              : "Volume")
     }
 }
 

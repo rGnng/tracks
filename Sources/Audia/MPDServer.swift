@@ -349,11 +349,16 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
         case "setvol", "volume":
             guard let value = args.first.flatMap(Int.init) else {
                 if command == "volume" {
-                    return lines(["volume: \(Int((PlayerState.shared.volume * 100).rounded()))"])
+                    return lines(["volume: \(reportedVolume)"])
                 }
                 return ack(2, command, "wrong number of arguments")
             }
-            PlayerState.shared.setVolume(Double(min(max(value, 0), 100)) / 100)
+            let fraction = Double(min(max(value, 0), 100)) / 100
+            if PlayerState.shared.isVolumeLocked {
+                SystemVolume.set(fraction)
+            } else {
+                PlayerState.shared.setVolume(fraction)
+            }
             broadcastIdle("mixer")
             return ok()
         case "repeat":
@@ -669,6 +674,12 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
         return .stop
     }
 
+    private var reportedVolume: Int {
+        let player = PlayerState.shared
+        let value = player.isVolumeLocked ? (SystemVolume.current() ?? 1) : player.volume
+        return Int((min(max(value, 0), 1) * 100).rounded())
+    }
+
     private func statusLines() -> [String] {
         let player = PlayerState.shared
         let state = playbackState.rawValue
@@ -682,7 +693,7 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
             singleValue = singleMode ? 1 : 0
         }
         var lines = [
-            "volume: \(Int((player.volume * 100).rounded()))",
+            "volume: \(reportedVolume)",
             "repeat: \(player.repeatMode != .off ? 1 : 0)",
             "random: \(player.isShuffleOn ? 1 : 0)",
             "single: \(singleValue)",

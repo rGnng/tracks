@@ -1,0 +1,127 @@
+import Foundation
+import CoreAudio
+import AudioToolbox
+
+/// Reads and writes the macOS output volume. This is deliberately separate from
+/// `PlayerState.volume`, which attenuates AVPlayer. It is used only when MPD is
+/// configured to own the system volume.
+enum SystemVolume {
+    static let defaultsKey = "mpd.systemVolume"
+
+    /// The option only takes effect while the MPD server itself is enabled.
+    static var isEnabled: Bool {
+        let defaults = UserDefaults.standard
+        return defaults.bool(forKey: "mpd.enabled") && defaults.bool(forKey: defaultsKey)
+    }
+
+    static func current() -> Double? {
+        guard let device = defaultOutputDevice() else { return nil }
+
+        if let value = scalar(device: device,
+                              selector: kAudioHardwareServiceDeviceProperty_VirtualMainVolume,
+                              element: kAudioObjectPropertyElementMain) {
+            return clamped(Double(value))
+        }
+        if let value = scalar(device: device,
+                              selector: kAudioDevicePropertyVolumeScalar,
+                              element: kAudioObjectPropertyElementMain) {
+            return clamped(Double(value))
+        }
+
+        let channels = [AudioObjectPropertyElement(1), AudioObjectPropertyElement(2)]
+            .compactMap {
+                scalar(device: device,
+                       selector: kAudioDevicePropertyVolumeScalar,
+                       element: $0)
+            }
+        guard !channels.isEmpty else { return nil }
+        return clamped(Double(channels.reduce(0, +) / Float32(channels.count)))
+    }
+
+    @discardableResult
+    static func set(_ value: Double) -> Bool {
+        guard let device = defaultOutputDevice() else { return false }
+        let value = Float32(clamped(value))
+
+        if setScalar(device: device,
+                     selector: kAudioHardwareServiceDeviceProperty_VirtualMainVolume,
+                     element: kAudioObjectPropertyElementMain,
+                     value: value) {
+            return true
+        }
+        if setScalar(device: device,
+                     selector: kAudioDevicePropertyVolumeScalar,
+                     element: kAudioObjectPropertyElementMain,
+                     value: value) {
+            return true
+        }
+
+        var didSet = false
+        for element in [AudioObjectPropertyElement(1), AudioObjectPropertyElement(2)] {
+            if setScalar(device: device,
+                         selector: kAudioDevicePropertyVolumeScalar,
+                         element: element,
+                         value: value) {
+                didSet = true
+            }
+        }
+        return didSet
+    }
+
+    private static func clamped(_ value: Double) -> Double {
+        min(max(value, 0), 1)
+    }
+
+    private static func defaultOutputDevice() -> AudioDeviceID? {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var device = AudioDeviceID(0)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject),
+                                         &address, 0, nil, &size, &device) == noErr,
+              device != 0 else {
+            return nil
+        }
+        return device
+    }
+
+    private static func scalar(device: AudioDeviceID,
+                               selector: AudioObjectPropertySelector,
+                               element: AudioObjectPropertyElement) -> Float32? {
+        var address = AudioObjectPropertyAddress(
+            mSelector: selector,
+            mScope: kAudioObjectPropertyScopeOutput,
+            mElement: element
+        )
+        guard AudioObjectHasProperty(device, &address) else { return nil }
+        var value: Float32 = 0
+        var size = UInt32(MemoryLayout<Float32>.size)
+        guard AudioObjectGetPropertyData(device, &address, 0, nil, &size, &value) == noErr else {
+            return nil
+        }
+        return value
+    }
+
+    private static func setScalar(device: AudioDeviceID,
+                                  selector: AudioObjectPropertySelector,
+                                  element: AudioObjectPropertyElement,
+                                  value: Float32) -> Bool {
+        var address = AudioObjectPropertyAddress(
+            mSelector: selector,
+            mScope: kAudioObjectPropertyScopeOutput,
+            mElement: element
+        )
+        var settable = DarwinBoolean(false)
+        guard AudioObjectHasProperty(device, &address),
+              AudioObjectIsPropertySettable(device, &address, &settable) == noErr,
+              settable.boolValue else {
+            return false
+        }
+        var value = value
+        let size = UInt32(MemoryLayout<Float32>.size)
+        return AudioObjectSetPropertyData(device, &address, 0, nil, size, &value) == noErr
+    }
+}

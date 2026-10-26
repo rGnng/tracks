@@ -103,6 +103,7 @@ Sources/Audia/
   MPDServer.swift            Custom MPD TCP server, queue/playlists/album art
   PlayerState.swift          AVPlayer engine, queue, history, shuffle/repeat
   AudioDevices.swift         Core Audio output device enumeration and selection
+  SystemVolume.swift         macOS output-volume get/set for MPD system mode
   WindowMode.swift           Library/MiniPlayer window modes and metrics
   MiniPlayerView.swift       Compact player UI and Liquid Glass mini traffic lights
   Components.swift           WindowConfigurator, titlebar layout, shared controls
@@ -232,7 +233,11 @@ Important schema decisions:
   the remainder, and tracks appended while shuffle is active are randomized too.
 - Repeat modes: Off, All, One; persisted in UserDefaults.
 - Volume level is persisted in UserDefaults (`player.volume`) and restored at
-  launch, including when playback starts later.
+  launch, including when playback starts later. When the MPD system-volume
+  option is active, the player is held at 100%, the app volume controls are
+  disabled, and the prior player volume is saved in
+  `player.volumeBeforeSystemControl` for restoration when the option is turned
+  off.
 - History is most-recent-first, persisted by song ID.
 - Main window modes:
   - Library: normal main window, minimum about `1040 x 640`.
@@ -323,6 +328,22 @@ Current configuration:
 
 Do not disable or reconfigure MPD without an explicit user request. Remote clients
 may be connected.
+
+### MPD remote system volume
+
+Settings > MPD Server has a `Use MPD remote to control system volume` toggle,
+default off. It only applies while MPD itself is enabled.
+
+- When off, `setvol`/`volume` adjust `PlayerState.volume` as before.
+- When on, the player volume is locked at 100%, the app's volume controls are
+  disabled, and `setvol`/`volume` requests change the macOS default output
+  device volume through Core Audio.
+- `status` and the `volume` query report the live system volume, not the 100%
+  player volume. This keeps remote clients in sync after MPD or external system
+  volume changes.
+- The remote system volume control does not use AVPlayer attenuation.
+- The option is stored under `mpd.systemVolume`; the effective mode requires
+  `mpd.enabled` as well.
 
 Supported areas:
 

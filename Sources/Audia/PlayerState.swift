@@ -24,6 +24,9 @@ final class PlayerState: ObservableObject {
     @Published var isPlaying = false
     @Published var elapsed: TimeInterval = 0
     @Published var volume: Double = 0.65
+    /// While MPD owns the system volume, AVPlayer stays at 100% and the app's
+    /// volume controls are locked.
+    @Published private(set) var isVolumeLocked = false
     @Published private(set) var isShuffleOn = false
     @Published private(set) var repeatMode: RepeatMode = .off
     /// Most-recent-first play history, independent of the active queue.
@@ -38,12 +41,14 @@ final class PlayerState: ObservableObject {
     private static let repeatDefaultsKey = "player.repeatMode"
     private static let historyDefaultsKey = "player.historyIDs"
     private static let volumeDefaultsKey = "player.volume"
+    private static let volumeBeforeSystemControlKey = "player.volumeBeforeSystemControl"
     private static let historyLimit = 50
 
     private var avPlayer: AVPlayer?
     private var endObserver: NSObjectProtocol?
     private var timer: Timer?
     private var volumeBeforeMute: Double = 0.65
+    private var volumeBeforeSystemControl: Double = 0.65
     private var deviceCancellable: AnyCancellable?
     /// While the seek bar is being dragged, don't let the timer overwrite the
     /// dragged position with AVPlayer's still-old current time.
@@ -56,6 +61,12 @@ final class PlayerState: ObservableObject {
             .compactMap(UUID.init(uuidString:))
         let storedVolume = UserDefaults.standard.object(forKey: Self.volumeDefaultsKey) as? Double
         volume = min(max(storedVolume ?? 0.65, 0), 1)
+        if SystemVolume.isEnabled {
+            let storedBefore = UserDefaults.standard.object(forKey: Self.volumeBeforeSystemControlKey) as? Double
+            volumeBeforeSystemControl = min(max(storedBefore ?? (volume > 0 ? volume : 0.65), 0), 1)
+            isVolumeLocked = true
+            volume = 1
+        }
         volumeBeforeMute = volume > 0 ? volume : 0.65
 
         // Keep the current player on the device selected in the toolbar menu.
@@ -564,6 +575,7 @@ final class PlayerState: ObservableObject {
     // MARK: Volume
 
     func setVolume(_ v: Double) {
+        guard !isVolumeLocked else { return }
         volume = min(max(v, 0), 1)
         avPlayer?.volume = Float(volume)
         if volume > 0 { volumeBeforeMute = volume }
@@ -571,6 +583,7 @@ final class PlayerState: ObservableObject {
     }
 
     func toggleMute() {
+        guard !isVolumeLocked else { return }
         if isMuted {
             volume = volumeBeforeMute > 0 ? volumeBeforeMute : 0.65
         } else {
@@ -579,6 +592,32 @@ final class PlayerState: ObservableObject {
         }
         avPlayer?.volume = Float(volume)
         persistVolume()
+    }
+
+    /// Locks/unlocks the player volume for MPD system-volume control. Enabling
+    /// remembers the player volume so disabling can restore it.
+    func setSystemVolumeControl(_ enabled: Bool) {
+        guard enabled != isVolumeLocked else {
+            if enabled {
+                volume = 1
+                avPlayer?.volume = 1
+            }
+            return
+        }
+
+        if enabled {
+            volumeBeforeSystemControl = volume > 0 ? volume : max(volumeBeforeMute, 0.65)
+            UserDefaults.standard.set(volumeBeforeSystemControl, forKey: Self.volumeBeforeSystemControlKey)
+            isVolumeLocked = true
+            volume = 1
+        } else {
+            isVolumeLocked = false
+            let stored = UserDefaults.standard.object(forKey: Self.volumeBeforeSystemControlKey) as? Double
+            volume = min(max(stored ?? 0.65, 0), 1)
+            volumeBeforeMute = volume > 0 ? volume : 0.65
+            persistVolume()
+        }
+        avPlayer?.volume = Float(volume)
     }
 
     private func persistVolume() {

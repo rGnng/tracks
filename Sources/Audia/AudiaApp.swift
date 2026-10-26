@@ -133,6 +133,7 @@ struct SettingsView: View {
     @AppStorage("mpd.addresses") private var mpdAddresses = "127.0.0.1"
     @AppStorage("mpd.port") private var mpdPort = 6600
     @AppStorage("mpd.password") private var mpdPassword = ""
+    @AppStorage("mpd.systemVolume") private var mpdSystemVolume = false
     @AppStorage("artworkCacheJPEGQuality") private var artworkCacheJPEGQuality = 0.8
     @State private var starShortcut: KeyboardShortcut? = KeyboardShortcutStore.load()
     @ObservedObject private var library = Library.shared
@@ -269,6 +270,7 @@ struct SettingsView: View {
             artworkQualityText = "\(artworkQualityPercent)"
             starShortcut = KeyboardShortcutStore.load()
             artworkCache.refreshCacheSize()
+            PlayerState.shared.setSystemVolumeControl(mpdEnabled && mpdSystemVolume)
         }
         .onChange(of: artworkCacheJPEGQuality) { _, _ in
             if !artworkQualityFocused { artworkQualityText = "\(artworkQualityPercent)" }
@@ -303,7 +305,13 @@ struct SettingsView: View {
                 )
             }
         }
-        .onChange(of: mpdEnabled) { _, _ in scheduleMPDApply() }
+        .onChange(of: mpdEnabled) { _, enabled in
+            PlayerState.shared.setSystemVolumeControl(enabled && mpdSystemVolume)
+            scheduleMPDApply()
+        }
+        .onChange(of: mpdSystemVolume) { _, enabled in
+            PlayerState.shared.setSystemVolumeControl(mpdEnabled && enabled)
+        }
         .onChange(of: mpdAllInterfaces) { _, _ in scheduleMPDApply() }
         .onChange(of: mpdAddresses) { _, _ in scheduleMPDApply() }
         .onChange(of: mpdPort) { _, _ in scheduleMPDApply() }
@@ -362,6 +370,13 @@ struct SettingsView: View {
                 .foregroundColor(Theme.secondaryText)
 
             if mpdEnabled {
+                Toggle("Use MPD remote to control system volume", isOn: $mpdSystemVolume)
+                    .controlSize(.small)
+
+                Text("Locks the player at 100%. MPD remote volume commands adjust the macOS output volume.")
+                    .font(.system(size: 10.5))
+                    .foregroundColor(Theme.secondaryText)
+
                 Toggle("Listen on all interfaces", isOn: $mpdAllInterfaces)
                     .controlSize(.small)
 

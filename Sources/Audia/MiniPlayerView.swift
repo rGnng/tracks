@@ -198,7 +198,11 @@ struct MiniPlayerView: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
             }
-            .help(player.isMuted ? "Unmute (double-click)" : "Mute (double-click)")
+            .disabled(player.isVolumeLocked)
+            .opacity(player.isVolumeLocked ? 0.5 : 1)
+            .help(player.isVolumeLocked
+                  ? "Volume is fixed at 100% while MPD controls system volume"
+                  : (player.isMuted ? "Unmute (double-click)" : "Mute (double-click)"))
     }
 
     private var queueButton: some View {
