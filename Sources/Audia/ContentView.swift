@@ -52,6 +52,10 @@ struct ContentView: View {
         }
         .onChange(of: navigation.albumToOpen) { _, id in
             guard let id else { return }
+            // Clear the search before switching views. The target album may
+            // not match the current search query, so opening it after the
+            // filtered Albums grid is built would leave the album hidden.
+            searchText = ""
             pendingAlbumID = id
             selection = .library(.albums)
             navigation.albumToOpen = nil

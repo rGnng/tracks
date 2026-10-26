@@ -45,16 +45,18 @@ struct AlbumGrid: View {
             if expandedAlbum != nil { expandedAlbum = nil }
         }
         .onChange(of: openAlbumID, initial: true) { _, id in
-            guard let id, let album = albums.first(where: { $0.id == id }) else { return }
-            selectedIDs = [album.id]
-            selectionAnchor = album.id
-            expandedAlbum = album
-            openAlbumID = nil
+            guard let id else { return }
+            revealAlbum(id: id, in: albums)
         }
         .onAppear { updateStatusBar() }
         .onChange(of: selectedIDs) { _, _ in updateStatusBar() }
         .onChange(of: expandedAlbum) { _, _ in updateStatusBar() }
         .onChange(of: albums) { _, newAlbums in
+            // If the target album was hidden by the previous search results,
+            // open it as soon as the unfiltered album list arrives.
+            if let id = openAlbumID {
+                revealAlbum(id: id, in: newAlbums)
+            }
             let valid = Set(newAlbums.map(\.id))
             selectedIDs.formIntersection(valid)
             if let selectionAnchor, !valid.contains(selectionAnchor) {
@@ -65,6 +67,14 @@ struct AlbumGrid: View {
             }
             updateStatusBar()
         }
+    }
+
+    private func revealAlbum(id: UUID, in albums: [Album]) {
+        guard let album = albums.first(where: { $0.id == id }) else { return }
+        selectedIDs = [album.id]
+        selectionAnchor = album.id
+        expandedAlbum = album
+        openAlbumID = nil
     }
 
     /// While an album is expanded, AlbumDetailView owns the status bar context
@@ -1244,10 +1254,14 @@ struct SongTable: View {
             .compactMap { SongColumn(rawValue: String($0)) }
             .filter { available.contains($0) }
         let missing = available.filter { !parsed.contains($0) }
-        guard context.playlistID != nil else { return parsed + missing }
-        let leading = missing.filter(\.isPlaylistOnly)
-        let trailing = missing.filter { !$0.isPlaylistOnly }
-        return leading + parsed + trailing
+        var result = parsed + missing.filter { !$0.isPlaylistOnly }
+        guard context.playlistID != nil else { return result }
+
+        let playlistMissing = missing.filter(\.isPlaylistOnly)
+        guard !playlistMissing.isEmpty else { return result }
+        let insertion = result.firstIndex(of: .genre).map { $0 + 1 } ?? result.count
+        result.insert(contentsOf: playlistMissing, at: insertion)
+        return result
     }
 
     private var displayColumns: [SongColumn] {

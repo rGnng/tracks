@@ -29,7 +29,7 @@ struct ContentPane: View {
             .onHover { inside in
                 if inside { KeyboardNavigator.shared.region = .content }
             }
-            .onChange(of: openAlbumID) { _, id in
+            .onChange(of: openAlbumID, initial: true) { _, id in
                 if id != nil { navigationDetail = true }
             }
             .onChange(of: selection) { _, newValue in
