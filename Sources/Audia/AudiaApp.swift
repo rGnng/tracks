@@ -142,6 +142,7 @@ struct SettingsView: View {
     @ObservedObject private var library = Library.shared
     @ObservedObject private var artworkCache = ArtworkCache.shared
     @ObservedObject private var mpd = MPDServer.shared
+    @ObservedObject private var audioDevices = AudioDevices.shared
     @Environment(\.openWindow) private var openWindow
 
     @State private var alert: SettingsAlert?
@@ -360,7 +361,7 @@ struct SettingsView: View {
                         defaultShortcut: .defaultVolumeUp,
                         accessibilityLabel: "Volume up shortcut")
 
-            Text("Volume shortcuts adjust the player volume, or the macOS output volume when system volume control is active. Defaults: mute m, down -, up =.")
+            Text("Volume shortcuts adjust the player volume, or the selected macOS output volume when system volume control is active. They use 6.25% steps aligned to the 16-step system volume grid. Defaults: mute m, down -, up =.")
                 .font(.system(size: 10.5))
                 .foregroundColor(Theme.secondaryText)
                 .fixedSize(horizontal: false, vertical: true)
@@ -418,8 +419,11 @@ struct SettingsView: View {
             if mpdEnabled {
                 Toggle("Use MPD remote to control system default device volume", isOn: $mpdSystemVolume)
                     .controlSize(.small)
+                    .disabled(audioDevices.selectedUID != nil)
 
-                Text("Player audio stays at 100%; MPD remote and in-app volume controls adjust the selected macOS output. The “System Default (Volume Control)” MPD output enables this automatically.")
+                Text(audioDevices.selectedUID != nil
+                     ? "A specific output device is selected. The player is fixed at 100%, and the volume slider controls that device's system volume."
+                     : "Player audio stays at 100%; MPD remote and in-app volume controls adjust the selected macOS output. The “System Default (Volume Control)” MPD output enables this automatically.")
                     .font(.system(size: 10.5))
                     .foregroundColor(Theme.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
@@ -981,8 +985,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 @MainActor
 enum KeyboardShortcuts {
-    private static let volumeStep = 0.02
-
     static func handle(_ event: NSEvent) -> NSEvent? {
         if ShortcutRecorderState.isRecording { return event }
         guard let window = event.window else { return event }
@@ -1013,12 +1015,12 @@ enum KeyboardShortcuts {
             }
             if let shortcut = KeyboardShortcutStore.loadVolumeDown(),
                shortcut.matches(event) {
-                PlayerState.shared.adjustDisplayVolume(by: -Self.volumeStep)
+                PlayerState.shared.stepDisplayVolume(up: false)
                 return nil
             }
             if let shortcut = KeyboardShortcutStore.loadVolumeUp(),
                shortcut.matches(event) {
-                PlayerState.shared.adjustDisplayVolume(by: Self.volumeStep)
+                PlayerState.shared.stepDisplayVolume(up: true)
                 return nil
             }
         }

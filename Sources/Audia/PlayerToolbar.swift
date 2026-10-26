@@ -665,7 +665,8 @@ private struct DeviceMenu: View {
                         }
                     }
                     .onTapGesture {
-                        audioDevices.select(device)
+                        PlayerState.shared.selectAudioOutput(device)
+                        MPDServer.shared.notifyOutputConfigurationChanged()
                         isPresented = false
                     }
                     .help(device.name)

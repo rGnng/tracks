@@ -233,11 +233,12 @@ Important schema decisions:
   the remainder, and tracks appended while shuffle is active are randomized too.
 - Repeat modes: Off, All, One; persisted in UserDefaults.
 - Volume level is persisted in UserDefaults (`player.volume`) and restored at
-  launch, including when playback starts later. When the MPD system-volume
-  option is active, the player is held at 100% and the app volume controls
-  operate on the selected macOS output instead. The prior player volume is
-  saved in `player.volumeBeforeSystemControl` for restoration when the option
-  is turned off.
+  launch, including when playback starts later. When system-volume control is
+  active, the player is held at 100% and the app volume controls operate on the
+  selected macOS output instead. The prior player volume is saved in
+  `player.volumeBeforeSystemControl` for restoration when the option is turned
+  off. Selecting a real output device (AirPods, USB DAC, etc.) always activates
+  this mode; selecting plain System Default returns to app-controlled volume.
 - History is most-recent-first, persisted by song ID.
 - Main window modes:
   - Library: normal main window, minimum about `1040 x 640`.
@@ -281,8 +282,9 @@ Important schema decisions:
   not expanded into their tracks.
 - Volume shortcuts default to mute `m`, volume down `-`, and volume up `=`.
   They adjust the player volume, or the selected macOS output volume while
-  system-volume control is active. Volume changes use 2% steps and may repeat
-  while a volume key is held.
+  system-volume control is active. They use the 16-step 6.25% volume grid:
+  values that are not already on the grid snap to the nearest step in the
+  pressed direction, and volume keys may repeat while held.
 - Settings > Shortcuts uses standard AppKit shortcut recorders
   (`KeyboardShortcut.swift`): click a field, press a key combination, Escape
   cancels, and bare Delete clears the shortcut. Modifiers and shifted symbols
@@ -338,7 +340,9 @@ may be connected.
 ### MPD remote system volume
 
 Settings > MPD Server has a `Use MPD remote to control system default device
-volume` toggle, default off. It only applies while MPD itself is enabled.
+volume` toggle, default off. The MPD setting only applies while MPD itself is
+enabled, but selecting a real output device enables system-volume control
+independently and persists that state.
 
 - When off, `setvol`/`volume` adjust `PlayerState.volume` as before.
 - When on, the player volume is locked at 100% and `setvol`/`volume` requests
@@ -367,8 +371,10 @@ volume` toggle, default off. It only applies while MPD itself is enabled.
 - MPD's output list contains `System Default`, `System Default (Volume Control)`,
   then the real output devices. Selecting `System Default (Volume Control)`
   selects the system-default output, enables this setting, and updates Settings;
-  selecting plain `System Default` disables it. Selecting a real device preserves
-  the current system-volume mode.
+  selecting plain `System Default` disables it. Selecting any real output device
+  always enables system-volume control, fixes AVPlayer at 100%, and routes the
+  app volume slider to that device's system volume. The Settings toggle is
+  disabled while a real device is selected.
 
 Supported areas:
 

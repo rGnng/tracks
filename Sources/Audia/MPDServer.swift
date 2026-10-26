@@ -787,9 +787,8 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
 
     private func selectSystemDefault() {
         if let systemDefault = AudioDevices.shared.devices.first(where: { $0.isSystemDefault }) {
-            AudioDevices.shared.select(systemDefault)
+            PlayerState.shared.selectAudioOutput(systemDefault)
         }
-        setSystemVolumeMode(false)
     }
 
     private func selectOutput(at index: Int) {
@@ -800,17 +799,12 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
             selectSystemDefault()
         case .systemDefaultVolumeControl:
             if let systemDefault = AudioDevices.shared.devices.first(where: { $0.isSystemDefault }) {
-                AudioDevices.shared.select(systemDefault)
+                PlayerState.shared.selectAudioOutput(systemDefault,
+                                                     systemVolumeControl: true)
             }
-            setSystemVolumeMode(true)
         case .device(let device):
-            AudioDevices.shared.select(device)
+            PlayerState.shared.selectAudioOutput(device)
         }
-    }
-
-    private func setSystemVolumeMode(_ enabled: Bool) {
-        UserDefaults.standard.set(enabled, forKey: SystemVolume.defaultsKey)
-        PlayerState.shared.setSystemVolumeControl(enabled)
     }
 
     private func statusLines() -> [String] {

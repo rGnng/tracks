@@ -44,6 +44,7 @@ final class PlayerState: ObservableObject {
     private static let historyDefaultsKey = "player.historyIDs"
     private static let volumeDefaultsKey = "player.volume"
     private static let volumeBeforeSystemControlKey = "player.volumeBeforeSystemControl"
+    private static let systemVolumeStep = 1.0 / 16.0
     private static let historyLimit = 50
 
     private var avPlayer: AVPlayer?
@@ -65,7 +66,12 @@ final class PlayerState: ObservableObject {
             .compactMap(UUID.init(uuidString:))
         let storedVolume = UserDefaults.standard.object(forKey: Self.volumeDefaultsKey) as? Double
         volume = min(max(storedVolume ?? 0.65, 0), 1)
-        if SystemVolume.isEnabled {
+        let hasSelectedOutput = AudioDevices.shared.selectedUID != nil
+        if hasSelectedOutput {
+            // A real output device always owns its system volume.
+            UserDefaults.standard.set(true, forKey: SystemVolume.defaultsKey)
+        }
+        if SystemVolume.isEnabled || hasSelectedOutput {
             let storedBefore = UserDefaults.standard.object(forKey: Self.volumeBeforeSystemControlKey) as? Double
             volumeBeforeSystemControl = min(max(storedBefore ?? (volume > 0 ? volume : 0.65), 0), 1)
             isVolumeLocked = true
@@ -151,8 +157,32 @@ final class PlayerState: ObservableObject {
         }
     }
 
-    func adjustDisplayVolume(by delta: Double) {
-        setDisplayVolume(min(max(displayVolume + delta, 0), 1))
+    /// Moves the displayed volume by one 6.25% step. Values that are not on the
+    /// 16-step system-volume grid snap to the nearest step in the pressed
+    /// direction, matching the macOS volume keys.
+    func stepDisplayVolume(up: Bool) {
+        let step = Self.systemVolumeStep
+        let scaled = displayVolume / step
+        let epsilon = 1e-9
+        let target: Double
+        if up {
+            target = (floor(scaled + epsilon) + 1) * step
+        } else {
+            target = max(0, (ceil(scaled - epsilon) - 1) * step)
+        }
+        setDisplayVolume(min(max(target, 0), 1))
+    }
+
+    /// Selects an output and applies its volume policy. A real output device
+    /// always keeps AVPlayer at 100% and exposes that device's system volume;
+    /// System Default returns to app-controlled volume unless volume control
+    /// is explicitly requested for the MPD volume-control output.
+    func selectAudioOutput(_ device: AudioOutputDevice,
+                           systemVolumeControl: Bool? = nil) {
+        AudioDevices.shared.select(device)
+        let enabled = !device.isSystemDefault || (systemVolumeControl ?? false)
+        UserDefaults.standard.set(enabled, forKey: SystemVolume.defaultsKey)
+        setSystemVolumeControl(enabled)
     }
 
     private func syncPlayerMuteState() {
@@ -652,8 +682,11 @@ final class PlayerState: ObservableObject {
     }
 
     /// Locks/unlocks the player volume for MPD system-volume control. Enabling
-    /// remembers the player volume so disabling can restore it.
-    func setSystemVolumeControl(_ enabled: Bool) {
+    /// remembers the player volume so disabling can restore it. A real output
+    /// device always keeps system-volume control enabled; only System Default
+    /// can return to app-controlled volume.
+    func setSystemVolumeControl(_ requested: Bool) {
+        let enabled = requested || AudioDevices.shared.selectedUID != nil
         guard enabled != isVolumeLocked else {
             if enabled {
                 volume = 1

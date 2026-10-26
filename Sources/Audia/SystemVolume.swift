@@ -8,7 +8,8 @@ import AudioToolbox
 enum SystemVolume {
     static let defaultsKey = "mpd.systemVolume"
 
-    /// The option only takes effect while the MPD server itself is enabled.
+    /// Whether the MPD option itself is enabled. PlayerState also enables
+    /// system-volume control whenever a real output device is selected.
     static var isEnabled: Bool {
         let defaults = UserDefaults.standard
         return defaults.bool(forKey: "mpd.enabled") && defaults.bool(forKey: defaultsKey)
