@@ -173,10 +173,6 @@ final class SystemNowPlaying {
         center.nextTrackCommand.isEnabled = true
         center.previousTrackCommand.isEnabled = true
         center.changePlaybackPositionCommand.isEnabled = true
-        center.skipForwardCommand.isEnabled = true
-        center.skipBackwardCommand.isEnabled = true
-        center.skipForwardCommand.preferredIntervals = [15]
-        center.skipBackwardCommand.preferredIntervals = [15]
 
         center.playCommand.addTarget { [weak self] _ in
             Task { @MainActor in self?.handlePlay() }
@@ -203,14 +199,6 @@ final class SystemNowPlaying {
                 return .commandFailed
             }
             Task { @MainActor in self?.player?.seek(toSeconds: event.positionTime) }
-            return .success
-        }
-        center.skipForwardCommand.addTarget { [weak self] _ in
-            Task { @MainActor in self?.player?.seek(by: 15) }
-            return .success
-        }
-        center.skipBackwardCommand.addTarget { [weak self] _ in
-            Task { @MainActor in self?.player?.seek(by: -15) }
             return .success
         }
     }

@@ -246,8 +246,9 @@ Important schema decisions:
   of restarting the track. Empty/finished/cleared queues delete the row.
 - `SystemNowPlaying` publishes title, artist, album, duration, elapsed time,
   queue count/index, and cached album artwork to `MPNowPlayingInfoCenter`, and
-  registers play/pause/toggle, next/previous, position, and ±15-second seek
-  handlers on `MPRemoteCommandCenter`. Hardware media keys and Control Center
+  registers play/pause/toggle, next/previous, and position handlers on
+  `MPRemoteCommandCenter`. Control Center shows previous/next track controls
+  (not 15-second skip buttons). Hardware media keys and Control Center
   transport controls use that path. macOS MediaRemote only accepts a fully
   sealed code-signed bundle; `scripts/build.sh` ad-hoc signs the app.
 - Shuffle/random covers the unplayed queue: enabling it while stopped shuffles
