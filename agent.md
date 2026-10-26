@@ -222,7 +222,8 @@ Important schema decisions:
 - Queue row context menus provide Play Next (move the song directly after the
   current track), Go to Album, Go to Artist (album artist, falling back to the
   track artist), and Delete from Queue.
-- The main queue popover is resizable from its bottom-right handle. Width and
+- The main queue popover is resizable from its bottom-right handle. A 10pt
+  vertical splitter below the list also adjusts only the list height. Width and
   list height persist under `queue.popoverWidth` and `queue.listHeight`.
 - `baseQueue` preserves normal order when shuffle is toggled off.
 - Shuffle/random covers the unplayed queue: enabling it while stopped shuffles
@@ -482,11 +483,13 @@ the top while the middle and bottom bars stay fixed. The width is kept in
 `WindowMode.miniWidth`; the maximum is also clamped to the screen's visible
 area.
 
-While the queue is open, a 12pt drag handle spans the bottom edge. Dragging it
+While the queue is open, a 20pt drag handle spans the bottom edge. Dragging it
 down increases the queue height and grows the window downward while the cover's
 top stays fixed. Queue height is `140...500` points, further limited by the
 screen, and persists in `WindowMode.miniQueueHeight`. The extra height is used
-by the queue list, not by the player chrome.
+by the queue list, not by the player chrome. Native window resizing is disabled
+while the queue is open so the bottom edge always belongs to this handle; width
+can be changed again after collapsing the queue.
 
 The entire square cover is a window-drag surface. The traffic lights and the
 expand button sit above it in the ZStack, so they still receive clicks; the

@@ -181,6 +181,7 @@ private struct QueuePopover: View {
     @AppStorage("queue.popoverWidth") private var storedWidth = 300.0
     @AppStorage("queue.listHeight") private var storedListHeight = 260.0
     @State private var resizeStart: CGSize?
+    @State private var listResizeStart: CGFloat?
     @State private var draggingID: UUID?
     @State private var dropTargetIndex: Int?
     @State private var dropAtEnd = false
@@ -232,6 +233,7 @@ private struct QueuePopover: View {
             }
 
             Divider()
+            queueHeightHandle
             HStack(spacing: 8) {
                 if tab == .upNext {
                     Button {
@@ -255,6 +257,36 @@ private struct QueuePopover: View {
             .padding(.vertical, 3)
         }
         .frame(width: queueWidth)
+    }
+
+    private var queueHeightHandle: some View {
+        ZStack {
+            Color.clear
+            Capsule()
+                .fill(Theme.secondaryText.opacity(0.55))
+                .frame(width: 30, height: 3)
+        }
+        .frame(height: 10)
+        .contentShape(Rectangle())
+        .help("Drag to resize queue")
+        .accessibilityLabel("Resize queue")
+        .gesture(
+            DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                .onChanged { value in
+                    if listResizeStart == nil {
+                        listResizeStart = listHeight
+                    }
+                    guard let start = listResizeStart else { return }
+                    storedListHeight = min(max(Double(start + value.translation.height), 120), 620)
+                }
+                .onEnded { _ in
+                    listResizeStart = nil
+                }
+        )
+        .onHover { inside in
+            if inside { NSCursor.resizeUpDown.set() } else { NSCursor.arrow.set() }
+        }
+        .onDisappear { NSCursor.arrow.set() }
     }
 
     private var resizeHandle: some View {

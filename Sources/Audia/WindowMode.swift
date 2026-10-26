@@ -10,7 +10,7 @@ enum MiniPlayerMetrics {
     static let minQueueHeight: CGFloat = 140
     static let defaultQueueHeight: CGFloat = 201
     static let maxQueueHeight: CGFloat = 500
-    static let queueResizeHandleHeight: CGFloat = 12
+    static let queueResizeHandleHeight: CGFloat = 20
 
     static func height(forWidth width: CGFloat, queueHeight: CGFloat = 0) -> CGFloat {
         width + middle + bottom + queueHeight
@@ -137,6 +137,14 @@ final class WindowModeCenter: ObservableObject {
         guard expanded != miniQueueExpanded else { return }
         miniQueueExpanded = expanded
         guard let window, !window.styleMask.contains(.fullScreen) else { return }
+        // While the queue drawer is open the bottom edge belongs to the queue
+        // height handle, so native window edge resizing must be off. Width can
+        // still be changed after collapsing the queue.
+        if expanded {
+            window.styleMask.remove(.resizable)
+        } else {
+            window.styleMask.insert(.resizable)
+        }
         let width = window.frame.width
         let queueHeight = expanded ? clampedMiniQueueHeight(miniQueueHeight, for: window, width: width) : 0
         if expanded, queueHeight != miniQueueHeight {
