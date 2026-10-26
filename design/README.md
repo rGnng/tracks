@@ -9,7 +9,6 @@ One version, using the same optical-disc glyph as the app's idle Library LCD
 - `app-icon.png` — 1024 px export
 - `preview.png` — 1024 px on a neutral backdrop
 - `preview.html` — 512/128/64/32/16 px on light and dark surfaces
-- `case/` — earlier jewel-case concepts, archived
 
 ## Specs
 
