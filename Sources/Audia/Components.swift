@@ -62,8 +62,11 @@ private func configureWindow(_ window: NSWindow) {
 /// Chromium/Helium ask AppKit to treat a taller custom top bar as the title bar
 /// (`_titlebarHeight`) and to center the traffic lights vertically in it
 /// (`_shouldCenterTrafficLights`). That is how Chrome's traffic lights line up
-/// with its tab strip without any manual frame offsets. Do the same for the
-/// toolbar, falling back to the stock behaviour if the private hooks are gone.
+/// with its tab strip without any manual frame offsets. Apply this only to the
+/// main window's custom toolbar: standard Settings/Get Info/About title bars
+/// already position their native traffic lights correctly, and enabling this
+/// hook for them shifts the group 12pt to the right. Fall back to the stock
+/// behaviour if the private hooks are gone.
 @MainActor
 private func configureBrowserStyleTitlebar(for window: NSWindow) {
     guard !didConfigureFrameView, let frameView = window.contentView?.superview else { return }
@@ -78,7 +81,8 @@ private func configureBrowserStyleTitlebar(for window: NSWindow) {
         let replacement: @convention(block) (AnyObject) -> Bool = { object in
             guard let view = object as? NSView,
                   let window = view.window,
-                  !window.styleMask.contains(.fullScreen) else {
+                  !window.styleMask.contains(.fullScreen),
+                  window === WindowModeCenter.shared.mainWindow else {
                 return original(object, centerSelector)
             }
             return true

@@ -567,7 +567,8 @@ by AppKit's title-bar layout pass.
 
 - `Components.swift` swizzles private AppKit selectors:
   - `_titlebarHeight` returns 45 for the main Library window.
-  - `_shouldCenterTrafficLights` returns true outside full screen.
+  - `_shouldCenterTrafficLights` returns true outside full screen **only for the
+    main window**.
 - `refreshBrowserTitlebarLayout(for:)` forces a title-bar layout pass by nudging
   the window width by 1pt and restoring the exact frame immediately.
 - It is called:
@@ -577,9 +578,14 @@ by AppKit's title-bar layout pass.
   - From `WindowModeCenter` when switching Library/MiniPlayer.
 - This fixed a first-open bug where traffic lights were 7pt from the top instead
   of the centered 15pt offset. Resizing the window used to fix it by accident.
+- Do not apply `_shouldCenterTrafficLights` to standard windows. AppKit's native
+  title bars already position those buttons correctly; forcing the hook moved
+  Settings, About Tracks, Get Info, and Setup traffic lights 12pt to the right.
 - Measured result after the fix on macOS 27:
   - Library traffic lights use AppKit's native 16pt buttons, centered in the
-    45pt bar (about 14.5pt from the top).
+    45pt bar (about 14.5pt from the top, `x=20`).
+  - Standard-scene windows keep their native 32pt title bar, with the button
+    group at `x=8`, `y=8`.
   - MiniPlayer uses a title-bar-free custom cover; its 14pt lights sit at
     `x=10`, `y=10` with symmetric top/left margins.
   - Resizing does not change the centered offset.
