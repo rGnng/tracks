@@ -8,6 +8,7 @@ struct MiniPlayerView: View {
     @State private var hovering = false
     @State private var showVolume = false
     @State private var showRemaining = false
+    @State private var queueResizeStart: CGFloat?
 
     private var showControls: Bool { hovering || showVolume }
 
@@ -21,8 +22,10 @@ struct MiniPlayerView: View {
                 if windowMode.miniQueueExpanded {
                     Divider()
                     MiniQueuePanel()
-                        .frame(height: MiniPlayerMetrics.queue - 1)
-                        .transition(.move(edge: .top).combined(with: .opacity))
+                        .frame(height: max(0, windowMode.miniQueueHeight
+                                           - MiniPlayerMetrics.queueResizeHandleHeight - 1))
+                    queueResizeHandle
+                        .frame(height: MiniPlayerMetrics.queueResizeHandleHeight)
                 }
             }
             .frame(width: width)
@@ -53,11 +56,11 @@ struct MiniPlayerView: View {
             .frame(width: width, height: width)
             .clipped()
 
-            // Only the title-bar strip is draggable, so hovering the artwork
-            // still reaches SwiftUI's onHover and reveals the controls.
+            // The artwork is the window's drag surface. It sits below the
+            // traffic lights and the expand button, so those controls still
+            // receive their own clicks.
             WindowDragArea()
-                .frame(height: 32)
-                .frame(maxHeight: .infinity, alignment: .top)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             HStack(spacing: 9) {
                 MiniTrafficLight(color: Color(.displayP3, red: 0.886, green: 0.396, blue: 0.341),
@@ -210,6 +213,36 @@ struct MiniPlayerView: View {
         }
         .buttonStyle(.plain)
         .help(windowMode.miniQueueExpanded ? "Hide Queue" : "Show Queue")
+    }
+
+    private var queueResizeHandle: some View {
+        ZStack {
+            Theme.contentBackground
+            Capsule()
+                .fill(Theme.secondaryText.opacity(0.55))
+                .frame(width: 28, height: 3)
+        }
+        .frame(maxWidth: .infinity)
+        .contentShape(Rectangle())
+        .help("Drag to resize queue")
+        .accessibilityLabel("Resize queue")
+        .gesture(
+            DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                .onChanged { value in
+                    if queueResizeStart == nil {
+                        queueResizeStart = windowMode.miniQueueHeight
+                    }
+                    guard let start = queueResizeStart else { return }
+                    windowMode.setMiniQueueHeight(start + value.translation.height)
+                }
+                .onEnded { _ in
+                    queueResizeStart = nil
+                }
+        )
+        .onHover { inside in
+            if inside { NSCursor.resizeUpDown.set() } else { NSCursor.arrow.set() }
+        }
+        .onDisappear { NSCursor.arrow.set() }
     }
 
     // MARK: Bottom seek bar

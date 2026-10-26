@@ -7,13 +7,16 @@ enum MiniPlayerMetrics {
     static let maxWidth: CGFloat = 560
     static let middle: CGFloat = 42
     static let bottom: CGFloat = 30
-    static let queue: CGFloat = 201
+    static let minQueueHeight: CGFloat = 140
+    static let defaultQueueHeight: CGFloat = 201
+    static let maxQueueHeight: CGFloat = 500
+    static let queueResizeHandleHeight: CGFloat = 12
 
-    static func height(forWidth width: CGFloat, queueExpanded: Bool) -> CGFloat {
-        width + middle + bottom + (queueExpanded ? queue : 0)
+    static func height(forWidth width: CGFloat, queueHeight: CGFloat = 0) -> CGFloat {
+        width + middle + bottom + queueHeight
     }
 
-    static var baseHeight: CGFloat { height(forWidth: width, queueExpanded: false) }
+    static var baseHeight: CGFloat { height(forWidth: width) }
 }
 
 /// Switches the single main window between the full Library and the compact
@@ -29,6 +32,7 @@ final class WindowModeCenter: ObservableObject {
 
     @Published private(set) var mode: Mode = .library
     @Published private(set) var miniQueueExpanded = false
+    @Published private(set) var miniQueueHeight: CGFloat = MiniPlayerMetrics.defaultQueueHeight
 
     private weak var window: NSWindow?
 
@@ -40,8 +44,10 @@ final class WindowModeCenter: ObservableObject {
     private let miniResizeDelegate = MiniResizeDelegate()
     private var originalWindowDelegate: NSWindowDelegate?
     private let libraryMinSize = NSSize(width: 1040, height: 640)
+    private let miniScreenPadding: CGFloat = 12
     private static let libraryFrameKey = "WindowMode.libraryFrame"
     private static let miniWidthKey = "WindowMode.miniWidth"
+    private static let miniQueueHeightKey = "WindowMode.miniQueueHeight"
 
     private init() {
         if let stored = UserDefaults.standard.string(forKey: Self.libraryFrameKey) {
@@ -53,6 +59,10 @@ final class WindowModeCenter: ObservableObject {
         if let storedWidth = UserDefaults.standard.object(forKey: Self.miniWidthKey) as? Double {
             miniWidth = CGFloat(min(max(storedWidth, Double(MiniPlayerMetrics.minWidth)),
                                    Double(MiniPlayerMetrics.maxWidth)))
+        }
+        if let storedQueueHeight = UserDefaults.standard.object(forKey: Self.miniQueueHeightKey) as? Double {
+            miniQueueHeight = CGFloat(min(max(storedQueueHeight, Double(MiniPlayerMetrics.minQueueHeight)),
+                                           Double(MiniPlayerMetrics.maxQueueHeight)))
         }
     }
 
@@ -98,15 +108,13 @@ final class WindowModeCenter: ObservableObject {
         let width = min(max(miniWidth, MiniPlayerMetrics.minWidth), maxWidth)
         miniWidth = width.rounded()
         let miniSize = NSSize(width: miniWidth,
-                             height: MiniPlayerMetrics.height(forWidth: miniWidth, queueExpanded: false))
+                             height: MiniPlayerMetrics.height(forWidth: miniWidth))
 
         window.styleMask.insert(.resizable)
         window.minSize = NSSize(width: MiniPlayerMetrics.minWidth,
-                                height: MiniPlayerMetrics.height(forWidth: MiniPlayerMetrics.minWidth,
-                                                                 queueExpanded: false))
+                                height: MiniPlayerMetrics.height(forWidth: MiniPlayerMetrics.minWidth))
         window.maxSize = NSSize(width: maxWidth,
-                                height: MiniPlayerMetrics.height(forWidth: maxWidth,
-                                                                 queueExpanded: true))
+                                height: window.screen?.visibleFrame.height ?? 10000)
         installMiniResizeDelegate(window)
 
         if !window.styleMask.contains(.fullScreen) {
@@ -129,9 +137,13 @@ final class WindowModeCenter: ObservableObject {
         guard expanded != miniQueueExpanded else { return }
         miniQueueExpanded = expanded
         guard let window, !window.styleMask.contains(.fullScreen) else { return }
-        let maxWidth = maxMiniWidth(for: window)
-        let width = min(max(window.frame.width, MiniPlayerMetrics.minWidth), maxWidth)
-        let targetHeight = MiniPlayerMetrics.height(forWidth: width, queueExpanded: expanded)
+        let width = window.frame.width
+        let queueHeight = expanded ? clampedMiniQueueHeight(miniQueueHeight, for: window, width: width) : 0
+        if expanded, queueHeight != miniQueueHeight {
+            miniQueueHeight = queueHeight
+            UserDefaults.standard.set(Double(queueHeight), forKey: Self.miniQueueHeightKey)
+        }
+        let targetHeight = MiniPlayerMetrics.height(forWidth: width, queueHeight: queueHeight)
         let top = window.frame.maxY
         var frame = window.frame
         frame.size.width = width
@@ -141,14 +153,50 @@ final class WindowModeCenter: ObservableObject {
         window.setFrame(frame, display: true, animate: true)
     }
 
+    /// Changes the height of the expanded queue panel. The window top stays put
+    /// and the extra height grows downward into the queue.
+    func setMiniQueueHeight(_ height: CGFloat) {
+        guard mode == .miniPlayer, miniQueueExpanded, let window else { return }
+        let width = window.frame.width
+        let queueHeight = clampedMiniQueueHeight(height, for: window, width: width)
+        guard queueHeight != miniQueueHeight else { return }
+        miniQueueHeight = queueHeight
+        UserDefaults.standard.set(Double(queueHeight), forKey: Self.miniQueueHeightKey)
+
+        let targetHeight = MiniPlayerMetrics.height(forWidth: width, queueHeight: queueHeight)
+        let top = window.frame.maxY
+        var frame = window.frame
+        frame.size.height = targetHeight
+        frame.origin.y = top - targetHeight
+        frame = window.constrainFrameRect(frame, to: window.screen)
+        window.setFrame(frame, display: true, animate: false)
+    }
+
     private func maxMiniWidth(for window: NSWindow) -> CGFloat {
         var result = MiniPlayerMetrics.maxWidth
         if let visible = window.screen?.visibleFrame {
-            let queueChrome = MiniPlayerMetrics.middle + MiniPlayerMetrics.bottom + MiniPlayerMetrics.queue
+            let queueHeight = miniQueueExpanded ? miniQueueHeight : 0
+            let topToBottom = window.frame.maxY - visible.minY
             result = min(result, visible.width)
-            result = min(result, visible.height - queueChrome)
+            result = min(result, topToBottom - MiniPlayerMetrics.middle - MiniPlayerMetrics.bottom
+                         - queueHeight - miniScreenPadding)
         }
         return max(MiniPlayerMetrics.minWidth, result)
+    }
+
+    private func maxMiniQueueHeight(for window: NSWindow, width: CGFloat) -> CGFloat {
+        var result = MiniPlayerMetrics.maxQueueHeight
+        if let visible = window.screen?.visibleFrame {
+            let topToBottom = window.frame.maxY - visible.minY
+            result = min(result, topToBottom - width - MiniPlayerMetrics.middle - MiniPlayerMetrics.bottom
+                         - miniScreenPadding)
+        }
+        return max(MiniPlayerMetrics.minQueueHeight, result)
+    }
+
+    private func clampedMiniQueueHeight(_ height: CGFloat, for window: NSWindow, width: CGFloat) -> CGFloat {
+        min(max(height, MiniPlayerMetrics.minQueueHeight),
+            maxMiniQueueHeight(for: window, width: width))
     }
 
     fileprivate func constrainedMiniSize(proposedWidth: CGFloat, window: NSWindow) -> NSSize {
@@ -156,9 +204,9 @@ final class WindowModeCenter: ObservableObject {
         let width = min(max(proposedWidth, MiniPlayerMetrics.minWidth), maxWidth).rounded()
         miniWidth = width
         UserDefaults.standard.set(Double(width), forKey: Self.miniWidthKey)
+        let queueHeight = miniQueueExpanded ? miniQueueHeight : 0
         return NSSize(width: width,
-                      height: MiniPlayerMetrics.height(forWidth: width,
-                                                       queueExpanded: miniQueueExpanded).rounded())
+                      height: MiniPlayerMetrics.height(forWidth: width, queueHeight: queueHeight).rounded())
     }
 
     private func installMiniResizeDelegate(_ window: NSWindow) {

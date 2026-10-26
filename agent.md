@@ -235,9 +235,10 @@ Important schema decisions:
 - Main window modes:
   - Library: normal main window, minimum about `1040 x 640`.
   - MiniPlayer: resizable width `320...560`; the cover is a square at the top and
-    grows with the window; middle `42`; bottom `30`; queue panel adds `201`.
-    Height is `width + 72` (`+ 201` while the queue is open). Window shortcuts
-    are Command-1 / Command-2.
+    grows with the window; middle `42`; bottom `30`. The queue panel has its own
+    adjustable height (`140...500`, screen permitting). Height is
+    `width + 72` (`+ queueHeight` while the queue is open). Window shortcuts are
+    Command-1 / Command-2.
   - MiniPlayer uses custom Liquid Glass-style traffic lights inside the cover;
     they stay hidden until the pointer enters the window, matching the old
     compact-player behavior without adding a title-bar strip. The lights use
@@ -475,11 +476,21 @@ existing hover chrome and use gray fills when the window is not key.
 The MiniPlayer is resizable from `320` to `560` points wide. A small
 `MiniResizeDelegate` temporarily replaces the window delegate in MiniPlayer mode
 (forwarding all other delegate calls to the original), and `windowWillResize`
-forces `height = width + 42 + 30 + (queue ? 201 : 0)`. SwiftUI's GeometryReader
-feeds the same width to the square cover, so the cover scales from the top while
-the middle and bottom bars stay fixed. The width is kept in
+forces `height = width + 42 + 30 + (queue ? queueHeight : 0)`. SwiftUI's
+GeometryReader feeds the same width to the square cover, so the cover scales from
+the top while the middle and bottom bars stay fixed. The width is kept in
 `WindowMode.miniWidth`; the maximum is also clamped to the screen's visible
 area.
+
+While the queue is open, a 12pt drag handle spans the bottom edge. Dragging it
+down increases the queue height and grows the window downward while the cover's
+top stays fixed. Queue height is `140...500` points, further limited by the
+screen, and persists in `WindowMode.miniQueueHeight`. The extra height is used
+by the queue list, not by the player chrome.
+
+The entire square cover is a window-drag surface. The traffic lights and the
+expand button sit above it in the ZStack, so they still receive clicks; the
+middle controls and queue handle are outside the cover drag area.
 
 Do not replace these with `standardWindowButton` views. AppKit owns those views
 and reattaches them to `NSTitlebarView` on layout; they are clipped at title-bar
