@@ -121,8 +121,8 @@ enum Theme {
     static let divider = c((0.80, 0.80, 0.82), (0.155, 0.155, 0.172))
 
     // Now Playing "LCD" panel in the top bar
-    static let lcdTop = c((0.985, 0.988, 1.000), (0.073, 0.075, 0.089))
-    static let lcdBottom = c((0.930, 0.936, 0.955), (0.044, 0.044, 0.057))
+    static let lcdTop = c((0.955, 0.957, 0.966), (0.073, 0.075, 0.089))
+    static let lcdBottom = c((0.902, 0.905, 0.916), (0.044, 0.044, 0.057))
     static let lcdFill = LinearGradient(
         colors: [lcdTop, lcdBottom],
         startPoint: .top,
@@ -132,8 +132,8 @@ enum Theme {
     /// queued. It intentionally has no controls, only the disc glyph.
     static let lcdIdleFill = LinearGradient(
         colors: [
-            c((0.955, 0.958, 0.968), (0.040, 0.040, 0.048)),
-            c((0.920, 0.924, 0.936), (0.024, 0.024, 0.032)),
+            c((0.932, 0.935, 0.944), (0.040, 0.040, 0.048)),
+            c((0.885, 0.889, 0.899), (0.024, 0.024, 0.032)),
         ],
         startPoint: .top,
         endPoint: .bottom
