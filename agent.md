@@ -222,10 +222,10 @@ Important schema decisions:
 - Queue row context menus provide Play Next (move the song directly after the
   current track), Go to Album, Go to Artist (album artist, falling back to the
   track artist), and Delete from Queue.
-- The main queue popover has no width/height resize handle. Its list height is
-  adjusted by a 10pt vertical splitter below the Clear row. The stored popover
-  width remains `queue.popoverWidth`; list height persists under
-  `queue.listHeight`.
+- The main queue popover has no visible width/height resize handle. Invisible
+  left/right edge drags adjust its width; a 10pt vertical splitter below the
+  Clear row adjusts only list height. Width and list height persist under
+  `queue.popoverWidth` and `queue.listHeight`.
 - `baseQueue` preserves normal order when shuffle is toggled off.
 - Shuffle/random covers the unplayed queue: enabling it while stopped shuffles
   the whole queue, enabling it while playing keeps the current track and shuffles

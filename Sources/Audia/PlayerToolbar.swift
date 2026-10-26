@@ -181,6 +181,7 @@ private struct QueuePopover: View {
     @AppStorage("queue.popoverWidth") private var storedWidth = 300.0
     @AppStorage("queue.listHeight") private var storedListHeight = 260.0
     @State private var listResizeStart: CGFloat?
+    @State private var widthResizeStart: CGFloat?
     @State private var draggingID: UUID?
     @State private var dropTargetIndex: Int?
     @State private var dropAtEnd = false
@@ -256,6 +257,40 @@ private struct QueuePopover: View {
             queueHeightHandle
         }
         .frame(width: queueWidth)
+        .overlay(alignment: .leading) {
+            widthResizeHandle(isLeading: true)
+        }
+        .overlay(alignment: .trailing) {
+            widthResizeHandle(isLeading: false)
+        }
+    }
+
+    /// Invisible edge handles let the popover be widened or narrowed without
+    /// showing another resize icon.
+    private func widthResizeHandle(isLeading: Bool) -> some View {
+        Color.clear
+            .frame(width: 8)
+            .frame(maxHeight: .infinity)
+            .padding(.bottom, 10)
+            .contentShape(Rectangle())
+            .onHover { inside in
+                if inside { NSCursor.resizeLeftRight.set() } else { NSCursor.arrow.set() }
+            }
+            .onDisappear { NSCursor.arrow.set() }
+            .gesture(
+                DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                    .onChanged { value in
+                        if widthResizeStart == nil {
+                            widthResizeStart = queueWidth
+                        }
+                        guard let start = widthResizeStart else { return }
+                        let delta = isLeading ? -value.translation.width : value.translation.width
+                        storedWidth = min(max(Double(start + delta), 260), 640)
+                    }
+                    .onEnded { _ in
+                        widthResizeStart = nil
+                    }
+            )
     }
 
     private var queueHeightHandle: some View {
