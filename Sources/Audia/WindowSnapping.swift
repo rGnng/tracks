@@ -1,10 +1,11 @@
 import AppKit
 import CoreGraphics
 
-/// Magnetic window snapping for the custom-dragged Library/MiniPlayer window.
+/// Edge-to-edge snapping for the custom-dragged Library/MiniPlayer window.
 /// AppKit's title-bar snapping is bypassed because this window disables native
-/// window movement and drags itself. The snapshot is captured once at mouse-down
-/// so per-event work stays small.
+/// window movement and drags itself. This deliberately does not attract from a
+/// distance: a snap only takes effect when abutting edges actually meet. The
+/// snapshot is captured once at mouse-down so per-event work stays small.
 @MainActor
 struct WindowSnapContext {
     struct Result {
@@ -15,9 +16,8 @@ struct WindowSnapContext {
 
     private let screenFrames: [NSRect]
     private let windowFrames: [NSRect]
-    private let attachDistance: CGFloat = 10
-    private let detachDistance: CGFloat = 22
-    private let crossAxisTolerance: CGFloat = 40
+    private let attachDistance: CGFloat = 2
+    private let detachDistance: CGFloat = 8
 
     init(excluding window: NSWindow) {
         screenFrames = NSScreen.screens.map(\.visibleFrame)
@@ -83,12 +83,9 @@ struct WindowSnapContext {
         }
 
         for other in windowFrames {
-            guard spansAreNear(frame.minY...frame.maxY,
-                               other.minY...other.maxY,
-                               tolerance: crossAxisTolerance) else { continue }
-            // Align either edge, or place the window flush against either side.
-            candidates.append(other.minX)
-            candidates.append(other.maxX - frame.width)
+            guard spansOverlap(frame.minY...frame.maxY,
+                               other.minY...other.maxY) else { continue }
+            // Only flush contact: our right meets their left, or vice versa.
             candidates.append(other.minX - frame.width)
             candidates.append(other.maxX)
         }
@@ -103,23 +100,18 @@ struct WindowSnapContext {
         }
 
         for other in windowFrames {
-            guard spansAreNear(frame.minX...frame.maxX,
-                               other.minX...other.maxX,
-                               tolerance: crossAxisTolerance) else { continue }
-            // Align either edge, or place the window flush above/below.
-            candidates.append(other.minY)
-            candidates.append(other.maxY - frame.height)
-            candidates.append(other.minY - frame.height)
+            guard spansOverlap(frame.minX...frame.maxX,
+                               other.minX...other.maxX) else { continue }
+            // Only flush contact: our bottom meets their top, or vice versa.
             candidates.append(other.maxY)
+            candidates.append(other.minY - frame.height)
         }
         return candidates
     }
 
-    private func spansAreNear(_ lhs: ClosedRange<CGFloat>,
-                              _ rhs: ClosedRange<CGFloat>,
-                              tolerance: CGFloat) -> Bool {
-        lhs.lowerBound <= rhs.upperBound + tolerance
-            && lhs.upperBound >= rhs.lowerBound - tolerance
+    private func spansOverlap(_ lhs: ClosedRange<CGFloat>,
+                              _ rhs: ClosedRange<CGFloat>) -> Bool {
+        lhs.lowerBound < rhs.upperBound && lhs.upperBound > rhs.lowerBound
     }
 
     private static func visibleWindowFrames(excluding window: NSWindow) -> [NSRect] {

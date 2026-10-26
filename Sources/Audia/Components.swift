@@ -260,6 +260,54 @@ func formatDuration(_ t: TimeInterval) -> String {
     return String(format: "%d:%02d", total / 60, total % 60)
 }
 
+// MARK: - Segmented accent control
+
+struct AccentSegment<Value: Hashable> {
+    let value: Value
+    let title: String
+}
+
+/// Small segmented control that uses the app highlight color directly. This is
+/// needed because AppKit's native segmented picker ignores `.tint` and always
+/// fills the selected segment with the bright system accent.
+struct AccentSegmentedControl<Value: Hashable>: View {
+    let segments: [AccentSegment<Value>]
+    @Binding var selection: Value
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(segments, id: \.value) { segment in
+                let selected = selection == segment.value
+                Button {
+                    selection = segment.value
+                } label: {
+                    Text(segment.title)
+                        .font(.system(size: 11.5, weight: selected ? .semibold : .regular))
+                        .foregroundColor(selected ? Theme.highlightForeground : Theme.secondaryText)
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 4)
+                        .background(
+                            RoundedRectangle(cornerRadius: 5)
+                                .fill(selected ? Theme.selectionFill : Color.clear)
+                        )
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(2)
+        .background(
+            RoundedRectangle(cornerRadius: 7)
+                .fill(Theme.controlFillActive)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 7)
+                        .strokeBorder(Theme.controlBorder.opacity(0.55), lineWidth: 0.5)
+                )
+        )
+    }
+}
+
 // MARK: - Star control
 
 /// Compact star toggle used at the trailing edge of every track list. The

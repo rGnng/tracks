@@ -324,9 +324,9 @@ struct AlbumGrid: View {
             if let start = marqueeStart, let current = marqueeCurrent {
                 let rect = marqueeRect(start, current)
                 Rectangle()
-                    .fill(Theme.highlight.opacity(0.12))
+                    .fill(Theme.selectionFill.opacity(0.14))
                     .overlay(
-                        Rectangle().strokeBorder(Theme.highlight.opacity(0.75), lineWidth: 1)
+                        Rectangle().strokeBorder(Theme.selectionFill.opacity(0.80), lineWidth: 1)
                     )
                     .frame(width: rect.width, height: rect.height)
                     .position(x: rect.midX, y: rect.midY)
@@ -381,7 +381,7 @@ private struct AlbumCard: View {
             .clipShape(RoundedRectangle(cornerRadius: 4))
             .overlay(
                 RoundedRectangle(cornerRadius: 4)
-                    .strokeBorder(isSelected ? Theme.highlight : .clear, lineWidth: 2)
+                    .strokeBorder(isSelected ? Theme.selectionFill : .clear, lineWidth: 2)
             )
             .shadow(color: .black.opacity(hover ? 0.20 : 0.05), radius: hover ? 5 : 1, y: hover ? 2 : 1)
 
@@ -744,7 +744,7 @@ private struct AlbumTrackRow: View {
                 bottomTrailingRadius: nextSelected ? 0 : 5,
                 topTrailingRadius: previousSelected ? 0 : 5
             )
-            .fill(isSelected ? Theme.highlight : (hover ? Theme.rowHover : Color.clear))
+            .fill(isSelected ? Theme.selectionFill : (hover ? Theme.rowHover : Color.clear))
         )
         .padding(.horizontal, 6)
         .onHover { hover = $0 }
@@ -997,9 +997,9 @@ struct AlbumList: View {
             if let start = marqueeStart, let current = marqueeCurrent {
                 let rect = marqueeRect(start, current)
                 Rectangle()
-                    .fill(Theme.highlight.opacity(0.12))
+                    .fill(Theme.selectionFill.opacity(0.14))
                     .overlay(
-                        Rectangle().strokeBorder(Theme.highlight.opacity(0.75), lineWidth: 1)
+                        Rectangle().strokeBorder(Theme.selectionFill.opacity(0.80), lineWidth: 1)
                     )
                     .frame(width: rect.width, height: rect.height)
                     .position(x: rect.midX, y: rect.midY)
@@ -1062,7 +1062,7 @@ struct AlbumList: View {
 }
 
 func rowBackground(index: Int, selected: Bool) -> Color {
-    if selected { return Theme.highlight }
+    if selected { return Theme.selectionFill }
     return index.isMultiple(of: 2) ? Theme.contentBackground : Theme.rowAlternate
 }
 
@@ -1577,7 +1577,7 @@ struct SongTable: View {
                     bottomTrailingRadius: nextSelected ? 0 : 5,
                     topTrailingRadius: previousSelected ? 0 : 5
                 )
-                .fill(Theme.highlight)
+                .fill(Theme.selectionFill)
                 .padding(.horizontal, 6)
             } else {
                 (index.isMultiple(of: 2) ? Theme.contentBackground : Theme.rowAlternate)

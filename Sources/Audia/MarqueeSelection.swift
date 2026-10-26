@@ -40,9 +40,9 @@ private struct MarqueeSelectionModifier: ViewModifier {
                                       width: abs(start.x - current.x),
                                       height: abs(start.y - current.y))
                     Rectangle()
-                        .fill(Theme.highlight.opacity(0.12))
+                        .fill(Theme.selectionFill.opacity(0.14))
                         .overlay(
-                            Rectangle().strokeBorder(Theme.highlight.opacity(0.75), lineWidth: 1)
+                            Rectangle().strokeBorder(Theme.selectionFill.opacity(0.80), lineWidth: 1)
                         )
                         .frame(width: rect.width, height: rect.height)
                         .position(x: rect.midX, y: rect.midY)

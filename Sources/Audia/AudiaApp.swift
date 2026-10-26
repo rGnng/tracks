@@ -14,7 +14,7 @@ struct AudiaApp: App {
 
     var body: some Scene {
         Window("Tracks", id: "main") {
-            ContentView(appearanceMode: appearanceMode)
+            ContentView()
                 .environmentObject(PlayerState.shared)
                 .accentColor(highlightColor)
         }
@@ -137,6 +137,8 @@ private enum LibraryFolderPicker {
 struct SettingsView: View {
     @AppStorage("albumViewMode") private var albumViewMode = "grid"
     @AppStorage("albumSort") private var albumSort = GridSort.album.rawValue
+    @AppStorage("albumSortDirection") private var albumSortDirection =
+        GridSortDirection.ascending.rawValue
     @AppStorage("highlightColor") private var highlightColor = HighlightColor.system.rawValue
     @AppStorage("mpd.enabled") private var mpdEnabled = false
     @AppStorage("mpd.allInterfaces") private var mpdAllInterfaces = false
@@ -171,16 +173,25 @@ struct SettingsView: View {
                     Text("Grid").tag("grid")
                     Text("List").tag("list")
                 }
-                .pickerStyle(.radioGroup)
-                .frame(maxWidth: 360, alignment: .leading)
+                .pickerStyle(.menu)
+                .frame(width: 260, alignment: .leading)
 
                 Picker("Albums sorted by", selection: $albumSort) {
                     ForEach(GridSort.allCases, id: \.self) { sort in
-                        Text(sort.rawValue).tag(sort.rawValue)
+                        Text(sort == .album ? "Album Name" : sort.rawValue)
+                            .tag(sort.rawValue)
                     }
                 }
-                .pickerStyle(.radioGroup)
-                .frame(maxWidth: 360, alignment: .leading)
+                .pickerStyle(.menu)
+                .frame(width: 260, alignment: .leading)
+
+                Picker("Sort direction", selection: $albumSortDirection) {
+                    ForEach(GridSortDirection.allCases) { direction in
+                        Text(direction.title).tag(direction.rawValue)
+                    }
+                }
+                .pickerStyle(.menu)
+                .frame(width: 260, alignment: .leading)
 
                 VStack(alignment: .leading, spacing: 5) {
                     Text("Highlights")
@@ -962,6 +973,50 @@ extension Notification.Name {
     static let goBackRequested = Notification.Name("audia.goBackRequested")
 }
 
+/// Applies the View > Appearance preference at the AppKit level. SwiftUI's
+/// `preferredColorScheme(nil)` can leave a previously forced window appearance
+/// behind; clearing `NSApp.appearance` and every window override makes Automatic
+/// follow live system appearance changes again.
+@MainActor
+final class AppearanceController {
+    static let shared = AppearanceController()
+
+    private var defaultsObserver: NSObjectProtocol?
+    private var lastMode: String?
+
+    func start() {
+        applyIfNeeded()
+        defaultsObserver = NotificationCenter.default.addObserver(
+            forName: UserDefaults.didChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.applyIfNeeded() }
+        }
+    }
+
+    private func applyIfNeeded() {
+        let mode = UserDefaults.standard.string(forKey: "appearanceMode") ?? "auto"
+        guard mode != lastMode else { return }
+        lastMode = mode
+
+        let appearance: NSAppearance?
+        switch mode {
+        case "light":
+            appearance = NSAppearance(named: .aqua)
+        case "dark":
+            appearance = NSAppearance(named: .darkAqua)
+        default:
+            appearance = nil
+        }
+
+        NSApp.appearance = appearance
+        for window in NSApp.windows {
+            window.appearance = appearance
+        }
+    }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var focusMonitor: Any?
     private var keyMonitor: Any?
@@ -969,6 +1024,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillFinishLaunching(_ notification: Notification) {
         // Window tabbing is not used by this app.
         NSWindow.allowsAutomaticWindowTabbing = false
+        AppearanceController.shared.start()
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -1039,7 +1095,8 @@ enum KeyboardShortcuts {
         let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
         let isEditingText = window.firstResponder is NSText
 
-        if modifiers == .command, event.charactersIgnoringModifiers == "[" {
+        if modifiers == .command,
+           (event.charactersIgnoringModifiers == "[" || event.keyCode == 33) {
             NotificationCenter.default.post(name: .goBackRequested, object: nil)
             return nil
         }

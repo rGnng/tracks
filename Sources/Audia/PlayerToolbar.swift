@@ -221,12 +221,13 @@ private struct QueuePopover: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Picker("", selection: $tab) {
-                Text("Up Next").tag(QueueTab.upNext)
-                Text("History").tag(QueueTab.history)
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
+            AccentSegmentedControl(
+                segments: [
+                    AccentSegment(value: QueueTab.upNext, title: "Up Next"),
+                    AccentSegment(value: QueueTab.history, title: "History"),
+                ],
+                selection: $tab
+            )
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
 

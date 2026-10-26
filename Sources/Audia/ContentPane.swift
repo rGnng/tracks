@@ -7,6 +7,8 @@ struct ContentPane: View {
 
     @AppStorage("albumViewMode") private var albumViewMode = "grid"
     @AppStorage("albumSort") private var albumSort = GridSort.album.rawValue
+    @AppStorage("albumSortDirection") private var albumSortDirection =
+        GridSortDirection.ascending.rawValue
     @ObservedObject private var library = Library.shared
     @ObservedObject private var navigation = NavigationCenter.shared
     @State private var navigationDetail = false
@@ -15,6 +17,10 @@ struct ContentPane: View {
 
     private var sort: GridSort {
         GridSort(rawValue: albumSort) ?? .album
+    }
+
+    private var sortDirection: GridSortDirection {
+        GridSortDirection(rawValue: albumSortDirection) ?? .ascending
     }
 
     var body: some View {
@@ -78,16 +84,7 @@ struct ContentPane: View {
     // MARK: Derived
 
     private var sortedAlbums: [Album] {
-        switch sort {
-        case .album:
-            return filteredAlbums.sorted { $0.title < $1.title }
-        case .artist:
-            return filteredAlbums.sorted {
-                $0.artist == $1.artist ? $0.title < $1.title : $0.artist < $1.artist
-            }
-        case .year:
-            return filteredAlbums.sorted { $0.yearNumber > $1.yearNumber }
-        }
+        albumsSorted(filteredAlbums, by: sort, direction: sortDirection)
     }
 
     private var recentAlbums: [Album] {
@@ -163,4 +160,35 @@ enum GridSort: String, CaseIterable {
     case album = "Album"
     case artist = "Artist"
     case year = "Year"
+}
+
+enum GridSortDirection: String, CaseIterable, Identifiable {
+    case ascending
+    case descending
+
+    var id: String { rawValue }
+    var title: String { rawValue.capitalized }
+}
+
+func albumsSorted(_ albums: [Album],
+                  by sort: GridSort,
+                  direction: GridSortDirection) -> [Album] {
+    let ascending: [Album]
+    switch sort {
+    case .album:
+        ascending = albums.sorted {
+            $0.title.localizedStandardCompare($1.title) == .orderedAscending
+        }
+    case .artist:
+        ascending = albums.sorted {
+            let artistOrder = $0.artist.localizedStandardCompare($1.artist)
+            if artistOrder == .orderedSame {
+                return $0.title.localizedStandardCompare($1.title) == .orderedAscending
+            }
+            return artistOrder == .orderedAscending
+        }
+    case .year:
+        ascending = albums.sorted { $0.yearNumber < $1.yearNumber }
+    }
+    return direction == .descending ? Array(ascending.reversed()) : ascending
 }

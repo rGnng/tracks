@@ -177,13 +177,12 @@ struct GetInfoView: View {
             header
             Divider()
 
-            Picker("", selection: $tab) {
-                ForEach(Tab.allCases) { tab in
-                    Text(tab.rawValue).tag(tab)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
+            AccentSegmentedControl(
+                segments: Tab.allCases.map {
+                    AccentSegment(value: $0, title: $0.rawValue)
+                },
+                selection: $tab
+            )
             .padding(.horizontal, 20)
             .padding(.vertical, 10)
 

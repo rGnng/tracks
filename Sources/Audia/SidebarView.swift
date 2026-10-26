@@ -263,7 +263,7 @@ private struct SidebarItem: View {
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 5)
-                    .strokeBorder(isDropTarget ? Theme.highlight : .clear, lineWidth: 1)
+                    .strokeBorder(isDropTarget ? Theme.selectionFill : .clear, lineWidth: 1)
             )
             .contentShape(Rectangle())
         }
@@ -274,7 +274,7 @@ private struct SidebarItem: View {
 
     private var background: AnyShapeStyle {
         if isDropTarget {
-            return AnyShapeStyle(Theme.highlight.opacity(0.22))
+            return AnyShapeStyle(Theme.selectionFill.opacity(0.22))
         } else if isSelected {
             return AnyShapeStyle(Theme.sidebarSelection)
         } else if hover {

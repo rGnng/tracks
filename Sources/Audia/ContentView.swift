@@ -2,8 +2,6 @@ import SwiftUI
 import AppKit
 
 struct ContentView: View {
-    let appearanceMode: String
-
     @EnvironmentObject private var player: PlayerState
     @Environment(\.openWindow) private var openWindow
     @AppStorage("showStatusBar") private var showStatusBar = true
@@ -16,14 +14,6 @@ struct ContentView: View {
     @State private var dragStartWidth: CGFloat?
     @State private var searchText = ""
     @State private var pendingAlbumID: UUID?
-
-    private var colorScheme: ColorScheme? {
-        switch appearanceMode {
-        case "light": return .light
-        case "dark": return .dark
-        default: return nil
-        }
-    }
 
     var body: some View {
         Group {
@@ -42,7 +32,6 @@ struct ContentView: View {
                     .allowsHitTesting(false)
             }
         }
-        .preferredColorScheme(colorScheme)
         .onAppear {
             validateSelection()
 

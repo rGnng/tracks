@@ -255,6 +255,8 @@ private struct BrowserAlbumPane: View {
 
     @EnvironmentObject private var player: PlayerState
     @AppStorage("albumSort") private var albumSort = GridSort.album.rawValue
+    @AppStorage("albumSortDirection") private var albumSortDirection =
+        GridSortDirection.ascending.rawValue
     @State private var selectedSongIDs: Set<UUID> = []
     @State private var selectionAnchor: UUID?
 
@@ -262,17 +264,11 @@ private struct BrowserAlbumPane: View {
     private var orderedSongs: [Song] { sortedAlbums.flatMap(\.songs) }
 
     private var sortedAlbums: [Album] {
-        let sort = GridSort(rawValue: albumSort) ?? .album
-        switch sort {
-        case .album:
-            return albums.sorted { $0.title < $1.title }
-        case .artist:
-            return albums.sorted {
-                $0.artist == $1.artist ? $0.title < $1.title : $0.artist < $1.artist
-            }
-        case .year:
-            return albums.sorted { $0.yearNumber > $1.yearNumber }
-        }
+        albumsSorted(
+            albums,
+            by: GridSort(rawValue: albumSort) ?? .album,
+            direction: GridSortDirection(rawValue: albumSortDirection) ?? .ascending
+        )
     }
 
     var body: some View {
@@ -521,7 +517,7 @@ private struct BrowserSongRow: View {
                 bottomTrailingRadius: nextSelected ? 0 : 5,
                 topTrailingRadius: previousSelected ? 0 : 5
             )
-            .fill(isSelected ? Theme.highlight : (hover ? Theme.rowHover : Color.clear))
+            .fill(isSelected ? Theme.selectionFill : (hover ? Theme.rowHover : Color.clear))
         )
         .padding(.horizontal, 6)
         .onHover { hover = $0 }

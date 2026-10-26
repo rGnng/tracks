@@ -430,12 +430,13 @@ private struct MiniQueuePanel: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Picker("", selection: $tab) {
-                Text("Up Next").tag(MiniQueueTab.upNext)
-                Text("History").tag(MiniQueueTab.history)
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
+            AccentSegmentedControl(
+                segments: [
+                    AccentSegment(value: MiniQueueTab.upNext, title: "Up Next"),
+                    AccentSegment(value: MiniQueueTab.history, title: "History"),
+                ],
+                selection: $tab
+            )
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
 

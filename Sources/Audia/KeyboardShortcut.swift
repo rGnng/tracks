@@ -345,7 +345,7 @@ final class ShortcutRecorderView: NSView {
                                 xRadius: 5, yRadius: 5)
         NSColor.controlBackgroundColor.setFill()
         path.fill()
-        (isRecording ? NSColor.controlAccentColor : NSColor.separatorColor).setStroke()
+        (isRecording ? HighlightColor.current.nsColor : NSColor.separatorColor).setStroke()
         path.lineWidth = isRecording ? 1.5 : 1
         path.stroke()
 

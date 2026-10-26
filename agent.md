@@ -249,8 +249,10 @@ Important schema decisions:
     `width + 72` (`+ queueHeight` while the queue is open). Window shortcuts are
     Command-1 / Command-2.
   - Custom dragging (`WindowDragArea`) uses `WindowSnapContext`: it snaps either
-    axis independently to screen visible edges or visible normal windows within
-    10pt, with a 22pt release threshold. The snapshot is captured on mouse-down.
+    axis independently only when abutting edges meet (2pt tolerance, 8pt release)
+    against screen visible edges or visible normal windows. It does not attract
+    from a distance or align non-touching edges. The snapshot is captured on
+    mouse-down.
   - MiniPlayer uses custom Liquid Glass-style traffic lights inside the cover;
     they stay hidden until the pointer enters the window, matching the old
     compact-player behavior without adding a title-bar strip. The lights use
@@ -303,6 +305,8 @@ Important schema decisions:
   (`shortcut.starCurrent.v2`, `shortcut.mute.v1`, `shortcut.volumeDown.v1`,
   `shortcut.volumeUp.v1`). Reset restores that row's default. The global handler
   skips text editing and returns events untouched while a recorder is active.
+  Command-[ posts `.goBackRequested`; matching also accepts keyCode 33 so the
+  shortcut still works with non-US/IME keyboard input.
 
 ## 7. Artwork cache and Settings
 
@@ -335,10 +339,23 @@ Important schema decisions:
 - Appearance > Highlights selects `highlightColor` (default `system`) and offers
   the macOS accent choices: System/Multicolor, Blue, Purple, Pink, Red, Orange,
   Yellow, Green, Graphite. Scene roots apply `.accentColor`, and `Theme.highlight`
-  resolves to `Color.accentColor`, so selected rows, marquee/selection outlines,
-  segmented tabs, links, and custom buttons all update live. The selected
-  sidebar row also uses a 20% accent tint. `Theme.highlightForeground` switches
-  selected-row text to black for bright choices (yellow, orange, green, etc.).
+  resolves to `Color.accentColor`, so outlines, links, active buttons, row hover,
+  and native controls update live. Filled selections use `Theme.selectionFill`,
+  which is the raw accent in light mode and a 35%-darkened accent in dark mode so
+  large rows do not look neon. The selected sidebar row uses a 20% tint.
+  `Theme.highlightForeground` switches selected-row text to black for bright
+  choices. Queue/History and Get Info tabs use `AccentSegmentedControl` because
+  AppKit's segmented picker ignores `.tint` and always uses the bright system accent.
+- View > Appearance has Automatic/Light/Dark. `AppearanceController` applies the
+  choice at the AppKit level (`NSApp.appearance` and every window's appearance).
+  Automatic sets these to nil so live system appearance changes propagate to all
+  windows. Do not regress to only `.preferredColorScheme(nil)`; it can leave a
+  previously forced window appearance behind.
+- Album display as and Albums sorted by use menu-style dropdowns. The sort choices
+  are Album Name/Artist/Year, followed by a Sort direction dropdown
+  (Ascending/Descending). Defaults are Album Name + Ascending. Direction applies
+  to Albums and artist/genre browser album panes; Recently Added keeps its
+  newest-first date order.
 
 ## 8. MPD server
 
