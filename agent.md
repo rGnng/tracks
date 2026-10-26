@@ -355,8 +355,12 @@ Important schema decisions:
   follows the app color. Keyboard Up/Down/Return/Escape are routed through
   `KeyboardShortcuts.handle` while the menu is open; all other keys are consumed.
   Native NSMenu popups (app menus, the NowPlaying overflow menu), text selection,
-  and system panels still use the macOS system accent; there is no supported
-  per-app override.
+  and system panels still use the macOS system accent. A native NSMenu *can* be
+  tinted by shipping an app-level `AccentColor` asset plus `NSAccentColorName`
+  (tested with a green native menu highlight), but that is a static bundle-level
+  color, not a runtime-switchable setting; `.tint()`/SwiftUI `.accentColor` alone
+  do not change native menu selection. Dynamic per-app Highlights therefore
+  require the custom menu.
 - View > Appearance has Automatic/Light/Dark. `AppearanceController` applies the
   choice at the AppKit level (`NSApp.appearance` and every window's appearance).
   Automatic sets these to nil so live system appearance changes propagate to all
