@@ -33,6 +33,7 @@ struct ContentView: View {
             }
         }
         .onAppear {
+            PlayerState.shared.restorePersistedQueueIfNeeded()
             validateSelection()
 
             // SwiftUI focuses the search field when the window first appears.

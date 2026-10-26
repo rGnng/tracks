@@ -1099,7 +1099,7 @@ enum SongTableContext: Hashable {
 }
 
 enum SongColumn: String, CaseIterable, Hashable {
-    case track, name, time, artist, albumArtist, album, genre, plays
+    case track, name, time, artist, albumArtist, album, genre, plays, addSequence, addTime
 
     var title: String {
         switch self {
@@ -1111,12 +1111,18 @@ enum SongColumn: String, CaseIterable, Hashable {
         case .album: return "Album"
         case .genre: return "Genre"
         case .plays: return "Plays"
+        case .addSequence: return "Add Seq"
+        case .addTime: return "Add Time"
         }
+    }
+
+    var isPlaylistOnly: Bool {
+        self == .addSequence || self == .addTime
     }
 
     var isTrailing: Bool {
         switch self {
-        case .track, .time, .plays: return true
+        case .track, .time, .plays, .addSequence: return true
         default: return false
         }
     }
@@ -1131,6 +1137,8 @@ enum SongColumn: String, CaseIterable, Hashable {
         case .album: return 60
         case .genre: return 50
         case .plays: return 40
+        case .addSequence: return 68
+        case .addTime: return 130
         }
     }
 
@@ -1140,6 +1148,7 @@ enum SongColumn: String, CaseIterable, Hashable {
 struct SongTable: View {
     let songs: [Song]
     let context: SongTableContext
+    let playlistInfo: [UUID: PlaylistItemInfo]
 
     @EnvironmentObject private var player: PlayerState
     @ObservedObject private var navigator = KeyboardNavigator.shared
@@ -1158,6 +1167,8 @@ struct SongTable: View {
     @AppStorage private var albumWidth: Double
     @AppStorage private var genreWidth: Double
     @AppStorage private var playsWidth: Double
+    @AppStorage private var addSequenceWidth: Double
+    @AppStorage private var addTimeWidth: Double
 
     @AppStorage private var showTrack: Bool
     @AppStorage private var showTime: Bool
@@ -1166,6 +1177,8 @@ struct SongTable: View {
     @AppStorage private var showAlbum: Bool
     @AppStorage private var showGenre: Bool
     @AppStorage private var showPlays: Bool
+    @AppStorage private var showAddSequence: Bool
+    @AppStorage private var showAddTime: Bool
 
     @AppStorage private var columnOrderCSV: String
 
@@ -1177,9 +1190,11 @@ struct SongTable: View {
     /// Fixed trailing slot for the per-track star button.
     private let starWidth: CGFloat = 28
 
-    init(songs: [Song], context: SongTableContext) {
+    init(songs: [Song], context: SongTableContext,
+         playlistInfo: [UUID: PlaylistItemInfo] = [:]) {
         self.songs = songs
         self.context = context
+        self.playlistInfo = playlistInfo
         let prefix = "songTable2.\(context.storageKey)"
         let sortPrefix = "songTable2.\(context.sortStorageKey)"
         _nameWidth = AppStorage(wrappedValue: 300, "\(prefix).nameWidth")
@@ -1190,6 +1205,8 @@ struct SongTable: View {
         _albumWidth = AppStorage(wrappedValue: 190, "\(prefix).albumWidth")
         _genreWidth = AppStorage(wrappedValue: 130, "\(prefix).genreWidth")
         _playsWidth = AppStorage(wrappedValue: 60, "\(prefix).playsWidth")
+        _addSequenceWidth = AppStorage(wrappedValue: 60, "\(prefix).addSequenceWidth")
+        _addTimeWidth = AppStorage(wrappedValue: 150, "\(prefix).addTimeWidth")
         _showTrack = AppStorage(wrappedValue: false, "\(prefix).showTrack")
         _showTime = AppStorage(wrappedValue: true, "\(prefix).showTime")
         _showArtist = AppStorage(wrappedValue: true, "\(prefix).showArtist")
@@ -1197,6 +1214,8 @@ struct SongTable: View {
         _showAlbum = AppStorage(wrappedValue: true, "\(prefix).showAlbum")
         _showGenre = AppStorage(wrappedValue: true, "\(prefix).showGenre")
         _showPlays = AppStorage(wrappedValue: true, "\(prefix).showPlays")
+        _showAddSequence = AppStorage(wrappedValue: true, "\(prefix).showAddSequence")
+        _showAddTime = AppStorage(wrappedValue: false, "\(prefix).showAddTime")
 
         let orderKey = "\(prefix).columnOrder"
         let newDefault = SongColumn.defaultOrder.map(\.rawValue).joined(separator: ",")
@@ -1207,15 +1226,28 @@ struct SongTable: View {
         let initialAscending = SongSortStore.ascending(for: context)
         _sortedSongs = State(initialValue: songsSorted(songs,
                                                        by: initialKey,
-                                                       ascending: initialAscending))
+                                                       ascending: initialAscending,
+                                                       playlistInfo: playlistInfo))
     }
 
     // MARK: Column metadata
 
+    private var availableColumns: [SongColumn] {
+        context.playlistID == nil
+            ? SongColumn.allCases.filter { !$0.isPlaylistOnly }
+            : SongColumn.allCases
+    }
+
     private var columnOrder: [SongColumn] {
-        let parsed = columnOrderCSV.split(separator: ",").compactMap { SongColumn(rawValue: String($0)) }
-        let missing = SongColumn.allCases.filter { !parsed.contains($0) }
-        return parsed + missing
+        let available = availableColumns
+        let parsed = columnOrderCSV.split(separator: ",")
+            .compactMap { SongColumn(rawValue: String($0)) }
+            .filter { available.contains($0) }
+        let missing = available.filter { !parsed.contains($0) }
+        guard context.playlistID != nil else { return parsed + missing }
+        let leading = missing.filter(\.isPlaylistOnly)
+        let trailing = missing.filter { !$0.isPlaylistOnly }
+        return leading + parsed + trailing
     }
 
     private var displayColumns: [SongColumn] {
@@ -1232,6 +1264,8 @@ struct SongTable: View {
         case .album: return showAlbum
         case .genre: return showGenre
         case .plays: return showPlays
+        case .addSequence: return context.playlistID != nil && showAddSequence
+        case .addTime: return context.playlistID != nil && showAddTime
         }
     }
 
@@ -1245,6 +1279,8 @@ struct SongTable: View {
         case .album: return albumWidth
         case .genre: return genreWidth
         case .plays: return playsWidth
+        case .addSequence: return addSequenceWidth
+        case .addTime: return addTimeWidth
         }
     }
 
@@ -1258,6 +1294,8 @@ struct SongTable: View {
         case .album: return $albumWidth
         case .genre: return $genreWidth
         case .plays: return $playsWidth
+        case .addSequence: return $addSequenceWidth
+        case .addTime: return $addTimeWidth
         }
     }
 
@@ -1273,6 +1311,8 @@ struct SongTable: View {
         case .albumArtist: return .albumArtist
         case .album: return .album
         case .genre: return .genre
+        case .addSequence: return .addSequence
+        case .addTime: return .addTime
         case .track, .plays: return nil
         }
     }
@@ -1286,7 +1326,8 @@ struct SongTable: View {
     private var sorted: [Song] { sortedSongs }
 
     private func rebuildSorted() {
-        sortedSongs = songsSorted(songs, by: sortKey, ascending: ascending)
+        sortedSongs = songsSorted(songs, by: sortKey, ascending: ascending,
+                                  playlistInfo: playlistInfo)
     }
 
     var body: some View {
@@ -1314,6 +1355,9 @@ struct SongTable: View {
             }
             rebuildSorted()
             updateStatusBar()
+        }
+        .onChange(of: playlistInfo) { _, _ in
+            rebuildSorted()
         }
     }
 
@@ -1364,6 +1408,11 @@ struct SongTable: View {
         }
         .frame(height: 26)
         .contextMenu {
+            if context.playlistID != nil {
+                Toggle("Add Seq", isOn: $showAddSequence)
+                Toggle("Add Time", isOn: $showAddTime)
+                Divider()
+            }
             Toggle("Track", isOn: $showTrack)
             Toggle("Time", isOn: $showTime)
             Toggle("Artist", isOn: $showArtist)
@@ -1481,6 +1530,8 @@ struct SongTable: View {
         if abs(scaled(albumWidth, 60) - albumWidth) > 0.5 { albumWidth = scaled(albumWidth, 60) }
         if abs(scaled(genreWidth, 50) - genreWidth) > 0.5 { genreWidth = scaled(genreWidth, 50) }
         if abs(scaled(playsWidth, 40) - playsWidth) > 0.5 { playsWidth = scaled(playsWidth, 40) }
+        if abs(scaled(addSequenceWidth, 60) - addSequenceWidth) > 0.5 { addSequenceWidth = scaled(addSequenceWidth, 60) }
+        if abs(scaled(addTimeWidth, 130) - addTimeWidth) > 0.5 { addTimeWidth = scaled(addTimeWidth, 130) }
         if abs(scaled(nameWidth, 120) - nameWidth) > 0.5 { nameWidth = scaled(nameWidth, 120) }
     }
 
@@ -1506,6 +1557,12 @@ struct SongTable: View {
             genreWidth = fittedWidth(for: sorted.map(\.genre), header: "Genre", min: 50, max: 320)
         case .plays:
             playsWidth = fittedWidth(for: sorted.map { String($0.plays) }, header: "Plays", min: 40, max: 160)
+        case .addSequence:
+            let values = sorted.compactMap { playlistInfo[$0.id]?.sequence }.map(String.init)
+            addSequenceWidth = fittedWidth(for: values, header: "Add Seq", min: 60, max: 100)
+        case .addTime:
+            let values = sorted.compactMap { playlistInfo[$0.id].map { playlistAddedTimeLabel($0.addedAt) } }
+            addTimeWidth = fittedWidth(for: values, header: "Add Time", min: 130, max: 260)
         }
     }
 
@@ -1698,6 +1755,14 @@ struct SongTable: View {
         case .plays:
             textCell("\(song.plays)", selected: selected)
                 .frame(width: width(of: .plays), alignment: .trailing)
+        case .addSequence:
+            let value = playlistInfo[song.id]?.sequence
+            textCell(value.map(String.init) ?? "—", selected: selected)
+                .frame(width: width(of: .addSequence), alignment: .trailing)
+        case .addTime:
+            let value = playlistInfo[song.id].map { playlistAddedTimeLabel($0.addedAt) }
+            textCell(value ?? "—", selected: selected)
+                .frame(width: width(of: .addTime), alignment: .leading)
         }
     }
 
@@ -1781,10 +1846,11 @@ struct SongTable: View {
 
 
 enum SongSortKey: String, CaseIterable {
-    case name, time, artist, albumArtist, album, genre
+    case name, time, artist, albumArtist, album, genre, addSequence, addTime
 }
 
-func songsSorted(_ songs: [Song], by key: SongSortKey, ascending: Bool) -> [Song] {
+func songsSorted(_ songs: [Song], by key: SongSortKey, ascending: Bool,
+                 playlistInfo: [UUID: PlaylistItemInfo] = [:]) -> [Song] {
     songs.sorted { a, b in
         switch key {
         case .name:
@@ -1805,9 +1871,40 @@ func songsSorted(_ songs: [Song], by key: SongSortKey, ascending: Bool) -> [Song
             return ascending ? x < y : x > y
         case .genre:
             return ascending ? a.genre < b.genre : a.genre > b.genre
+        case .addSequence:
+            let x = playlistInfo[a.id]?.sequence ?? Int.max
+            let y = playlistInfo[b.id]?.sequence ?? Int.max
+            if x == y {
+                return ascending ? a.title < b.title : a.title > b.title
+            }
+            return ascending ? x < y : x > y
+        case .addTime:
+            let x = playlistInfo[a.id]?.addedAt ?? 0
+            let y = playlistInfo[b.id]?.addedAt ?? 0
+            if x == y {
+                let sx = playlistInfo[a.id]?.sequence ?? Int.max
+                let sy = playlistInfo[b.id]?.sequence ?? Int.max
+                if sx != sy { return ascending ? sx < sy : sx > sy }
+                return ascending ? a.title < b.title : a.title > b.title
+            }
+            return ascending ? x < y : x > y
         }
     }
 }
+
+func playlistAddedTimeLabel(_ timestamp: TimeInterval) -> String {
+    guard timestamp > 0 else { return "—" }
+    return playlistAddTimeFormatter.string(from: Date(timeIntervalSince1970: timestamp))
+}
+
+private let playlistAddTimeFormatter: DateFormatter = {
+    let formatter = DateFormatter()
+    formatter.dateStyle = .short
+    formatter.timeStyle = .short
+    formatter.locale = .autoupdatingCurrent
+    formatter.timeZone = .autoupdatingCurrent
+    return formatter
+}()
 
 enum SongSortStore {
     static func key(for context: SongTableContext) -> SongSortKey {
@@ -1821,8 +1918,10 @@ enum SongSortStore {
         return UserDefaults.standard.bool(forKey: key)
     }
 
-    static func sorted(_ songs: [Song], for context: SongTableContext) -> [Song] {
-        songsSorted(songs, by: key(for: context), ascending: ascending(for: context))
+    static func sorted(_ songs: [Song], for context: SongTableContext,
+                       playlistInfo: [UUID: PlaylistItemInfo] = [:]) -> [Song] {
+        songsSorted(songs, by: key(for: context), ascending: ascending(for: context),
+                    playlistInfo: playlistInfo)
     }
 
     private static func prefix(for context: SongTableContext) -> String {

@@ -8,7 +8,7 @@ import AppKit
 /// editors receive their absolute paths.
 @MainActor
 final class DragController: NSObject, ObservableObject, NSDraggingSource {
-    static let longPressDuration: TimeInterval = 0.25
+    static let longPressDuration: TimeInterval = 0.1
     struct Payload {
         let songs: [Song]
         let title: String
@@ -23,7 +23,7 @@ final class DragController: NSObject, ObservableObject, NSDraggingSource {
     @Published private(set) var targetPlaylistID: UUID?
     var playlistFrames: [UUID: CGRect] = [:]
 
-    /// A 150 ms long press has succeeded, but the pointer has not moved yet.
+    /// A 100 ms long press has succeeded, but the pointer has not moved yet.
     /// The marquee gestures ignore their drags while this is true so holding a
     /// card/row starts an item drag instead of a box selection.
     private(set) var isArmed = false
@@ -262,7 +262,7 @@ extension View {
         modifier(LongPressDragModifier(payload: payload))
     }
 
-    /// For album cards/rows: only arm the item drag after a 150 ms hold. The
+    /// For album cards/rows: only arm the item drag after a 100 ms hold. The
     /// enclosing Albums/Recently Added view owns the drag gesture so a quick
     /// drag can still be a marquee.
     func longPressArmable(_ payload: @escaping () -> DragController.Payload?) -> some View {

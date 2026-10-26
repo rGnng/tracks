@@ -688,6 +688,7 @@ final class Library: ObservableObject {
             playlists[index] = Playlist(id: playlist.id,
                                         name: playlist.name,
                                         songs: songs,
+                                        addedAtBySongID: playlist.addedAtBySongID,
                                         dateModified: playlist.dateModified)
         }
     }
@@ -744,6 +745,7 @@ final class Library: ObservableObject {
                 playlists[index] = Playlist(id: playlists[index].id,
                                             name: playlists[index].name,
                                             songs: songs,
+                                            addedAtBySongID: playlists[index].addedAtBySongID,
                                             dateModified: playlists[index].dateModified)
             }
         }
@@ -982,6 +984,22 @@ final class Library: ObservableObject {
 
     func playlistSongs(_ id: UUID) -> [Song] {
         playlists.first { $0.id == id }?.songs ?? []
+    }
+
+    func playlistItemInfo(_ id: UUID) -> [UUID: PlaylistItemInfo] {
+        playlists.first { $0.id == id }?.itemInfo ?? [:]
+    }
+
+    func savePlayerQueue(_ state: PersistedPlayerQueue) {
+        db.savePlayerQueue(state)
+    }
+
+    func loadPlayerQueue() -> PersistedPlayerQueue? {
+        db.loadPlayerQueue()
+    }
+
+    func updatePlayerQueuePosition(currentIndex: Int?, elapsed: TimeInterval) {
+        db.updatePlayerQueuePosition(currentIndex: currentIndex, elapsed: elapsed)
     }
 
     // MARK: Path helpers

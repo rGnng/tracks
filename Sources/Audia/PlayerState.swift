@@ -39,6 +39,10 @@ final class PlayerState: ObservableObject {
     private var baseQueue: [Song] = []
     private var historyIDs: [UUID] = []
 
+    private var didAttemptQueueRestore = false
+    private var queueChangeCancellables: Set<AnyCancellable> = []
+    private var lastPersistedElapsed: TimeInterval = 0
+
     private static let shuffleDefaultsKey = "player.shuffleEnabled"
     private static let repeatDefaultsKey = "player.repeatMode"
     private static let historyDefaultsKey = "player.historyIDs"
@@ -90,6 +94,22 @@ final class PlayerState: ObservableObject {
                 Task { @MainActor in self?.applyOutputDevice() }
             }
         if isVolumeLocked { startSystemVolumeTimer() }
+
+        queueChangeCancellables.removeAll()
+        $queue
+            .dropFirst()
+            .debounce(for: .milliseconds(150), scheduler: RunLoop.main)
+            .sink { [weak self] _ in
+                Task { @MainActor in self?.persistQueue() }
+            }
+            .store(in: &queueChangeCancellables)
+        $currentIndex
+            .dropFirst()
+            .debounce(for: .milliseconds(150), scheduler: RunLoop.main)
+            .sink { [weak self] _ in
+                Task { @MainActor in self?.persistQueuePosition() }
+            }
+            .store(in: &queueChangeCancellables)
     }
 
     var currentSong: Song? {
@@ -123,6 +143,7 @@ final class PlayerState: ObservableObject {
         currentIndex = nil
         isPlaying = false
         elapsed = 0
+        persistQueue()
     }
 
     var duration: TimeInterval {
@@ -274,6 +295,71 @@ final class PlayerState: ObservableObject {
         currentIndex = nil
         isPlaying = false
         elapsed = 0
+        persistQueue()
+    }
+
+    /// Loads the last queue and its paused playback position after launch.
+    /// Nothing starts playing until the user presses Play.
+    func restorePersistedQueueIfNeeded() {
+        guard !didAttemptQueueRestore else { return }
+        didAttemptQueueRestore = true
+        guard queue.isEmpty, let saved = Library.shared.loadPlayerQueue() else { return }
+
+        let songsByID = Dictionary(uniqueKeysWithValues: Library.shared.allSongs.map { ($0.id, $0) })
+        let restoredQueue = saved.songIDs.compactMap { songsByID[$0] }
+        guard !restoredQueue.isEmpty else {
+            Library.shared.savePlayerQueue(PersistedPlayerQueue(songIDs: [],
+                                                                baseQueueIDs: [],
+                                                                currentIndex: nil,
+                                                                elapsed: 0))
+            return
+        }
+
+        let restoredBase = saved.baseQueueIDs.compactMap { songsByID[$0] }
+        queue = restoredQueue
+        baseQueue = restoredBase.isEmpty ? restoredQueue : restoredBase
+
+        if let savedIndex = saved.currentIndex {
+            let index = min(max(savedIndex, 0), restoredQueue.count - 1)
+            currentIndex = index
+            let duration = restoredQueue[index].duration
+            elapsed = duration > 0 ? min(max(saved.elapsed, 0), duration) : max(saved.elapsed, 0)
+        } else {
+            currentIndex = nil
+            elapsed = 0
+        }
+
+        isPlaying = false
+        avPlayer = nil
+        seekGraceUntil = nil
+        lastPersistedElapsed = elapsed
+    }
+
+    /// Called before the database closes during app termination.
+    func persistQueueForTermination() {
+        if let avPlayer {
+            let time = avPlayer.currentTime().seconds
+            if time.isFinite { elapsed = max(time, 0) }
+        }
+        persistQueue()
+    }
+
+    private func persistQueue() {
+        Library.shared.savePlayerQueue(PersistedPlayerQueue(songIDs: queue.map(\.id),
+                                                            baseQueueIDs: baseQueue.map(\.id),
+                                                            currentIndex: currentIndex,
+                                                            elapsed: elapsed))
+        lastPersistedElapsed = elapsed
+    }
+
+    private func persistQueuePosition() {
+        Library.shared.updatePlayerQueuePosition(currentIndex: currentIndex, elapsed: elapsed)
+        lastPersistedElapsed = elapsed
+    }
+
+    private func persistQueueIfNeeded() {
+        guard abs(elapsed - lastPersistedElapsed) >= 5 else { return }
+        persistQueuePosition()
     }
 
     func playQueue(at index: Int) {
@@ -287,6 +373,7 @@ final class PlayerState: ObservableObject {
         stopTimer()
         isPlaying = false
         elapsed = 0
+        persistQueuePosition()
     }
 
     func setPaused(_ paused: Bool) {
@@ -571,6 +658,7 @@ final class PlayerState: ObservableObject {
             isPlaying = false
             stopTimer()
             seekGraceUntil = nil
+            persistQueuePosition()
         } else {
             // Pressing play after the queue reached its end (repeat off)
             // restarts the last track instead of doing nothing at EOF.
@@ -579,12 +667,13 @@ final class PlayerState: ObservableObject {
                 return
             }
             if avPlayer == nil, song.fileURL != nil {
-                beginCurrentTrack(countPlay: false)
+                beginCurrentTrack(countPlay: false, startAt: elapsed)
                 return
             }
             avPlayer?.play()
             isPlaying = true
             startTimer()
+            persistQueuePosition()
         }
     }
 
@@ -754,7 +843,7 @@ final class PlayerState: ObservableObject {
 
     // MARK: Engine
 
-    private func beginCurrentTrack(countPlay: Bool = true) {
+    private func beginCurrentTrack(countPlay: Bool = true, startAt: TimeInterval = 0) {
         releasePlayer()
         stopTimer()
         elapsed = 0
@@ -783,6 +872,15 @@ final class PlayerState: ObservableObject {
                 Task { @MainActor in self?.advanceAfterTrackEnds() }
             }
 
+            if startAt > 0 {
+                let position = song.duration > 0 ? min(startAt, song.duration) : startAt
+                player.seek(to: CMTime(seconds: position, preferredTimescale: 600),
+                            toleranceBefore: .zero,
+                            toleranceAfter: .zero)
+                elapsed = position
+                seekGraceUntil = Date().addingTimeInterval(0.3)
+            }
+
             player.play()
             isPlaying = true
             startTimer()
@@ -790,6 +888,9 @@ final class PlayerState: ObservableObject {
         }
 
         // Fallback for entries without a decodable file: simulate transport.
+        if startAt > 0 {
+            elapsed = song.duration > 0 ? min(startAt, song.duration) : startAt
+        }
         isPlaying = true
         startTimer()
     }
@@ -846,11 +947,13 @@ final class PlayerState: ObservableObject {
                 if time.isFinite {
                     elapsed = time
                 }
+                persistQueueIfNeeded()
                 return
             }
         }
 
         elapsed += 0.2
+        persistQueueIfNeeded()
         if song.duration > 0, elapsed >= song.duration {
             advanceAfterTrackEnds()
         }
@@ -887,5 +990,6 @@ final class PlayerState: ObservableObject {
         isPlaying = false
         elapsed = 0
         seekGraceUntil = nil
+        persistQueue()
     }
 }

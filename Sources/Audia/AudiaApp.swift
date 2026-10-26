@@ -1038,6 +1038,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         WindowModeCenter.shared.persistLibraryFrameIfNeeded()
+        PlayerState.shared.persistQueueForTermination()
         // Make library.sqlite self-contained before the process exits so it can
         // be copied to another computer on its own.
         Library.shared.closeDatabaseForTermination()

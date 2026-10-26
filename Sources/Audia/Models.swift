@@ -138,20 +138,59 @@ extension Album {
     }
 }
 
+struct PlaylistItemInfo: Hashable {
+    /// UNIX timestamp for when the song was added to this playlist.
+    let addedAt: TimeInterval
+    /// One-based position in the playlist's add order, derived from `addedAt`.
+    let sequence: Int
+}
+
 struct Playlist: Identifiable, Hashable {
     let id: UUID
     let name: String
     let songs: [Song]
+    /// Per-item add timestamps. Keyed by song ID because a song can appear in
+    /// more than one playlist with different add times.
+    let addedAtBySongID: [UUID: TimeInterval]
     /// UNIX timestamp used by MPD's `Last-Modified` field.
     let dateModified: TimeInterval
 
     init(id: UUID = UUID(), name: String, songs: [Song],
+         addedAtBySongID: [UUID: TimeInterval] = [:],
          dateModified: TimeInterval = Date().timeIntervalSince1970) {
         self.id = id
         self.name = name
         self.songs = songs
+        self.addedAtBySongID = addedAtBySongID
         self.dateModified = dateModified
     }
+
+    /// Add-order metadata for table display and sorting. Ties fall back to the
+    /// current playlist position so the sequence order stays deterministic.
+    var itemInfo: [UUID: PlaylistItemInfo] {
+        let ordered = songs.enumerated().sorted { lhs, rhs in
+            let left = addedAtBySongID[lhs.element.id] ?? 0
+            let right = addedAtBySongID[rhs.element.id] ?? 0
+            if left == right { return lhs.offset < rhs.offset }
+            return left < right
+        }
+        var result: [UUID: PlaylistItemInfo] = [:]
+        result.reserveCapacity(ordered.count)
+        for (index, entry) in ordered.enumerated() {
+            result[entry.element.id] = PlaylistItemInfo(
+                addedAt: addedAtBySongID[entry.element.id] ?? 0,
+                sequence: index + 1
+            )
+        }
+        return result
+    }
+}
+
+struct PersistedPlayerQueue {
+    let songIDs: [UUID]
+    let baseQueueIDs: [UUID]
+    let currentIndex: Int?
+    let elapsed: TimeInterval
 }
 
 /// One of the two kinds of music library.

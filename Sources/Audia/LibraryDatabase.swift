@@ -288,13 +288,55 @@ final class LibraryDatabase {
             playlist_id TEXT NOT NULL,
             song_id TEXT NOT NULL,
             position INTEGER NOT NULL,
+            added_at REAL NOT NULL DEFAULT 0,
             PRIMARY KEY (playlist_id, song_id)
+        );
+        CREATE TABLE IF NOT EXISTS player_queue (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            queue_ids TEXT NOT NULL,
+            base_queue_ids TEXT NOT NULL,
+            current_index INTEGER NOT NULL DEFAULT -1,
+            elapsed REAL NOT NULL DEFAULT 0,
+            updated_at REAL NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_songs_album ON songs(album_id);
         CREATE INDEX IF NOT EXISTS idx_songs_artist ON songs(artist_id);
         CREATE INDEX IF NOT EXISTS idx_playlist_items ON playlist_items(playlist_id, position);
         """)
+        migratePlaylistItemAddTimes()
+    }
 
+    /// Adds the per-playlist-item add timestamp to existing databases. Older
+    /// rows did not record a real add time, so their timestamps are backfilled
+    /// from the playlist creation time plus the stored position. This keeps the
+    /// current playlist order intact for the initial Add Seq display.
+    private func migratePlaylistItemAddTimes() {
+        var hasAddedAt = false
+        if let stmt = prepare("PRAGMA table_info(playlist_items)") {
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                if text(stmt, 1) == "added_at" {
+                    hasAddedAt = true
+                    break
+                }
+            }
+            sqlite3_finalize(stmt)
+        }
+
+        if !hasAddedAt {
+            exec("ALTER TABLE playlist_items ADD COLUMN added_at REAL NOT NULL DEFAULT 0;")
+        }
+
+        exec("""
+        UPDATE playlist_items
+        SET added_at = COALESCE(
+            NULLIF((SELECT p.date_created FROM playlists p
+                    WHERE p.id = playlist_items.playlist_id), 0),
+            NULLIF((SELECT p.date_modified FROM playlists p
+                    WHERE p.id = playlist_items.playlist_id), 0),
+            CAST(strftime('%s','now') AS REAL)
+        ) + position
+        WHERE added_at <= 0;
+        """)
     }
 
     // MARK: Scanning / sync
@@ -698,15 +740,16 @@ final class LibraryDatabase {
     /// Reloads only the stored playlists. MPD changes playlists frequently and
     /// should not force a full album/song reload just to refresh the sidebar.
     func loadPlaylists(songsByID: [String: Song]) -> [Playlist] {
-        var entries: [(id: String, name: String, modified: Double)] = []
+        var entries: [(id: String, name: String, created: Double, modified: Double)] = []
         if let stmt = prepare("""
-            SELECT id, name, date_modified
+            SELECT id, name, date_created, date_modified
             FROM playlists ORDER BY name COLLATE NOCASE
             """) {
             while sqlite3_step(stmt) == SQLITE_ROW {
                 entries.append((text(stmt, 0) ?? "",
                                 text(stmt, 1) ?? "",
-                                double(stmt, 2)))
+                                double(stmt, 2),
+                                double(stmt, 3)))
             }
             sqlite3_finalize(stmt)
         }
@@ -714,18 +757,29 @@ final class LibraryDatabase {
         var playlists: [Playlist] = []
         for entry in entries {
             var songs: [Song] = []
-            if let itemStmt = prepare("SELECT song_id FROM playlist_items WHERE playlist_id = ? ORDER BY position") {
+            var addedAtBySongID: [UUID: TimeInterval] = [:]
+            if let itemStmt = prepare("SELECT song_id, added_at FROM playlist_items WHERE playlist_id = ? ORDER BY position") {
                 bind(itemStmt, 1, entry.id)
+                var position = 0
                 while sqlite3_step(itemStmt) == SQLITE_ROW {
-                    if let songID = text(itemStmt, 0), let song = songsByID[songID] {
-                        songs.append(song)
+                    defer { position += 1 }
+                    guard let rawID = text(itemStmt, 0),
+                          let songID = UUID(uuidString: rawID),
+                          let song = songsByID[rawID] else { continue }
+                    var addedAt = double(itemStmt, 1)
+                    if addedAt <= 0 {
+                        let base = entry.created > 0 ? entry.created : entry.modified
+                        addedAt = base + Double(position)
                     }
+                    songs.append(song)
+                    addedAtBySongID[songID] = addedAt
                 }
                 sqlite3_finalize(itemStmt)
             }
             playlists.append(Playlist(id: UUID(uuidString: entry.id) ?? UUID(),
                                       name: entry.name,
                                       songs: songs,
+                                      addedAtBySongID: addedAtBySongID,
                                       dateModified: entry.modified))
         }
         return playlists
@@ -945,21 +999,47 @@ final class LibraryDatabase {
 
     /// Replaces the whole item list, renumbering positions from zero. The
     /// playlist table uses a (playlist, song) primary key, so duplicate song
-    /// IDs are deliberately collapsed.
+    /// IDs are deliberately collapsed. Existing items keep their add time;
+    /// newly added songs receive monotonically increasing timestamps.
     func replacePlaylistSongs(_ id: UUID, songIDs: [UUID]) {
         var seen = Set<UUID>()
         let unique = songIDs.filter { seen.insert($0).inserted }
+
+        var existingAddedAt: [UUID: TimeInterval] = [:]
+        if let stmt = prepare("SELECT song_id, added_at FROM playlist_items WHERE playlist_id = ?") {
+            bind(stmt, 1, id.uuidString)
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                if let rawID = text(stmt, 0), let songID = UUID(uuidString: rawID) {
+                    existingAddedAt[songID] = double(stmt, 1)
+                }
+            }
+            sqlite3_finalize(stmt)
+        }
+
         exec("BEGIN;")
         if let stmt = prepare("DELETE FROM playlist_items WHERE playlist_id = ?") {
             bind(stmt, 1, id.uuidString)
             sqlite3_step(stmt)
             sqlite3_finalize(stmt)
         }
+
+        let now = Date().timeIntervalSince1970
+        let latest = existingAddedAt.values.filter { $0 > 0 }.max() ?? 0
+        var nextAddedAt = max(now, latest + 0.000001)
         for (position, songID) in unique.enumerated() {
-            if let stmt = prepare("INSERT OR IGNORE INTO playlist_items(playlist_id, song_id, position) VALUES(?, ?, ?)") {
+            let storedAddedAt = existingAddedAt[songID] ?? 0
+            let addedAt: TimeInterval
+            if storedAddedAt > 0 {
+                addedAt = storedAddedAt
+            } else {
+                addedAt = nextAddedAt
+                nextAddedAt += 0.000001
+            }
+            if let stmt = prepare("INSERT OR IGNORE INTO playlist_items(playlist_id, song_id, position, added_at) VALUES(?, ?, ?, ?)") {
                 bind(stmt, 1, id.uuidString)
                 bind(stmt, 2, songID.uuidString)
                 bind(stmt, 3, position)
+                bind(stmt, 4, addedAt)
                 sqlite3_step(stmt)
                 sqlite3_finalize(stmt)
             }
@@ -1007,6 +1087,80 @@ final class LibraryDatabase {
         let insertion = min(max(to, 0), ids.count)
         ids.insert(item, at: insertion)
         replacePlaylistSongs(id, songIDs: ids)
+    }
+
+    // MARK: Player queue
+
+    /// Stores the queue as song IDs so it can be resolved against the library
+    /// on the next launch. An empty queue removes the saved row; a cleared or
+    /// finished queue should not reappear.
+    func savePlayerQueue(_ state: PersistedPlayerQueue) {
+        guard !state.songIDs.isEmpty else {
+            exec("DELETE FROM player_queue WHERE id = 1;")
+            return
+        }
+
+        let encoder = JSONEncoder()
+        guard let queueData = try? encoder.encode(state.songIDs),
+              let baseData = try? encoder.encode(state.baseQueueIDs),
+              let queueJSON = String(data: queueData, encoding: .utf8),
+              let baseJSON = String(data: baseData, encoding: .utf8),
+              let stmt = prepare("""
+                  INSERT OR REPLACE INTO player_queue
+                      (id, queue_ids, base_queue_ids, current_index, elapsed, updated_at)
+                  VALUES (1, ?, ?, ?, ?, ?)
+                  """) else { return }
+        bind(stmt, 1, queueJSON)
+        bind(stmt, 2, baseJSON)
+        bind(stmt, 3, state.currentIndex ?? -1)
+        bind(stmt, 4, state.elapsed)
+        bind(stmt, 5, Date().timeIntervalSince1970)
+        sqlite3_step(stmt)
+        sqlite3_finalize(stmt)
+    }
+
+    func loadPlayerQueue() -> PersistedPlayerQueue? {
+        guard let stmt = prepare("""
+            SELECT queue_ids, base_queue_ids, current_index, elapsed
+            FROM player_queue WHERE id = 1
+            """) else { return nil }
+        guard sqlite3_step(stmt) == SQLITE_ROW else {
+            sqlite3_finalize(stmt)
+            return nil
+        }
+        let queueJSON = text(stmt, 0) ?? ""
+        let baseJSON = text(stmt, 1) ?? ""
+        let index = int(stmt, 2)
+        let elapsed = double(stmt, 3)
+        sqlite3_finalize(stmt)
+
+        let decoder = JSONDecoder()
+        guard let queueData = queueJSON.data(using: .utf8),
+              let baseData = baseJSON.data(using: .utf8),
+              let queueIDs = try? decoder.decode([UUID].self, from: queueData),
+              let baseIDs = try? decoder.decode([UUID].self, from: baseData),
+              !queueIDs.isEmpty else {
+            return nil
+        }
+        return PersistedPlayerQueue(songIDs: queueIDs,
+                                    baseQueueIDs: baseIDs,
+                                    currentIndex: index >= 0 ? index : nil,
+                                    elapsed: max(elapsed, 0))
+    }
+
+    /// Updates only the playback position. This avoids rewriting a potentially
+    /// large queue on every periodic position checkpoint.
+    func updatePlayerQueuePosition(currentIndex: Int?, elapsed: TimeInterval) {
+        guard let stmt = prepare("""
+            UPDATE player_queue
+            SET current_index = ?, elapsed = ?, updated_at = ?
+            WHERE id = 1
+            """) else { return }
+        bind(stmt, 1, currentIndex ?? -1)
+        bind(stmt, 2, elapsed)
+        bind(stmt, 3, Date().timeIntervalSince1970)
+        sqlite3_step(stmt)
+        sqlite3_finalize(stmt)
     }
 
     // MARK: SQLite helpers

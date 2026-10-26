@@ -112,7 +112,8 @@ struct SidebarView: View {
                     }
                     .simultaneousGesture(TapGesture(count: 2).onEnded {
                         player.play(SongSortStore.sorted(playlist.songs,
-                                                         for: .playlist(playlist.id)))
+                                                         for: .playlist(playlist.id),
+                                                         playlistInfo: playlist.itemInfo))
                     })
                     .background(
                         GeometryReader { proxy in

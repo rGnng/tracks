@@ -76,7 +76,9 @@ struct ContentPane: View {
             SongTable(songs: filteredStarredSongs, context: .starred)
                 .id(selection)
         case .playlist(let id):
-            SongTable(songs: playlistSongs(id), context: .playlist(id))
+            SongTable(songs: playlistSongs(id),
+                      context: .playlist(id),
+                      playlistInfo: library.playlistItemInfo(id))
                 .id(selection)
         }
     }
