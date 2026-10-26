@@ -110,6 +110,8 @@ final class PlayerState: ObservableObject {
                 Task { @MainActor in self?.persistQueuePosition() }
             }
             .store(in: &queueChangeCancellables)
+
+        SystemNowPlaying.shared.attach(to: self)
     }
 
     var currentSong: Song? {

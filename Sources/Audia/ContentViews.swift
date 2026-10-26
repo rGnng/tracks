@@ -30,14 +30,23 @@ struct AlbumGrid: View {
     private let columns = [GridItem(.adaptive(minimum: 158, maximum: 240), spacing: 22)]
 
     var body: some View {
-        Group {
+        ZStack {
+            // Keep the grid mounted while an album is open so its exact scroll
+            // offset survives. Rebuilding the grid on return used to re-run the
+            // "scroll selected album to center" logic and jump even when the
+            // album was already visible.
+            grid
+                .opacity(expandedAlbum == nil ? 1 : 0)
+                .allowsHitTesting(expandedAlbum == nil)
+                .accessibilityHidden(expandedAlbum != nil)
+
             if let album = expandedAlbum {
                 AlbumDetailView(album: album) {
                     expandedAlbum = nil
                 }
                 .id(album.id)
-            } else {
-                grid
+                .background(Theme.contentBackground)
+                .zIndex(1)
             }
         }
         .background(Theme.contentBackground)
@@ -167,6 +176,7 @@ struct AlbumGrid: View {
                     .simultaneousGesture(marqueeGesture)
                 }
                 .onChange(of: navigator.moveCount) { _, _ in
+                    guard expandedAlbum == nil else { return }
                     moveSelection(proxy: proxy)
                     if let id = selectionAnchor {
                         withAnimation(.easeInOut(duration: 0.08)) {
@@ -181,6 +191,7 @@ struct AlbumGrid: View {
                     scrollToFirstSelectedAlbum(proxy: proxy, animated: false)
                 }
                 .onChange(of: albums) { _, _ in
+                    guard expandedAlbum == nil else { return }
                     scrollToFirstSelectedAlbum(proxy: proxy, animated: true)
                 }
             }

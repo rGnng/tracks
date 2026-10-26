@@ -59,5 +59,10 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 </plist>
 PLIST
 
+# MediaRemote/Now Playing only accepts a fully sealed app bundle. A linker-only
+# signature leaves Info.plist unbound and macOS rejects remote media commands.
+# Ad-hoc signing is sufficient for the locally built app.
+codesign --force --deep --sign - "$APP" >/dev/null
+
 echo "==> Built $APP"
 echo "    Run: open $APP"

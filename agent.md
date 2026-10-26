@@ -19,8 +19,9 @@ the project, then verify the current code and running state.
 ## 2. Environment and build
 
 - Project root: `/Users/n/Documents/ws/tracks`
-- Parent directory `/Users/n/Documents/ws` is a git repository, but `tracks/` is
-  currently untracked. There is no commit.
+- Git repository: branch `main`, remote `github-rgnng:rGnng/tracks.git`.
+  Recent feature commits include sidebar playback order, playlist add-time
+  columns, queue persistence, and native media integration.
 - `Package.swift`: Swift tools 6.0, minimum platform macOS 15, links system SQLite3.
 - Current machine snapshot: macOS 27.0.1, Apple Silicon, Xcode 27.0, Swift 6.4.
 
@@ -34,8 +35,10 @@ open build/Tracks.app
 ```
 
 `scripts/build.sh [debug|release]` builds with SPM, copies the executable to
-`build/Tracks.app/Contents/MacOS/Audia`, and writes `Info.plist` with
-`CFBundleName=Tracks`.
+`build/Tracks.app/Contents/MacOS/Audia`, writes `Info.plist` with
+`CFBundleName=Tracks`, and ad-hoc signs the complete bundle. The code signature
+is required: MediaRemote/Now Playing rejects a linker-only signature for remote
+media commands.
 
 Primary database:
 
@@ -50,7 +53,7 @@ If no Internal Library exists, the fallback database path is
 ## 3. Current runtime snapshot
 
 - App is running from `/Users/n/Documents/ws/tracks/build/Tracks.app`.
-- Main window frame at the time of this snapshot: about `1322 x 823`.
+- Main window frame at the time of this snapshot: about `1098 x 823`.
 - MPD is enabled, listening on all interfaces, port `6600`, empty password.
 - Current database: `~/Music/Tracks/library.sqlite` (WAL while the app is running).
 - Database counts:
@@ -58,7 +61,8 @@ If no Internal Library exists, the fallback database path is
   - 2,143 albums
   - 5,481 artists
   - 2 stored playlists, 37 stored playlist items
-  - 3 starred songs
+  - 10 starred songs
+  - 0 persisted queue rows (the test queue was cleared)
 - Libraries table:
   - Internal: `/Users/n/Music/Tracks` (`Tracks`)
   - External: `/Volumes/New Volume/MusicLocal/Media.localized` (`Media.localized`)
@@ -76,6 +80,11 @@ If no Internal Library exists, the fallback database path is
 - `artworkCacheJPEGQuality` is currently `0.75`. The default is `0.8`; the cache
   is only regenerated when the user clicks **Rebuild Cache**.
 - `playlists.date_modified` exists and is used by MPD.
+- `playlist_items.added_at` stores the per-playlist addition time as a UNIX
+  timestamp (REAL seconds); Add Seq is derived from it. Existing rows were
+  backfilled from `playlists.date_created + position`.
+- `player_queue` is a singleton table (`id = 1`) storing queue/base-queue song
+  IDs, current index, elapsed position, and update time.
 - `PRAGMA user_version = 1` remains as an inert legacy value; no code reads it.
 - Do not clear playback history, play counts, stars, playlists, or user window
   preferences while testing.
@@ -93,7 +102,7 @@ Sources/Audia/
   Theme.swift                Light/dark colors and layout constants
   Models.swift               Artwork, Song, Album, Playlist, MusicLibrary, sidebar models
   Library.swift              Library singleton, scanning, playlists, read-only rules, delete API
-  LibraryDatabase.swift      SQLite schema, sync/prune, playlists, song deletion
+  LibraryDatabase.swift      SQLite schema, sync/prune, playlists, queue, song deletion
   LibraryOrganizer.swift     Canonical file names and tag-driven file relocation
   LibraryDeletion.swift      Delete confirmation UI and partial-failure alert
   FLACLibrary.swift          FLAC/AVFoundation metadata readers and LibraryScanner
@@ -102,6 +111,7 @@ Sources/Audia/
   ArtworkCache.swift         500x500 JPEG disk cache, quality, size, rebuild
   MPDServer.swift            Custom MPD TCP server, queue/playlists/album art
   PlayerState.swift          AVPlayer engine, queue, history, shuffle/repeat
+  SystemNowPlaying.swift     Now Playing metadata/artwork and media-key commands
   AudioDevices.swift         Core Audio output device enumeration and selection
   SystemVolume.swift         macOS output-volume get/set for MPD system mode
   WindowMode.swift           Library/MiniPlayer window modes and metrics
@@ -112,7 +122,7 @@ Sources/Audia/
   PlayerToolbar.swift        Top transport bar, seek, volume, output, search
   SidebarView.swift          Library and playlist sidebar
   ContentPane.swift          Content routing and album sort/view settings
-  ContentViews.swift         Album grid/list, album detail, song table, selection
+  ContentViews.swift         Album grid/list, album detail, song table, Add Seq/Add Time, selection
   BrowserViews.swift         Artists/Genres master-detail browsers
   ContextMenus.swift         Shared album/song context menus
   KeyboardShortcut.swift     Standard AppKit shortcut recorder, matching, persistence
@@ -229,6 +239,17 @@ Important schema decisions:
   Clear row adjusts only list height. Width and list height persist under
   `queue.popoverWidth` and `queue.listHeight`.
 - `baseQueue` preserves normal order when shuffle is toggled off.
+- The active queue and playback position are persisted in `player_queue`.
+  Structural queue changes save the full queue; position is checkpointed every
+  five seconds and on pause/termination. On launch the queue and saved elapsed
+  position are restored paused. Pressing Play resumes from that position instead
+  of restarting the track. Empty/finished/cleared queues delete the row.
+- `SystemNowPlaying` publishes title, artist, album, duration, elapsed time,
+  queue count/index, and cached album artwork to `MPNowPlayingInfoCenter`, and
+  registers play/pause/toggle, next/previous, position, and ±15-second seek
+  handlers on `MPRemoteCommandCenter`. Hardware media keys and Control Center
+  transport controls use that path. macOS MediaRemote only accepts a fully
+  sealed code-signed bundle; `scripts/build.sh` ad-hoc signs the app.
 - Shuffle/random covers the unplayed queue: enabling it while stopped shuffles
   the whole queue, enabling it while playing keeps the current track and shuffles
   the remainder, and tracks appended while shuffle is active are randomized too.
@@ -267,7 +288,7 @@ Important schema decisions:
 - Selection and drag:
   - Marquee selection works in Albums, Recently Added, Artists/Genres album panes,
     Songs, Playlists, and album detail.
-  - Long-press threshold is `DragController.longPressDuration = 0.25` seconds.
+  - Long-press threshold is `DragController.longPressDuration = 0.1` seconds.
   - Fast drag = marquee; after the long-press threshold, drag = item drag.
   - Dragging outside the window starts a native file drag:
     - Finder copies the files.
@@ -276,13 +297,21 @@ Important schema decisions:
 - Context menus include Play, Shuffle, Add to Playlist, Play Next, Play Later,
   Get Info, and the conditional Delete item. Songs/Playlist row menus also have
   **Go to Album**, which switches to Albums and opens that song's album detail.
-- Sidebar **Albums** and **Recently Added** also have Play and Shuffle context
-  menus. Albums uses the full library; Recently Added uses the same album order
-  as the Recently Added view. This is the app-level "shuffle all" entry point.
-- Returning from an album detail keeps the album selected and scrolls the
-  Albums/Recently Added grid or list back to that album. Clearing the search
-  field likewise scrolls to the first currently selected album, so the cursor
-  and visible range stay in sync.
+- Album detail keeps the underlying Albums/Recently Added grid mounted while
+  the detail view is visible, so returning restores the exact previous scroll
+  position and does not force-center an album that is already visible. Keyboard
+  navigation in the hidden grid is disabled while detail is open.
+- **Go to Album** clears the current search before switching views, then the
+  album grid retries a pending `openAlbumID` when the unfiltered list arrives.
+  This handles songs whose album title does not match the search query.
+- Sidebar **Albums** and **Recently Added** have Play and Shuffle context menus.
+  Albums uses the full library sorted by the current album sort; Recently Added
+  uses the same order as its content view.
+- Playlist song tables expose `Add Seq` and `Add Time` columns. Add Seq is
+  visible by default immediately after Genre; Add Time is hidden by default.
+  Add times are stored per playlist item, survive reorder/removal, and are
+  assigned at addition time. Sorting by either column is supported and sidebar
+  double-click playback follows the current table sort.
 - Add-to-Playlist submenu starts with **New Playlist**, then a divider, then the
   existing playlist names. New names auto-increment: New Playlist, New Playlist 2,
   etc.
@@ -637,18 +666,22 @@ by AppKit's title-bar layout pass.
 - Do not remove the key-window refresh or the width nudge. The private title-bar
   height is only re-read during a frame/layout pass.
 
-## 11. Legacy migrations
+## 11. Schema migrations
 
-All one-time legacy data migrations have been removed. The current application
-expects the current schema and current UserDefaults format; older databases or
-pre-recorder shortcut strings are not migrated. Schema creation still includes
-the full current table definitions for new libraries.
+- `createSchema()` creates the current tables and columns for new libraries.
+- `migratePlaylistItemAddTimes()` adds `playlist_items.added_at` to older
+  libraries and backfills missing values from playlist creation time + position.
+- `player_queue` is created with `CREATE TABLE IF NOT EXISTS`; no version bump.
+- Older shortcut-string formats are not migrated.
 
 ## 12. Key pitfalls and rules
 
 1. Swift 6 concurrency:
-   - `Library`, `LibraryDatabase`, `PlayerState`, `MPDServer`, and `WindowModeCenter`
-     are `@MainActor`.
+   - `Library`, `LibraryDatabase`, `PlayerState`, `MPDServer`, `WindowModeCenter`,
+     and `SystemNowPlaying` are `@MainActor`.
+   - `MPMediaItemArtwork` invokes its request handler on a background queue.
+     Build that artwork in a `nonisolated` helper from `Data`, never by touching
+     a `@MainActor` property or cached `NSImage` inside the handler.
    - `LibraryDatabase` intentionally has no deinit; its connection lives for the
      app lifetime.
 2. SQLite:
@@ -656,39 +689,51 @@ the full current table definitions for new libraries.
    - WAL while running; checkpoint and switch to DELETE on normal quit.
    - Do not validate a copied WAL database with a read-only connection; existing
      `inspect()` uses read-write without CREATE.
-3. Stable IDs:
-   - Never change song IDs during path rebases or tag edits. Playlists and play
-     data depend on them.
-4. Paths:
+   - Queue persistence uses JSON arrays in `player_queue`. Save the full queue
+     only when its structure changes; use `updatePlayerQueuePosition` for
+     elapsed-time checkpoints to avoid rewriting large queues every few seconds.
+3. Media keys:
+   - Use MediaPlayer (`MPNowPlayingInfoCenter` / `MPRemoteCommandCenter`), not
+     global event taps.
+   - The bundle must be properly ad-hoc signed; verify with `codesign -dv` that
+     `Info.plist entries` and `Sealed Resources` are present. Linker-only signing
+     is rejected by MediaRemote.
+4. Stable IDs:
+   - Never change song IDs during path rebases or tag edits. Playlists, queue,
+     and play data depend on them.
+5. Paths:
    - Canonicalize both the scan root and each file URL. `/tmp` vs `/private/tmp`
      differences can create duplicate songs.
-5. Artwork:
+6. Artwork:
    - Do not reintroduce database artwork BLOBs for library albums.
    - The 500x500 size is hardcoded; only JPEG quality is configurable.
-6. Settings:
+7. Settings:
    - Do not use `makeFirstResponder(nil)` when opening Settings.
    - Use `SettingsFocusSink`; the field must not auto-focus or beep.
-7. MPD:
+8. MPD:
    - Keep it enabled and on the current interface/port unless asked otherwise.
    - Stared is virtual and must not be deleted/renamed/overwritten/reordered.
    - Preserve `added` and `Last-Modified` from `date_added`.
    - Do not clear user history or play counts during testing.
-8. Deletion:
+9. Deletion:
    - Only Internal Library files may be deleted.
    - Move files to Trash, never `removeItem`.
    - Recheck writeability immediately before deleting.
-9. Current user data:
-   - Internal files are in Trash; do not restore or rescan them.
-   - Original stored playlists and stars should be preserved.
-10. Testing:
-    - Use temporary files and temporary databases for destructive tests.
+10. Current user data:
+    - Internal files are in Trash; do not restore or rescan them.
+    - Original stored playlists, queue, and stars should be preserved.
+11. Testing:
+    - Use temporary files/playlists and temporary databases for destructive tests.
+    - Keep system output muted during playback automation.
     - Do not delete real user audio to verify code.
-11. UI automation is limited:
+12. UI automation:
     - System Events can inspect windows and standard buttons.
-    - `screencapture` is not permitted on this machine.
-    - Context-menu automation through accessibility is unreliable; verify menu
-      wiring in code and manually when possible.
-12. The project is not committed. Do not assume git history is available.
+    - `screencapture` is not permitted on this machine; use in-app `cacheDisplay`
+      captures through lldb when needed.
+    - Control Center Now Playing can be inspected through the MenuBarAgent and
+      Control Center accessibility trees to verify artwork/metadata.
+13. Git: the project is tracked on `main`; commit owned source/doc changes only.
+    Do not commit user-owned icon resources or icon-related build-script edits.
 
 ## 13. Useful verification commands
 
@@ -710,7 +755,15 @@ sqlite3 ~/Music/Tracks/library.sqlite \
    select count(*) from albums;
    select count(*) from playlists;
    select name from playlists order by name;
-   select count(*) from songs where loved=1;"
+   select count(*) from songs where loved=1;
+   select current_index, elapsed, json_array_length(queue_ids) from player_queue;"
+```
+
+Signature / Now Playing readiness:
+
+```bash
+codesign -dv --verbose=2 build/Tracks.app
+# Expect Info.plist entries and Sealed Resources in the output.
 ```
 
 MPD:
@@ -772,14 +825,16 @@ traffic lights are custom SwiftUI controls, not standard window buttons.
 - No per-library album isolation.
 - No undo for file deletion beyond the macOS Trash.
 - `MockData` may still be present as dead code in `Models.swift`.
-- The project is untracked in git and has no commit.
+- The project is tracked on `main`. User-owned icon resources and icon-related
+  build-script edits may remain uncommitted.
 
 ## 15. Handoff summary
 
 Tracks is a native macOS iTunes-style player with a SQLite library, real AVPlayer
 playback, Internal/External libraries, organizer-based imports and tag edits,
 a 500x500 disk artwork cache, rich multi-selection and drag behavior, a MiniPlayer,
-file deletion to Trash, and a custom MPD server.
+queue/position persistence, macOS Now Playing/media-key integration, and a custom
+MPD server.
 
 The current MPD server is enabled on all interfaces at port 6600, supports album
 art, stored playlists, the virtual Stared playlist, and MPD 0.24 `added` timestamps.
@@ -787,6 +842,6 @@ The current Internal Library has no songs; the previous internal files are in th
 macOS Trash and should not be restored without the user's request.
 
 For the next change: read this file, inspect the relevant source file, build with
-`swift build`, package with `bash scripts/build.sh`, and test with temporary data.
-Do not reset the user's library, playlists, stars, history, MPD settings, or
-window preferences.
+`swift build`, package with `bash scripts/build.sh` (which also signs the bundle),
+and test with temporary data. Do not reset the user's library, playlists, stars,
+history, queue, MPD settings, or window preferences.
