@@ -1088,6 +1088,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 @MainActor
 enum KeyboardShortcuts {
     static func handle(_ event: NSEvent) -> NSEvent? {
+        if ContextMenuController.shared.handleKeyEvent(event) { return nil }
         if ShortcutRecorderState.isRecording { return event }
         guard let window = event.window else { return event }
         // Arrow/Page/Home keys carry `.function`/`.numericPad`; ignore those so

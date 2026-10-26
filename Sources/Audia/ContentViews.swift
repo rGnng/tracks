@@ -103,23 +103,28 @@ struct AlbumGrid: View {
                                         handleCardTap(album)
                                     }
                                 )
-                                .contextMenu {
-                                    Button("Play") { player.play(contextSongs(for: album)) }
-                                    Button("Shuffle") { player.playShuffled(contextSongs(for: album)) }
-                                    Divider()
-                                    AddToPlaylistMenu(songs: contextSongs(for: album))
-                                    Button("Play Next") { player.playNext(contextSongs(for: album)) }
-                                    Button("Play Later") { player.playLater(contextSongs(for: album)) }
-                                    Divider()
-                                    Button("Get Info…") {
-                                        InfoCenter.shared.target = .album(album.id)
-                                        openWindow(id: "get-info")
-                                    }
-                                    Divider()
-                                    Button("Delete…") {
-                                        LibraryDeletion.confirmDelete(albums: contextAlbums(for: album))
-                                    }
-                                    .disabled(!LibraryDeletion.canDelete(albums: contextAlbums(for: album)))
+                                .appContextMenu {
+                                    let songs = contextSongs(for: album)
+                                    let albums = contextAlbums(for: album)
+                                    return [
+                                        .action("Play") { player.play(songs) },
+                                        .action("Shuffle") { player.playShuffled(songs) },
+                                        .separator,
+                                    ] + addToPlaylistMenuItems(songs: songs) + [
+                                        .action("Play Next") { player.playNext(songs) },
+                                        .action("Play Later") { player.playLater(songs) },
+                                        .separator,
+                                        .action("Get Info…") {
+                                            InfoCenter.shared.target = .album(album.id)
+                                            openWindow(id: "get-info")
+                                        },
+                                        .separator,
+                                        .action("Delete…",
+                                                enabled: LibraryDeletion.canDelete(albums: albums),
+                                                destructive: true) {
+                                            LibraryDeletion.confirmDelete(albums: albums)
+                                        },
+                                    ]
                                 }
                                 .longPressArmable { dragPayload(for: album) }
                             }
@@ -811,23 +816,28 @@ struct AlbumList: View {
                                     }
                                 )
                                 .id(album.id)
-                                .contextMenu {
-                                    Button("Play") { player.play(contextSongs(for: album)) }
-                                    Button("Shuffle") { player.playShuffled(contextSongs(for: album)) }
-                                    Divider()
-                                    AddToPlaylistMenu(songs: contextSongs(for: album))
-                                    Button("Play Next") { player.playNext(contextSongs(for: album)) }
-                                    Button("Play Later") { player.playLater(contextSongs(for: album)) }
-                                    Divider()
-                                    Button("Get Info…") {
-                                        InfoCenter.shared.target = .album(album.id)
-                                        openWindow(id: "get-info")
-                                    }
-                                    Divider()
-                                    Button("Delete…") {
-                                        LibraryDeletion.confirmDelete(albums: contextAlbums(for: album))
-                                    }
-                                    .disabled(!LibraryDeletion.canDelete(albums: contextAlbums(for: album)))
+                                .appContextMenu {
+                                    let songs = contextSongs(for: album)
+                                    let albums = contextAlbums(for: album)
+                                    return [
+                                        .action("Play") { player.play(songs) },
+                                        .action("Shuffle") { player.playShuffled(songs) },
+                                        .separator,
+                                    ] + addToPlaylistMenuItems(songs: songs) + [
+                                        .action("Play Next") { player.playNext(songs) },
+                                        .action("Play Later") { player.playLater(songs) },
+                                        .separator,
+                                        .action("Get Info…") {
+                                            InfoCenter.shared.target = .album(album.id)
+                                            openWindow(id: "get-info")
+                                        },
+                                        .separator,
+                                        .action("Delete…",
+                                                enabled: LibraryDeletion.canDelete(albums: albums),
+                                                destructive: true) {
+                                            LibraryDeletion.confirmDelete(albums: albums)
+                                        },
+                                    ]
                                 }
                                 .longPressArmable { dragPayload(for: album) }
                             }
@@ -1365,14 +1375,16 @@ struct SongTable: View {
             .zIndex(1)
         }
         .frame(height: 26)
-        .contextMenu {
-            Toggle("Track", isOn: $showTrack)
-            Toggle("Time", isOn: $showTime)
-            Toggle("Artist", isOn: $showArtist)
-            Toggle("Album Artist", isOn: $showAlbumArtist)
-            Toggle("Album", isOn: $showAlbum)
-            Toggle("Genre", isOn: $showGenre)
-            Toggle("Plays", isOn: $showPlays)
+        .appContextMenu {
+            [
+                .toggle("Track", isOn: showTrack) { showTrack.toggle() },
+                .toggle("Time", isOn: showTime) { showTime.toggle() },
+                .toggle("Artist", isOn: showArtist) { showArtist.toggle() },
+                .toggle("Album Artist", isOn: showAlbumArtist) { showAlbumArtist.toggle() },
+                .toggle("Album", isOn: showAlbum) { showAlbum.toggle() },
+                .toggle("Genre", isOn: showGenre) { showGenre.toggle() },
+                .toggle("Plays", isOn: showPlays) { showPlays.toggle() },
+            ]
         }
     }
 
@@ -1588,30 +1600,37 @@ struct SongTable: View {
         .contentShape(Rectangle())
         .onTapGesture { handleRowTap(song) }
         .simultaneousGesture(TapGesture(count: 2).onEnded { player.play(song, in: sorted) })
-        .contextMenu {
-            Button("Play") { playContext(song) }
-            Divider()
-            AddToPlaylistMenu(songs: contextSongs(for: song))
-            Button("Play Next") { player.playNext(contextSongs(for: song)) }
-            Button("Play Later") { player.playLater(contextSongs(for: song)) }
-            Divider()
-            Button("Get Info…") {
-                InfoCenter.shared.target = .song(song.id)
-                openWindow(id: "get-info")
-            }
-            Button("Go to Album") { goToAlbum(song) }
+        .appContextMenu {
+            let songs = contextSongs(for: song)
+            var items: [AppMenuItem] = [
+                .action("Play") { playContext(song) },
+                .separator,
+            ]
+            items.append(contentsOf: addToPlaylistMenuItems(songs: songs))
+            items.append(contentsOf: [
+                .action("Play Next") { player.playNext(songs) },
+                .action("Play Later") { player.playLater(songs) },
+                .separator,
+                .action("Get Info…") {
+                    InfoCenter.shared.target = .song(song.id)
+                    openWindow(id: "get-info")
+                },
+                .action("Go to Album") { goToAlbum(song) },
+            ])
             if let playlistID = context.playlistID {
-                Divider()
-                Button("Remove from Playlist") {
+                items.append(.separator)
+                items.append(.action("Remove from Playlist") {
                     Library.shared.removeFromPlaylist(playlistID,
-                                                       songIDs: contextSongs(for: song).map(\.id))
-                }
+                                                       songIDs: songs.map(\.id))
+                })
             }
-            Divider()
-            Button("Delete…") {
-                LibraryDeletion.confirmDelete(songs: contextSongs(for: song))
-            }
-            .disabled(!LibraryDeletion.canDelete(songs: contextSongs(for: song)))
+            items.append(.separator)
+            items.append(.action("Delete…",
+                                 enabled: LibraryDeletion.canDelete(songs: songs),
+                                 destructive: true) {
+                LibraryDeletion.confirmDelete(songs: songs)
+            })
+            return items
         }
         .longPressArmable { dragPayload(for: song) }
     }

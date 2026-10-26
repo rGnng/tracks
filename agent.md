@@ -114,7 +114,8 @@ Sources/Audia/
   ContentPane.swift          Content routing and album sort/view settings
   ContentViews.swift         Album grid/list, album detail, song table, selection
   BrowserViews.swift         Artists/Genres master-detail browsers
-  ContextMenus.swift         Shared album/song context menus
+  ContextMenus.swift         Shared album/song context menu item definitions
+  AppContextMenu.swift       Custom accent-colored right-click menu panel and catcher
   KeyboardShortcut.swift     Standard AppKit shortcut recorder, matching, persistence
   SettingsFocusSink.swift    Invisible initial first responder for Settings
   GetInfo.swift              Details/Artwork/File inspector and tag editing
@@ -343,14 +344,19 @@ Important schema decisions:
   directly so popovers and overlays do not depend on accent-environment
   propagation. Outlines, links, active buttons, row hover, and custom controls
   update live. Filled selections use `Theme.selectionFill`,
-  which is the raw accent in light mode and a 35%-darkened accent in dark mode so
+  which is the raw accent in light mode and a 28%-darkened accent in dark mode so
   large rows do not look neon. The selected sidebar row uses a 20% tint.
   `Theme.highlightForeground` switches selected-row text to black for bright
   choices. Queue/History and Get Info tabs use `AccentSegmentedControl` because
   AppKit's segmented picker ignores `.tint` and always uses the bright system accent.
-  Native AppKit context menus, menu-item highlights, text selection, and panels
-  use the macOS system accent; there is no supported per-app override. Forcing
-  those would require custom menus that lose native behavior.
+- Right-click context menus are app-drawn (`AppContextMenu`) in a borderless
+  nonactivating panel, using `Theme.selectionFill` for the hovered row. The
+  flattened "Add to Playlist" section replaces the former native submenu so it
+  follows the app color. Keyboard Up/Down/Return/Escape are routed through
+  `KeyboardShortcuts.handle` while the menu is open; all other keys are consumed.
+  Native NSMenu popups (app menus, the NowPlaying overflow menu), text selection,
+  and system panels still use the macOS system accent; there is no supported
+  per-app override.
 - View > Appearance has Automatic/Light/Dark. `AppearanceController` applies the
   choice at the AppKit level (`NSApp.appearance` and every window's appearance).
   Automatic sets these to nil so live system appearance changes propagate to all

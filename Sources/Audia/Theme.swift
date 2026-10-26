@@ -61,7 +61,7 @@ enum HighlightColor: String, CaseIterable, Identifiable {
         guard appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua else {
             return resolved
         }
-        return resolved.blended(withFraction: 0.35, of: .black) ?? resolved
+        return resolved.blended(withFraction: 0.28, of: .black) ?? resolved
     }
 
     var selectionColor: Color {
