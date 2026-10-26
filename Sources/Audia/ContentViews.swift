@@ -99,12 +99,9 @@ struct AlbumGrid: View {
                                 )
                                 .contentShape(Rectangle())
                                 .gesture(
-                                    TapGesture(count: 2).onEnded {
-                                        player.play(album.songs)
-                                    }
-                                    .exclusively(before: TapGesture().onEnded {
+                                    TapGesture().onEnded {
                                         handleCardTap(album)
-                                    })
+                                    }
                                 )
                                 .contextMenu {
                                     Button("Play") { player.play(contextSongs(for: album)) }
@@ -327,9 +324,9 @@ struct AlbumGrid: View {
             if let start = marqueeStart, let current = marqueeCurrent {
                 let rect = marqueeRect(start, current)
                 Rectangle()
-                    .fill(Theme.selectionBlue.opacity(0.12))
+                    .fill(Theme.highlight.opacity(0.12))
                     .overlay(
-                        Rectangle().strokeBorder(Theme.selectionBlue.opacity(0.75), lineWidth: 1)
+                        Rectangle().strokeBorder(Theme.highlight.opacity(0.75), lineWidth: 1)
                     )
                     .frame(width: rect.width, height: rect.height)
                     .position(x: rect.midX, y: rect.midY)
@@ -384,7 +381,7 @@ private struct AlbumCard: View {
             .clipShape(RoundedRectangle(cornerRadius: 4))
             .overlay(
                 RoundedRectangle(cornerRadius: 4)
-                    .strokeBorder(isSelected ? Theme.selectionBlue : .clear, lineWidth: 2)
+                    .strokeBorder(isSelected ? Theme.highlight : .clear, lineWidth: 2)
             )
             .shadow(color: .black.opacity(hover ? 0.20 : 0.05), radius: hover ? 5 : 1, y: hover ? 2 : 1)
 
@@ -427,8 +424,8 @@ private struct ArtistLinkText: View {
     }
 
     private var textColor: Color {
-        if isSelected { return .white.opacity(hover ? 1 : 0.85) }
-        return hover ? Theme.selectionBlue : Theme.secondaryText
+        if isSelected { return Theme.highlightForeground.opacity(hover ? 1 : 0.85) }
+        return hover ? Theme.highlight : Theme.secondaryText
     }
 }
 
@@ -452,7 +449,7 @@ private struct AlbumDetailView: View {
                         Text("All Albums")
                             .font(.system(size: 12, weight: .medium))
                     }
-                    .foregroundColor(Theme.selectionBlue)
+                    .foregroundColor(Theme.highlight)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -705,11 +702,11 @@ private struct AlbumTrackRow: View {
                 if isCurrent {
                     Image(systemName: isPlaying ? "play.fill" : "pause.fill")
                         .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(isSelected ? .white : Theme.selectionBlue)
+                        .foregroundColor(isSelected ? Theme.highlightForeground : Theme.highlight)
                 } else {
                     Text("\(song.trackNumber)")
                         .font(.system(size: 12))
-                        .foregroundColor(isSelected ? .white.opacity(0.85) : Theme.secondaryText)
+                        .foregroundColor(isSelected ? Theme.highlightForeground.opacity(0.85) : Theme.secondaryText)
                 }
             }
             .frame(width: 30, alignment: .leading)
@@ -717,12 +714,12 @@ private struct AlbumTrackRow: View {
             HStack(spacing: 6) {
                 Text(song.title)
                     .font(.system(size: 13))
-                    .foregroundColor(isSelected ? .white : Theme.primaryText)
+                    .foregroundColor(isSelected ? Theme.highlightForeground : Theme.primaryText)
                     .lineLimit(1)
                 if song.artist != albumArtist {
                     Text(song.artist)
                         .font(.system(size: 11.5))
-                        .foregroundColor(isSelected ? .white.opacity(0.72) : Theme.secondaryText)
+                        .foregroundColor(isSelected ? Theme.highlightForeground.opacity(0.72) : Theme.secondaryText)
                         .lineLimit(1)
                 }
                 Spacer(minLength: 0)
@@ -732,7 +729,7 @@ private struct AlbumTrackRow: View {
 
             Text(song.timeLabel)
                 .font(.system(size: 12).monospacedDigit())
-                .foregroundColor(isSelected ? .white.opacity(0.85) : Theme.secondaryText)
+                .foregroundColor(isSelected ? Theme.highlightForeground.opacity(0.85) : Theme.secondaryText)
                 .frame(width: 52, alignment: .trailing)
 
             StarButton(songID: song.id, isSelected: isSelected)
@@ -747,7 +744,7 @@ private struct AlbumTrackRow: View {
                 bottomTrailingRadius: nextSelected ? 0 : 5,
                 topTrailingRadius: previousSelected ? 0 : 5
             )
-            .fill(isSelected ? Theme.selectionBlue : (hover ? Theme.rowHover : Color.clear))
+            .fill(isSelected ? Theme.highlight : (hover ? Theme.rowHover : Color.clear))
         )
         .padding(.horizontal, 6)
         .onHover { hover = $0 }
@@ -785,7 +782,7 @@ struct AlbumList: View {
                                     VStack(alignment: .leading, spacing: 1) {
                                         Text(album.title)
                                             .font(.system(size: 13))
-                                            .foregroundColor(selected ? .white : Theme.primaryText)
+                                            .foregroundColor(selected ? Theme.highlightForeground : Theme.primaryText)
                                             .lineLimit(1)
                                         ArtistLinkText(name: album.artist, fontSize: 11, isSelected: selected)
                                     }
@@ -793,7 +790,7 @@ struct AlbumList: View {
                                     if !album.year.isEmpty {
                                         Text(album.year)
                                             .font(.system(size: 11))
-                                            .foregroundColor(selected ? .white.opacity(0.85) : Theme.secondaryText)
+                                            .foregroundColor(selected ? Theme.highlightForeground.opacity(0.85) : Theme.secondaryText)
                                     }
                                 }
                                 .padding(.horizontal, 14)
@@ -809,12 +806,9 @@ struct AlbumList: View {
                                 )
                                 .contentShape(Rectangle())
                                 .gesture(
-                                    TapGesture(count: 2).onEnded {
-                                        player.play(album.songs)
-                                    }
-                                    .exclusively(before: TapGesture().onEnded {
+                                    TapGesture().onEnded {
                                         handleRowTap(album)
-                                    })
+                                    }
                                 )
                                 .id(album.id)
                                 .contextMenu {
@@ -1003,9 +997,9 @@ struct AlbumList: View {
             if let start = marqueeStart, let current = marqueeCurrent {
                 let rect = marqueeRect(start, current)
                 Rectangle()
-                    .fill(Theme.selectionBlue.opacity(0.12))
+                    .fill(Theme.highlight.opacity(0.12))
                     .overlay(
-                        Rectangle().strokeBorder(Theme.selectionBlue.opacity(0.75), lineWidth: 1)
+                        Rectangle().strokeBorder(Theme.highlight.opacity(0.75), lineWidth: 1)
                     )
                     .frame(width: rect.width, height: rect.height)
                     .position(x: rect.midX, y: rect.midY)
@@ -1068,7 +1062,7 @@ struct AlbumList: View {
 }
 
 func rowBackground(index: Int, selected: Bool) -> Color {
-    if selected { return Theme.selectionBlue }
+    if selected { return Theme.highlight }
     return index.isMultiple(of: 2) ? Theme.contentBackground : Theme.rowAlternate
 }
 
@@ -1583,7 +1577,7 @@ struct SongTable: View {
                     bottomTrailingRadius: nextSelected ? 0 : 5,
                     topTrailingRadius: previousSelected ? 0 : 5
                 )
-                .fill(Theme.selectionBlue)
+                .fill(Theme.highlight)
                 .padding(.horizontal, 6)
             } else {
                 (index.isMultiple(of: 2) ? Theme.contentBackground : Theme.rowAlternate)
@@ -1664,7 +1658,7 @@ struct SongTable: View {
             if player.currentSong?.id == song.id {
                 Image(systemName: player.isPlaying ? "play.fill" : "pause.fill")
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(selected ? .white : Theme.selectionBlue)
+                    .foregroundColor(selected ? Theme.highlightForeground : Theme.highlight)
             } else {
                 Color.clear
             }
@@ -1683,7 +1677,7 @@ struct SongTable: View {
             HStack(spacing: 0) {
                 Text(song.title)
                     .font(.system(size: 13))
-                    .foregroundColor(selected ? .white : Theme.primaryText)
+                    .foregroundColor(selected ? Theme.highlightForeground : Theme.primaryText)
                     .lineLimit(1)
                 Spacer(minLength: 0)
             }
@@ -1712,7 +1706,7 @@ struct SongTable: View {
     private func textCell(_ text: String, selected: Bool) -> some View {
         Text(text)
             .font(.system(size: 12))
-            .foregroundColor(selected ? .white : Theme.secondaryText)
+            .foregroundColor(selected ? Theme.highlightForeground : Theme.secondaryText)
             .lineLimit(1)
             .padding(.horizontal, 5)
     }
@@ -1837,7 +1831,7 @@ private struct SongColumnHandle: View {
     var body: some View {
         ZStack {
             Rectangle()
-                .fill(hovering ? Theme.selectionBlue : Theme.divider.opacity(0.55))
+                .fill(hovering ? Theme.highlight : Theme.divider.opacity(0.55))
                 .frame(width: 1)
         }
         .frame(width: 12, height: 26)

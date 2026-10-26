@@ -121,7 +121,7 @@ struct SidebarView: View {
                         Button("Delete", role: .destructive) {
                             library.deletePlaylist(playlist.id)
                             if selection == .playlist(playlist.id) {
-                                selection = .library(.albums)
+                                selection = .library(.recentlyAdded)
                             }
                         }
                     }
@@ -263,7 +263,7 @@ private struct SidebarItem: View {
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 5)
-                    .strokeBorder(isDropTarget ? Theme.selectionBlue : .clear, lineWidth: 1)
+                    .strokeBorder(isDropTarget ? Theme.highlight : .clear, lineWidth: 1)
             )
             .contentShape(Rectangle())
         }
@@ -274,7 +274,7 @@ private struct SidebarItem: View {
 
     private var background: AnyShapeStyle {
         if isDropTarget {
-            return AnyShapeStyle(Theme.selectionBlue.opacity(0.22))
+            return AnyShapeStyle(Theme.highlight.opacity(0.22))
         } else if isSelected {
             return AnyShapeStyle(Theme.sidebarSelection)
         } else if hover {
@@ -350,7 +350,7 @@ private struct InlinePlaylistField: View {
             RoundedRectangle(cornerRadius: 5)
                 .fill(Theme.controlBackground)
                 .overlay(RoundedRectangle(cornerRadius: 5)
-                    .strokeBorder(Theme.selectionBlue, lineWidth: 1))
+                    .strokeBorder(Theme.highlight, lineWidth: 1))
         )
         .padding(.horizontal, 7)
         .onAppear {

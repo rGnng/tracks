@@ -229,6 +229,53 @@ enum SidebarSelection: Hashable {
     case playlist(UUID)
 }
 
+extension SidebarSelection {
+    var persistenceValue: String {
+        switch self {
+        case .library(let section):
+            return "library:\(section.rawValue)"
+        case .starred:
+            return "starred"
+        case .playlist(let id):
+            return "playlist:\(id.uuidString)"
+        }
+    }
+
+    init?(persistenceValue: String) {
+        if persistenceValue == "starred" {
+            self = .starred
+            return
+        }
+        let libraryPrefix = "library:"
+        if persistenceValue.hasPrefix(libraryPrefix),
+           let section = LibrarySection(rawValue: String(persistenceValue.dropFirst(libraryPrefix.count))) {
+            self = .library(section)
+            return
+        }
+        let playlistPrefix = "playlist:"
+        if persistenceValue.hasPrefix(playlistPrefix),
+           let id = UUID(uuidString: String(persistenceValue.dropFirst(playlistPrefix.count))) {
+            self = .playlist(id)
+            return
+        }
+        return nil
+    }
+}
+
+enum SidebarSelectionStore {
+    static let defaultsKey = "sidebarSelection"
+    static let fallback: SidebarSelection = .library(.recentlyAdded)
+
+    static func load() -> SidebarSelection? {
+        guard let raw = UserDefaults.standard.string(forKey: defaultsKey) else { return nil }
+        return SidebarSelection(persistenceValue: raw)
+    }
+
+    static func save(_ selection: SidebarSelection) {
+        UserDefaults.standard.set(selection.persistenceValue, forKey: defaultsKey)
+    }
+}
+
 // MARK: - Mock data
 
 enum MockData {

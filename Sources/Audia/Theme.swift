@@ -1,6 +1,81 @@
 import SwiftUI
 import AppKit
 
+/// User-selectable highlight color. `system` follows the macOS accent color;
+/// the rest mirror the choices in System Settings > Appearance.
+enum HighlightColor: String, CaseIterable, Identifiable {
+    case system
+    case blue
+    case purple
+    case pink
+    case red
+    case orange
+    case yellow
+    case green
+    case graphite
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .system: return "System"
+        case .blue: return "Blue"
+        case .purple: return "Purple"
+        case .pink: return "Pink"
+        case .red: return "Red"
+        case .orange: return "Orange"
+        case .yellow: return "Yellow"
+        case .green: return "Green"
+        case .graphite: return "Graphite"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .system: return Color(nsColor: .controlAccentColor)
+        case .blue: return Color(nsColor: .systemBlue)
+        case .purple: return Color(nsColor: .systemPurple)
+        case .pink: return Color(nsColor: .systemPink)
+        case .red: return Color(nsColor: .systemRed)
+        case .orange: return Color(nsColor: .systemOrange)
+        case .yellow: return Color(nsColor: .systemYellow)
+        case .green: return Color(nsColor: .systemGreen)
+        case .graphite: return Color(nsColor: .systemGray)
+        }
+    }
+
+    var swatch: AnyShapeStyle {
+        if self == .system {
+            return AnyShapeStyle(AngularGradient(
+                colors: [.red, .orange, .yellow, .green, .blue, .purple, .pink, .red],
+                center: .center
+            ))
+        }
+        return AnyShapeStyle(color)
+    }
+
+    /// Light accent choices need dark text on filled rows for readability.
+    var prefersDarkForeground: Bool {
+        let base: NSColor
+        switch self {
+        case .system: base = .controlAccentColor
+        case .blue: base = .systemBlue
+        case .purple: base = .systemPurple
+        case .pink: base = .systemPink
+        case .red: base = .systemRed
+        case .orange: base = .systemOrange
+        case .yellow: base = .systemYellow
+        case .green: base = .systemGreen
+        case .graphite: base = .systemGray
+        }
+        guard let rgb = base.usingColorSpace(.sRGB) else { return false }
+        let brightness = 0.299 * rgb.redComponent
+            + 0.587 * rgb.greenComponent
+            + 0.114 * rgb.blueComponent
+        return brightness > 0.55
+    }
+}
+
 /// iTunes-style palette with automatic light / dark variants.
 /// Colors are built as dynamic NSColors so they follow the system appearance.
 enum Theme {
@@ -50,16 +125,14 @@ enum Theme {
     /// Played portion of the seek bar inside the now-playing panel (neutral gray).
     static let lcdProgress = c((0.55, 0.55, 0.58), (0.62, 0.62, 0.66))
 
-    // Selection / accent
-    static let selectionBlue = c((0.15, 0.53, 0.90), (0.04, 0.52, 1.00))
-    static let selectionGradient = LinearGradient(
-        colors: [
-            c((0.28, 0.62, 0.97), (0.08, 0.55, 1.00)),
-            c((0.11, 0.47, 0.87), (0.00, 0.40, 0.85)),
-        ],
-        startPoint: .top,
-        endPoint: .bottom
-    )
+    // Selection / accent. `.accentColor` resolves from the environment, so
+    // changing the Highlights setting updates every selection surface.
+    static var highlight: Color { .accentColor }
+    static var highlightForeground: Color {
+        let raw = UserDefaults.standard.string(forKey: "highlightColor") ?? ""
+        let choice = HighlightColor(rawValue: raw) ?? .system
+        return choice.prefersDarkForeground ? .black : .white
+    }
 
     // Table rows
     static let rowAlternate = c((0.968, 0.970, 0.976), (0.074, 0.074, 0.082))
@@ -67,7 +140,7 @@ enum Theme {
 
     // Controls
     static let sidebarHover = c((0.870, 0.870, 0.890), (0.128, 0.128, 0.138))
-    static let sidebarSelection = c((0.780, 0.780, 0.805), (0.188, 0.188, 0.198))
+    static var sidebarSelection: Color { highlight.opacity(0.20) }
     static let controlBackground = c((1.00, 1.00, 1.00), (0.104, 0.104, 0.113))
     static let controlBorder = c((0.760, 0.760, 0.780), (0.218, 0.218, 0.232))
     static let controlFillActive = c((0.900, 0.900, 0.920), (0.176, 0.176, 0.188))

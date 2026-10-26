@@ -5,12 +5,18 @@ import SwiftUI
 struct AudiaApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @AppStorage("appearanceMode") private var appearanceMode = "auto"
+    @AppStorage("highlightColor") private var highlightColorRaw = HighlightColor.system.rawValue
     @AppStorage("showStatusBar") private var showStatusBar = true
+
+    private var highlightColor: Color {
+        (HighlightColor(rawValue: highlightColorRaw) ?? .system).color
+    }
 
     var body: some Scene {
         Window("Tracks", id: "main") {
             ContentView(appearanceMode: appearanceMode)
                 .environmentObject(PlayerState.shared)
+                .accentColor(highlightColor)
         }
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1320, height: 860)
@@ -73,16 +79,19 @@ struct AudiaApp: App {
 
         Settings {
             SettingsView()
+                .accentColor(highlightColor)
         }
         .defaultSize(width: 660, height: 640)
 
         Window("Get Info", id: "get-info") {
             GetInfoView()
+                .accentColor(highlightColor)
         }
         .defaultSize(width: 540, height: 620)
 
         Window("Set Up Tracks Library", id: "setup") {
             InternalLibrarySetupView()
+                .accentColor(highlightColor)
         }
         .defaultSize(width: 540, height: 410)
         .windowResizability(.contentSize)
@@ -128,6 +137,7 @@ private enum LibraryFolderPicker {
 struct SettingsView: View {
     @AppStorage("albumViewMode") private var albumViewMode = "grid"
     @AppStorage("albumSort") private var albumSort = GridSort.album.rawValue
+    @AppStorage("highlightColor") private var highlightColor = HighlightColor.system.rawValue
     @AppStorage("mpd.enabled") private var mpdEnabled = false
     @AppStorage("mpd.allInterfaces") private var mpdAllInterfaces = false
     @AppStorage("mpd.addresses") private var mpdAddresses = "127.0.0.1"
@@ -170,6 +180,42 @@ struct SettingsView: View {
                     }
                 }
                 .pickerStyle(.radioGroup)
+                .frame(maxWidth: 360, alignment: .leading)
+
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Highlights")
+                        .font(.system(size: 11))
+                        .foregroundColor(Theme.secondaryText)
+
+                    HStack(spacing: 2) {
+                        ForEach(HighlightColor.allCases) { choice in
+                            let selected = highlightColor == choice.rawValue
+                            Button {
+                                highlightColor = choice.rawValue
+                            } label: {
+                                ZStack {
+                                    if selected {
+                                        Circle()
+                                            .strokeBorder(Color.primary, lineWidth: 2)
+                                            .frame(width: 24, height: 24)
+                                    }
+                                    Circle()
+                                        .fill(choice.swatch)
+                                        .frame(width: 18, height: 18)
+                                        .overlay(
+                                            Circle()
+                                                .strokeBorder(Color.black.opacity(0.14), lineWidth: 0.5)
+                                        )
+                                }
+                                .frame(width: 26, height: 26)
+                                .contentShape(Circle())
+                            }
+                            .buttonStyle(.plain)
+                            .help(choice.title)
+                            .accessibilityLabel("\(choice.title) highlight")
+                        }
+                    }
+                }
                 .frame(maxWidth: 360, alignment: .leading)
 
                 Divider()
@@ -756,7 +802,7 @@ struct InternalLibrarySetupView: View {
             HStack(spacing: 12) {
                 Image(systemName: "internaldrive.fill")
                     .font(.system(size: 28))
-                    .foregroundColor(Theme.selectionBlue)
+                    .foregroundColor(Theme.highlight)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Set Up Your Tracks Library")
                         .font(.system(size: 17, weight: .semibold))

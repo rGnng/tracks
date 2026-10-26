@@ -10,7 +10,8 @@ struct ContentView: View {
     @ObservedObject private var navigation = NavigationCenter.shared
     @ObservedObject private var library = Library.shared
     @ObservedObject private var windowMode = WindowModeCenter.shared
-    @State private var selection: SidebarSelection = .library(.albums)
+    @State private var selection: SidebarSelection =
+        SidebarSelectionStore.load() ?? SidebarSelectionStore.fallback
     @State private var sidebarWidth: CGFloat = 200
     @State private var dragStartWidth: CGFloat?
     @State private var searchText = ""
@@ -43,6 +44,8 @@ struct ContentView: View {
         }
         .preferredColorScheme(colorScheme)
         .onAppear {
+            validateSelection()
+
             // SwiftUI focuses the search field when the window first appears.
             // Clear the first responder so nothing is selected on launch.
             DispatchQueue.main.async {
@@ -70,6 +73,7 @@ struct ContentView: View {
             pendingAlbumID = nil
         }
         .onChange(of: selection) { _, newValue in
+            SidebarSelectionStore.save(newValue)
             searchText = ""
             switch newValue {
             case .playlist(let id):
@@ -87,7 +91,7 @@ struct ContentView: View {
             searchText = ""
         }
         .onReceive(NotificationCenter.default.publisher(for: .libraryDidChange)) { _ in
-            selection = .library(.albums)
+            selection = .library(.recentlyAdded)
             searchText = ""
             pendingAlbumID = nil
             StatusBarCenter.shared.context = .library
@@ -105,6 +109,13 @@ struct ContentView: View {
             Button("OK") { library.clearOpenWarning() }
         } message: {
             Text(library.openWarning ?? "")
+        }
+    }
+
+    private func validateSelection() {
+        guard case .playlist(let id) = selection else { return }
+        if !library.playlists.contains(where: { $0.id == id }) {
+            selection = .library(.recentlyAdded)
         }
     }
 

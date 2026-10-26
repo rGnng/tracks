@@ -105,6 +105,7 @@ Sources/Audia/
   AudioDevices.swift         Core Audio output device enumeration and selection
   SystemVolume.swift         macOS output-volume get/set for MPD system mode
   WindowMode.swift           Library/MiniPlayer window modes and metrics
+  WindowSnapping.swift       Magnetic snapping for custom-dragged main window
   MiniPlayerView.swift       Compact player UI and Liquid Glass mini traffic lights
   Components.swift           WindowConfigurator, titlebar layout, shared controls
   ContentView.swift          Root layout, sidebar/player/content composition
@@ -247,10 +248,20 @@ Important schema decisions:
     adjustable height (`140...500`, screen permitting). Height is
     `width + 72` (`+ queueHeight` while the queue is open). Window shortcuts are
     Command-1 / Command-2.
+  - Custom dragging (`WindowDragArea`) uses `WindowSnapContext`: it snaps either
+    axis independently to screen visible edges or visible normal windows within
+    10pt, with a 22pt release threshold. The snapshot is captured on mouse-down.
   - MiniPlayer uses custom Liquid Glass-style traffic lights inside the cover;
     they stay hidden until the pointer enters the window, matching the old
     compact-player behavior without adding a title-bar strip. The lights use
     symmetric 10pt top/left margins.
+- Sidebar selection is persisted under `sidebarSelection` as a stable string:
+  `library:<section>`, `starred`, or `playlist:<uuid>`. A missing, malformed,
+  or deleted-playlist value falls back to **Recently Added**. The first launch
+  and library switches also use Recently Added as the default view.
+- Album cards/rows use single click for selection or album-detail navigation.
+  Double-click no longer starts album playback; use the hover Play button or the
+  context menu instead.
 - Selection and drag:
   - Marquee selection works in Albums, Recently Added, Artists/Genres album panes,
     Songs, Playlists, and album detail.
@@ -321,6 +332,13 @@ Important schema decisions:
   - The quality text field remains clickable and editable. Tested values include
     75, 80, 5 (clamps to 15), and 200 (clamps to 100).
 - Settings uses a normal numeric field and a `%` label; no Stepper.
+- Appearance > Highlights selects `highlightColor` (default `system`) and offers
+  the macOS accent choices: System/Multicolor, Blue, Purple, Pink, Red, Orange,
+  Yellow, Green, Graphite. Scene roots apply `.accentColor`, and `Theme.highlight`
+  resolves to `Color.accentColor`, so selected rows, marquee/selection outlines,
+  segmented tabs, links, and custom buttons all update live. The selected
+  sidebar row also uses a 20% accent tint. `Theme.highlightForeground` switches
+  selected-row text to black for bright choices (yellow, orange, green, etc.).
 
 ## 8. MPD server
 

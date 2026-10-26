@@ -209,7 +209,7 @@ struct MiniPlayerView: View {
         } label: {
             Image(systemName: "list.bullet")
                 .font(.system(size: 14, weight: .medium))
-                .foregroundColor(windowMode.miniQueueExpanded ? Theme.selectionBlue : Theme.secondaryText)
+                .foregroundColor(windowMode.miniQueueExpanded ? Theme.highlight : Theme.secondaryText)
                 .frame(width: 32, height: 32)
                 .contentShape(Rectangle())
         }

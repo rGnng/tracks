@@ -291,9 +291,11 @@ struct StarButton: View {
 
     private var iconColor: Color {
         if starred {
-            return isSelected ? .white : Theme.selectionBlue
+            return isSelected ? Theme.highlightForeground : Theme.highlight
         }
-        return isSelected ? .white.opacity(0.85) : Theme.secondaryText.opacity(0.85)
+        return isSelected
+            ? Theme.highlightForeground.opacity(0.85)
+            : Theme.secondaryText.opacity(0.85)
     }
 }
 

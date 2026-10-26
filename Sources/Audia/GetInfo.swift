@@ -337,7 +337,7 @@ struct GetInfoView: View {
                         }
                         .buttonStyle(.borderless)
                         .font(.system(size: 11.5))
-                        .foregroundColor(Theme.selectionBlue)
+                        .foregroundColor(Theme.highlight)
                         .disabled(readOnly || plays == 0)
                     }
                 }

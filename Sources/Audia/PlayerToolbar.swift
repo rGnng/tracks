@@ -119,13 +119,20 @@ struct WindowDragArea: NSViewRepresentable {
     final class DragHandle: NSView {
         private var initialMouseLocation: NSPoint?
         private var initialWindowOrigin: NSPoint?
+        private var snapContext: WindowSnapContext?
+        private var snappedX: CGFloat?
+        private var snappedY: CGFloat?
 
         override var mouseDownCanMoveWindow: Bool { false }
 
         override func mouseDown(with event: NSEvent) {
-            window?.makeKey()
+            guard let window else { return }
+            window.makeKey()
             initialMouseLocation = NSEvent.mouseLocation
-            initialWindowOrigin = window?.frame.origin
+            initialWindowOrigin = window.frame.origin
+            snapContext = WindowSnapContext(excluding: window)
+            snappedX = nil
+            snappedY = nil
         }
 
         override func mouseDragged(with event: NSEvent) {
@@ -133,15 +140,29 @@ struct WindowDragArea: NSViewRepresentable {
                   let initialMouseLocation,
                   let initialWindowOrigin else { return }
             let current = NSEvent.mouseLocation
-            window.setFrameOrigin(
-                NSPoint(x: initialWindowOrigin.x + current.x - initialMouseLocation.x,
-                        y: initialWindowOrigin.y + current.y - initialMouseLocation.y)
+            var origin = NSPoint(
+                x: initialWindowOrigin.x + current.x - initialMouseLocation.x,
+                y: initialWindowOrigin.y + current.y - initialMouseLocation.y
             )
+
+            if let snapContext {
+                let result = snapContext.snap(proposedOrigin: origin,
+                                              size: window.frame.size,
+                                              activeX: snappedX,
+                                              activeY: snappedY)
+                origin = result.origin
+                snappedX = result.activeX
+                snappedY = result.activeY
+            }
+            window.setFrameOrigin(origin)
         }
 
         override func mouseUp(with event: NSEvent) {
             initialMouseLocation = nil
             initialWindowOrigin = nil
+            snapContext = nil
+            snappedX = nil
+            snappedY = nil
         }
     }
 }
@@ -162,7 +183,7 @@ private struct QueueButton: View {
         Button { isPresented.toggle() } label: {
             Image(systemName: "list.bullet")
                 .font(.system(size: ToolbarButtonMetrics.iconSize, weight: .medium))
-                .foregroundColor(isPresented ? Theme.selectionBlue : Theme.secondaryText)
+                .foregroundColor(isPresented ? Theme.highlight : Theme.secondaryText)
                 .frame(width: ToolbarButtonMetrics.size, height: ToolbarButtonMetrics.size)
                 .contentShape(Rectangle())
         }
@@ -240,7 +261,7 @@ private struct QueuePopover: View {
                     } label: {
                         Text("Clear")
                             .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(Theme.selectionBlue)
+                            .foregroundColor(Theme.highlight)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 5)
                             .contentShape(Rectangle())
@@ -337,7 +358,7 @@ private struct QueuePopover: View {
                 .overlay(alignment: .top) {
                     if dropTargetIndex == index {
                         Rectangle()
-                            .fill(Theme.selectionBlue)
+                            .fill(Theme.highlight)
                             .frame(height: 2)
                     }
                 }
@@ -370,7 +391,7 @@ private struct QueuePopover: View {
             Color.clear
             if dropAtEnd {
                 Rectangle()
-                    .fill(Theme.selectionBlue)
+                    .fill(Theme.highlight)
                     .frame(height: 2)
             }
         }
@@ -634,7 +655,7 @@ private struct DeviceMenu: View {
         } label: {
             Image(systemName: audioDevices.selectedDevice.icon)
                 .font(.system(size: ToolbarButtonMetrics.iconSize, weight: .medium))
-                .foregroundColor(isPresented ? Theme.selectionBlue : Theme.secondaryText)
+                .foregroundColor(isPresented ? Theme.highlight : Theme.secondaryText)
                 .frame(width: ToolbarButtonMetrics.size, height: ToolbarButtonMetrics.size)
                 .contentShape(Rectangle())
         }
@@ -693,7 +714,7 @@ private struct DeviceRow: View {
         HStack(spacing: 7) {
             Image(systemName: "checkmark")
                 .font(.system(size: 10, weight: .bold))
-                .foregroundColor(Theme.selectionBlue)
+                .foregroundColor(Theme.highlight)
                 .opacity(isSelected ? 1 : 0)
                 .frame(width: 12)
             Image(systemName: icon)
@@ -920,7 +941,7 @@ private struct CenterControlButton: View {    let icon: String
         Button(action: action) {
             Image(systemName: icon)
                 .font(.system(size: 15, weight: .medium))
-                .foregroundColor(active ? Theme.selectionBlue : Theme.secondaryText)
+                .foregroundColor(active ? Theme.highlight : Theme.secondaryText)
                 .frame(width: 20, height: 20)
                 .contentShape(Rectangle())
         }
@@ -994,7 +1015,7 @@ struct SearchField: View {
                 .fill(Theme.controlBackground)
                 .overlay(
                     RoundedRectangle(cornerRadius: 5)
-                        .strokeBorder(focused ? Theme.selectionBlue : Theme.controlBorder,
+                        .strokeBorder(focused ? Theme.highlight : Theme.controlBorder,
                                       lineWidth: focused ? 2 : 1)
                 )
                 .shadow(color: .black.opacity(0.12), radius: 1, y: 0.5)

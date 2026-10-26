@@ -228,12 +228,12 @@ private struct BrowserRow: View {
         HStack(spacing: 8) {
             Text(title)
                 .font(.system(size: 13))
-                .foregroundColor(isSelected ? .white : Theme.primaryText)
+                .foregroundColor(isSelected ? Theme.highlightForeground : Theme.primaryText)
                 .lineLimit(1)
             Spacer(minLength: 8)
             Text(detail)
                 .font(.system(size: 11))
-                .foregroundColor(isSelected ? .white.opacity(0.8) : Theme.secondaryText)
+                .foregroundColor(isSelected ? Theme.highlightForeground.opacity(0.8) : Theme.secondaryText)
                 .lineLimit(1)
         }
         .padding(.horizontal, 10)
@@ -488,25 +488,25 @@ private struct BrowserSongRow: View {
                 if isCurrent {
                     Image(systemName: isPlaying ? "play.fill" : "pause.fill")
                         .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(isSelected ? .white : Theme.selectionBlue)
+                        .foregroundColor(isSelected ? Theme.highlightForeground : Theme.highlight)
                 } else {
                     Text("\(song.trackNumber)")
                         .font(.system(size: 11).monospacedDigit())
-                        .foregroundColor(isSelected ? .white.opacity(0.85) : Theme.secondaryText)
+                        .foregroundColor(isSelected ? Theme.highlightForeground.opacity(0.85) : Theme.secondaryText)
                 }
             }
             .frame(width: 28, alignment: .leading)
 
             Text(song.title)
                 .font(.system(size: 12.5))
-                .foregroundColor(isSelected ? .white : Theme.primaryText)
+                .foregroundColor(isSelected ? Theme.highlightForeground : Theme.primaryText)
                 .lineLimit(1)
 
             Spacer(minLength: 12)
 
             Text(formatTime(song.duration))
                 .font(.system(size: 11.5).monospacedDigit())
-                .foregroundColor(isSelected ? .white.opacity(0.85) : Theme.secondaryText)
+                .foregroundColor(isSelected ? Theme.highlightForeground.opacity(0.85) : Theme.secondaryText)
                 .frame(width: 44, alignment: .trailing)
 
             StarButton(songID: song.id, isSelected: isSelected)
@@ -521,7 +521,7 @@ private struct BrowserSongRow: View {
                 bottomTrailingRadius: nextSelected ? 0 : 5,
                 topTrailingRadius: previousSelected ? 0 : 5
             )
-            .fill(isSelected ? Theme.selectionBlue : (hover ? Theme.rowHover : Color.clear))
+            .fill(isSelected ? Theme.highlight : (hover ? Theme.rowHover : Color.clear))
         )
         .padding(.horizontal, 6)
         .onHover { hover = $0 }
