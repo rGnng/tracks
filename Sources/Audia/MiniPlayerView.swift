@@ -181,7 +181,11 @@ struct MiniPlayerView: View {
                 TapGesture(count: 2)
                     .onEnded { player.toggleMute() }
                     .exclusively(before: TapGesture().onEnded {
-                        showVolume.toggle()
+                        if player.isVolumeLocked {
+                            player.toggleMute()
+                        } else {
+                            showVolume.toggle()
+                        }
                     })
             )
             .popover(isPresented: $showVolume, arrowEdge: .bottom) {
@@ -194,14 +198,13 @@ struct MiniPlayerView: View {
                         set: { player.setVolume($0) }
                     ), in: 0...1)
                     .frame(width: 150)
+                    .disabled(player.isVolumeLocked)
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
             }
-            .disabled(player.isVolumeLocked)
-            .opacity(player.isVolumeLocked ? 0.5 : 1)
             .help(player.isVolumeLocked
-                  ? "Volume is fixed at 100% while MPD controls system volume"
+                  ? (player.isSystemMuted ? "Unmute system volume" : "Mute system volume")
                   : (player.isMuted ? "Unmute (double-click)" : "Mute (double-click)"))
     }
 
@@ -314,9 +317,11 @@ struct MiniPlayerView: View {
     }
 
     private var volumeIcon: String {
-        if player.isMuted { return "speaker.slash.fill" }
-        if player.volume < 0.34 { return "speaker.wave.1.fill" }
-        if player.volume < 0.67 { return "speaker.wave.2.fill" }
+        if player.isMutedForUI { return "speaker.slash.fill" }
+        if !player.isVolumeLocked {
+            if player.volume < 0.34 { return "speaker.wave.1.fill" }
+            if player.volume < 0.67 { return "speaker.wave.2.fill" }
+        }
         return "speaker.wave.3.fill"
     }
 }

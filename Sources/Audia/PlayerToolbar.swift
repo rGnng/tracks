@@ -562,9 +562,11 @@ private struct VolumeControl: View {
     @EnvironmentObject private var player: PlayerState
 
     private var icon: String {
-        if player.isMuted { return "speaker.slash.fill" }
-        if player.volume < 0.34 { return "speaker.wave.1.fill" }
-        if player.volume < 0.67 { return "speaker.wave.2.fill" }
+        if player.isMutedForUI { return "speaker.slash.fill" }
+        if !player.isVolumeLocked {
+            if player.volume < 0.34 { return "speaker.wave.1.fill" }
+            if player.volume < 0.67 { return "speaker.wave.2.fill" }
+        }
         return "speaker.wave.3.fill"
     }
 
@@ -577,15 +579,14 @@ private struct VolumeControl: View {
                     .frame(width: 18, height: 18)
             }
             .buttonStyle(.plain)
-            .help("Mute")
+            .help(player.isVolumeLocked
+                  ? (player.isSystemMuted ? "Unmute system volume" : "Mute system volume")
+                  : "Mute")
 
             VolumeBar()
+                .disabled(player.isVolumeLocked)
+                .opacity(player.isVolumeLocked ? 0.55 : 1)
         }
-        .disabled(player.isVolumeLocked)
-        .opacity(player.isVolumeLocked ? 0.55 : 1)
-        .help(player.isVolumeLocked
-              ? "Volume is fixed at 100% while MPD controls system volume"
-              : "Volume")
     }
 }
 

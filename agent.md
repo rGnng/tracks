@@ -336,11 +336,26 @@ default off. It only applies while MPD itself is enabled.
 
 - When off, `setvol`/`volume` adjust `PlayerState.volume` as before.
 - When on, the player volume is locked at 100%, the app's volume controls are
-  disabled, and `setvol`/`volume` requests change the macOS default output
-  device volume through Core Audio.
-- `status` and the `volume` query report the live system volume, not the 100%
-  player volume. This keeps remote clients in sync after MPD or external system
-  volume changes.
+  disabled, and `setvol`/`volume` requests change the volume of the selected
+  macOS output device through Core Audio (the system default when no explicit
+  output is selected).
+- MPD's `volume` command is treated as a **relative** change even when the value
+  has no leading `+`; libmpdclient/ncmpcpp sends `volume 2` for `+2`. `setvol`
+  is absolute, with a leading sign allowed as a relative convenience. A literal
+  `volume 0` is treated as a mute request. This matters for clients whose volume
+  buttons otherwise repeatedly set the same absolute value or whose mute button
+  sends `volume 0`.
+- While system mode is active the app's mute button and the MPD mute path both
+  drive the system volume. Core Audio does not clear the device mute flag when
+  the scalar volume is raised, so `SystemVolume` explicitly reads/writes
+  `kAudioDevicePropertyMute` as well as the scalar volume. `AVPlayer.isMuted` is
+  synchronized too, so mute remains effective even when the output device does
+  not honor the system mute flag. The app volume slider stays locked at 100%;
+  only the mute control is active.
+- `status`, `getvol`, and the `volume` query report the live system volume, not
+  the 100% player volume. `setvol`/`volume` changes broadcast `changed: mixer`
+  to idle clients, keeping remote volume displays in sync after MPD or external
+  system volume changes.
 - The remote system volume control does not use AVPlayer attenuation.
 - The option is stored under `mpd.systemVolume`; the effective mode requires
   `mpd.enabled` as well.
@@ -351,20 +366,30 @@ Supported areas:
   `playlistid`, `plchanges`, `plchangesposid`.
 - Queue editing: `add`, `addid`, `clear`, `delete`, `deleteid`, `move`, `moveid`,
   `shuffle`, `play`, `playid`, `pause`, `stop`, `next`, `previous`, `seek`,
-  `seekid`, `seekcur`, `setvol`, `volume`, `repeat`, `random`, `single`, `consume`,
-  `toggle`.
+  `seekid`, `seekcur`, `getvol`, `setvol`, `volume` (including `+`/`-` relative
+  values), `repeat`, `random`, `single`, `consume`, `toggle`, `outputs`,
+  `enableoutput`, `disableoutput`, `toggleoutput`.
 - Library queries: `listall`, `listallinfo`, `lsinfo`, `find`, `search`, `findadd`,
   `searchadd`, `list`, `count`, `update`, `rescan`. `listall` and `listallinfo`
   honor an optional directory URI. `lsinfo` on a directory returns full song
   metadata including `Track`/`Disc`; the root `lsinfo` remains file-only plus
   playlist entries to keep `mpc lsplaylists` fast.
+- Audio outputs: `outputs` lists the system output devices (plus the synthetic
+  System Default) with `outputid`, `outputname`, `plugin: coreaudio`, and
+  `outputenabled`. `enableoutput`, `disableoutput`, and `toggleoutput` switch the
+  app's selected Core Audio output. Selecting a non-default output also points
+  MPD system-volume control at that device.
 - Album art: `albumart`, `readpicture`, `binarylimit`. Responses use the 500x500
   JPEG cache, correct size/type, and JPEG magic. The default chunk size is
   262144 bytes so a typical cover fits in one response; clients can still request
   a smaller `binarylimit`. A URI-to-album-ID cache avoids rescanning the whole
   library for every binary chunk.
 - Idle: `idle`, `noidle`; queue changes broadcast `playlist`/`player`, stored
-  playlist changes broadcast `stored_playlist`.
+  playlist changes broadcast `stored_playlist`. Broadcasts are queued per
+  session when that session is between `noidle` and its next `idle`; this is
+  required for ncmpcpp/libmpdclient, which leaves idle before sending a volume
+  command and only re-enters idle afterwards. Pending changes are delivered
+  immediately on the next idle request.
 - Stored playlists:
   - `listplaylists`
   - `listplaylist`

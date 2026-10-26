@@ -121,8 +121,11 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
     }
 
     private func broadcastIdle(_ subsystem: String) {
-        guard !idleSessions.isEmpty else { return }
-        let sessions = Array(idleSessions.values)
+        // Notify every connection, not just the ones currently blocked in
+        // `idle`. libmpdclient/ncmpcpp calls `noidle` before a command such as
+        // `volume`, then re-enters idle afterwards; queueing the event for that
+        // short gap is what makes the client's volume display update.
+        let sessions = Array(self.sessions.values)
         idleSessions.removeAll()
         for session in sessions { session.sendChanged(subsystem) }
     }
@@ -169,7 +172,35 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
         case "decoders":
             return lines(["plugin: flac", "plugin: mad", "plugin: ffmpeg", "plugin: oggflac"])
         case "outputs":
-            return lines(["outputid: 0", "outputname: Tracks", "outputenabled: 1"])
+            return lines(outputLines())
+
+        case "enableoutput", "disableoutput", "toggleoutput":
+            guard let id = args.first.flatMap(Int.init) else {
+                return ack(2, command, "wrong number of arguments")
+            }
+            let devices = AudioDevices.shared.devices
+            guard devices.indices.contains(id) else {
+                return ack(2, command, "No such audio output")
+            }
+            let wasEnabled = outputEnabled(id, in: devices)
+            switch command {
+            case "enableoutput":
+                AudioDevices.shared.select(devices[id])
+            case "disableoutput":
+                if wasEnabled, let systemDefault = devices.first(where: { $0.isSystemDefault }) {
+                    AudioDevices.shared.select(systemDefault)
+                }
+            default:
+                if wasEnabled {
+                    if let systemDefault = devices.first(where: { $0.isSystemDefault }) {
+                        AudioDevices.shared.select(systemDefault)
+                    }
+                } else {
+                    AudioDevices.shared.select(devices[id])
+                }
+            }
+            broadcastIdle("output")
+            return ok()
         case "replay_gain_status":
             return lines(["replay_gain_mode: off"])
         case "idle":
@@ -346,16 +377,31 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
             }
             broadcastIdle("player")
             return ok()
+        case "getvol":
+            return lines(["volume: \(reportedVolume)"])
+
         case "setvol", "volume":
-            guard let value = args.first.flatMap(Int.init) else {
+            guard let rawValue = args.first, let value = Int(rawValue) else {
                 if command == "volume" {
                     return lines(["volume: \(reportedVolume)"])
                 }
                 return ack(2, command, "wrong number of arguments")
             }
-            let fraction = Double(min(max(value, 0), 100)) / 100
+            // MPD's `volume` command is relative, while `setvol` is absolute.
+            // libmpdclient (used by ncmpcpp) formats positive relative values
+            // as plain numbers ("volume 2"), so the command name matters just
+            // as much as a leading sign.
+            // A literal `volume 0` is commonly used by remote mute buttons as
+            // an absolute mute, while non-zero `volume` values are relative.
+            let isMuteRequest = command == "volume" && value == 0
+            let isRelative = !isMuteRequest && (command == "volume"
+                || rawValue.hasPrefix("+")
+                || rawValue.hasPrefix("-"))
+            let target = isMuteRequest ? 0 : (isRelative ? reportedVolume + value : value)
+            let percent = min(max(target, 0), 100)
+            let fraction = Double(percent) / 100
             if PlayerState.shared.isVolumeLocked {
-                SystemVolume.set(fraction)
+                PlayerState.shared.setSystemVolume(fraction)
             } else {
                 PlayerState.shared.setVolume(fraction)
             }
@@ -646,11 +692,12 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
         ["status", "stats", "currentsong", "playlistinfo", "playlistid", "plchanges", "plchangesposid",
          "add", "addid", "clear", "delete", "deleteid", "move", "moveid", "shuffle",
          "play", "playid", "pause", "stop", "next", "previous", "seek", "seekid", "seekcur",
-         "setvol", "volume", "repeat", "random", "single", "consume", "toggle",
+         "getvol", "setvol", "volume", "repeat", "random", "single", "consume", "toggle",
          "update", "rescan", "listall", "listallinfo", "lsinfo", "find", "search", "findadd", "searchadd",
          "list", "count", "playlistfind", "albumart", "readpicture", "binarylimit",
          "idle", "noidle", "password", "ping", "close",
          "commands", "notcommands", "tagtypes", "urlhandlers", "decoders", "outputs",
+         "enableoutput", "disableoutput", "toggleoutput",
          "replay_gain_status", "listplaylists", "listplaylist", "listplaylistinfo",
          "load", "save", "rm", "playlistadd", "playlistdelete", "playlistmove",
          "playlistclear", "rename", "channels", "subscribe",
@@ -676,8 +723,32 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
 
     private var reportedVolume: Int {
         let player = PlayerState.shared
-        let value = player.isVolumeLocked ? (SystemVolume.current() ?? 1) : player.volume
+        let value = player.isVolumeLocked
+            ? (SystemVolume.current(deviceID: AudioDevices.shared.effectiveDeviceID) ?? 1)
+            : player.volume
         return Int((min(max(value, 0), 1) * 100).rounded())
+    }
+
+    private func outputEnabled(_ id: Int, in devices: [AudioOutputDevice]) -> Bool {
+        guard devices.indices.contains(id) else { return false }
+        let selected = AudioDevices.shared.selectedUID
+        let device = devices[id]
+        return selected == device.uid || (selected == nil && device.isSystemDefault)
+    }
+
+    private func outputLines() -> [String] {
+        let devices = AudioDevices.shared.devices
+        var lines: [String] = []
+        for (index, device) in devices.enumerated() {
+            let name = device.name
+                .replacingOccurrences(of: "\n", with: " ")
+                .replacingOccurrences(of: "\r", with: " ")
+            lines.append("outputid: \(index)")
+            lines.append("outputname: \(name)")
+            lines.append("plugin: coreaudio")
+            lines.append("outputenabled: \(outputEnabled(index, in: devices) ? 1 : 0)")
+        }
+        return lines
     }
 
     private func statusLines() -> [String] {
@@ -1169,6 +1240,7 @@ final class MPDClientSession: @unchecked Sendable {
     private var authenticated = false
     private var isClosed = false
     private var isIdle = false
+    private var pendingChanges = Set<String>()
     private var listBuffer: [String]?
     private var listOK = false
     var binaryLimit = 262_144
@@ -1204,10 +1276,23 @@ final class MPDClientSession: @unchecked Sendable {
 
     func sendChanged(_ subsystem: String) {
         queue.async { [weak self] in
-            guard let self, self.isIdle, !self.isClosed else { return }
-            self.isIdle = false
-            self.send("changed: \(subsystem)\nOK\n")
+            guard let self, !self.isClosed else { return }
+            if self.isIdle {
+                self.isIdle = false
+                self.send("changed: \(subsystem)\nOK\n")
+            } else {
+                self.pendingChanges.insert(subsystem)
+            }
         }
+    }
+
+    private func sendPendingChanges() {
+        guard !pendingChanges.isEmpty else { return }
+        let changes = pendingChanges
+        pendingChanges.removeAll()
+        isIdle = false
+        let text = changes.map { "changed: \($0)\n" }.joined() + "OK\n"
+        send(text)
     }
 
     private func readAvailable() {
@@ -1259,6 +1344,7 @@ final class MPDClientSession: @unchecked Sendable {
         if let auth = response.authenticated { authenticated = auth }
         if response.idle {
             isIdle = true
+            sendPendingChanges()
             return
         }
         isIdle = false

@@ -179,6 +179,14 @@ final class AudioDevices: ObservableObject {
         return selectedUID
     }
 
+    /// The Core Audio device whose system volume should be controlled. nil asks
+    /// `SystemVolume` to resolve the current system default output.
+    var effectiveDeviceID: AudioDeviceID? {
+        guard let selectedUID,
+              let device = devices.first(where: { $0.uid == selectedUID }) else { return nil }
+        return device.deviceID
+    }
+
     private init() {
         refresh()
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
