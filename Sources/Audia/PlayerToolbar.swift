@@ -180,7 +180,6 @@ private struct QueuePopover: View {
 
     @AppStorage("queue.popoverWidth") private var storedWidth = 300.0
     @AppStorage("queue.listHeight") private var storedListHeight = 260.0
-    @State private var resizeStart: CGSize?
     @State private var listResizeStart: CGFloat?
     @State private var draggingID: UUID?
     @State private var dropTargetIndex: Int?
@@ -233,7 +232,6 @@ private struct QueuePopover: View {
             }
 
             Divider()
-            queueHeightHandle
             HStack(spacing: 8) {
                 if tab == .upNext {
                     Button {
@@ -251,10 +249,11 @@ private struct QueuePopover: View {
                     .opacity(songs.isEmpty ? 0.4 : 1)
                 }
                 Spacer(minLength: 0)
-                resizeHandle
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
+
+            queueHeightHandle
         }
         .frame(width: queueWidth)
     }
@@ -287,30 +286,6 @@ private struct QueuePopover: View {
             if inside { NSCursor.resizeUpDown.set() } else { NSCursor.arrow.set() }
         }
         .onDisappear { NSCursor.arrow.set() }
-    }
-
-    private var resizeHandle: some View {
-        Image(systemName: "arrow.up.left.and.arrow.down.right")
-            .font(.system(size: 9, weight: .semibold))
-            .foregroundColor(Theme.secondaryText.opacity(0.8))
-            .frame(width: 22, height: 20)
-            .contentShape(Rectangle())
-            .help("Drag to resize")
-            .accessibilityLabel("Resize queue")
-            .gesture(
-                DragGesture(minimumDistance: 1, coordinateSpace: .global)
-                    .onChanged { value in
-                        if resizeStart == nil {
-                            resizeStart = CGSize(width: queueWidth, height: listHeight)
-                        }
-                        guard let start = resizeStart else { return }
-                        storedWidth = min(max(Double(start.width + value.translation.width), 260), 640)
-                        storedListHeight = min(max(Double(start.height + value.translation.height), 120), 620)
-                    }
-                    .onEnded { _ in
-                        resizeStart = nil
-                    }
-            )
     }
 
     @ViewBuilder
