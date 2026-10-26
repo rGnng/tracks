@@ -726,6 +726,9 @@ by AppKit's title-bar layout pass.
     - Use temporary files/playlists and temporary databases for destructive tests.
     - Keep system output muted during playback automation.
     - Do not delete real user audio to verify code.
+    - Synthetic `NX_SYSDEFINED` media-key events are ignored by this machine.
+      Verify media commands through Control Center's Now Playing accessibility
+      tree; it uses the same `MPRemoteCommandCenter` path as hardware keys.
 12. UI automation:
     - System Events can inspect windows and standard buttons.
     - `screencapture` is not permitted on this machine; use in-app `cacheDisplay`
