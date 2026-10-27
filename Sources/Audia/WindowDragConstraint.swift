@@ -4,11 +4,18 @@ import CoreGraphics
 /// Collision constraints for the custom-dragged Library/MiniPlayer window.
 ///
 /// This is deliberately not edge snapping. The window never jumps toward another
-/// window or a screen edge; it simply stops when the user drags it into contact,
-/// and cannot overlap other visible normal windows or leave the active screen's
-/// visible frame. The window list is captured once at mouse-down.
+/// window or a screen edge; it stops when the user drags it into contact, and
+/// cannot overlap other visible normal windows while the barrier is active. The
+/// drag handle can release window collisions after sustained pressure. The
+/// window list is captured once at mouse-down.
 @MainActor
 struct WindowDragConstraint {
+    struct Resolution {
+        var origin: NSPoint
+        var windowBlockSignX: CGFloat = 0
+        var windowBlockSignY: CGFloat = 0
+    }
+
     private let screenFrames: [NSRect]
     private let windowFrames: [NSRect]
     private let windowGap: CGFloat = 0
@@ -20,12 +27,23 @@ struct WindowDragConstraint {
 
     func resolve(proposedOrigin: NSPoint,
                  size: NSSize,
-                 previousFrame: NSRect) -> NSPoint {
+                 previousFrame: NSRect) -> Resolution {
         var frame = NSRect(origin: proposedOrigin, size: size)
+        var blockSignX: CGFloat = 0
+        var blockSignY: CGFloat = 0
         frame = constrainToScreen(frame)
-        frame = avoidWindows(frame, previousFrame: previousFrame)
+        frame = avoidWindows(frame,
+                             previousFrame: previousFrame,
+                             blockSignX: &blockSignX,
+                             blockSignY: &blockSignY)
         frame = constrainToScreen(frame)
-        return frame.origin
+        return Resolution(origin: frame.origin,
+                          windowBlockSignX: blockSignX,
+                          windowBlockSignY: blockSignY)
+    }
+
+    func resolveScreenOnly(proposedOrigin: NSPoint, size: NSSize) -> NSPoint {
+        constrainToScreen(NSRect(origin: proposedOrigin, size: size)).origin
     }
 
     private func constrainToScreen(_ frame: NSRect) -> NSRect {
@@ -55,7 +73,9 @@ struct WindowDragConstraint {
     }
 
     private func avoidWindows(_ proposedFrame: NSRect,
-                              previousFrame: NSRect) -> NSRect {
+                              previousFrame: NSRect,
+                              blockSignX: inout CGFloat,
+                              blockSignY: inout CGFloat) -> NSRect {
         var frame = proposedFrame
         guard !windowFrames.isEmpty else { return frame }
 
@@ -81,14 +101,18 @@ struct WindowDragConstraint {
                 if abs(movementX) >= abs(movementY), abs(movementX) > 0.001 {
                     if movementX > 0 {
                         frame.origin.x = other.minX - frame.width - windowGap
+                        blockSignX = 1
                     } else {
                         frame.origin.x = other.maxX + windowGap
+                        blockSignX = -1
                     }
                 } else if abs(movementY) > 0.001 {
                     if movementY > 0 {
                         frame.origin.y = other.minY - frame.height - windowGap
+                        blockSignY = 1
                     } else {
                         frame.origin.y = other.maxY + windowGap
+                        blockSignY = -1
                     }
                 }
                 moved = true

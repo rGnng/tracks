@@ -28,6 +28,8 @@ SQLite, and includes a built-in MPD server.
   queue position, and album artwork. Hardware media keys and Control Center
   transport controls are handled through MediaPlayer. Control Center shows
   previous/next track, not skip-by-15-second buttons.
+- The top-bar album cover is bilinear-downsampled to its backing-pixel size
+  before display for a crisper 45pt thumbnail.
 - Album detail keeps the underlying grid mounted, so returning restores the
   previous scroll position instead of recentering an already-visible album.
 - The active sidebar view and the top visible item in Albums, Recently Added,
@@ -37,8 +39,9 @@ SQLite, and includes a built-in MPD server.
 - Output menu offers plain System Default, System Default with Volume Control,
   and all real Core Audio devices. The volume-control option locks player
   attenuation and routes volume to the macOS output.
-- Custom window dragging stops at screen and window edges with a collision
-  barrier; it never snaps toward, or overlaps, other windows.
+- Custom window dragging stays inside screen bounds and resists crossing other
+  windows; after 12pt of sustained pressure it yields and can overlap for the
+  rest of that drag. It never snaps toward other windows.
 - Built-in MPD server for browsing and controlling the library over TCP.
 
 ## Build and run

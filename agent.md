@@ -287,13 +287,15 @@ Important schema decisions:
     `width + 72` (`+ queueHeight` while the queue is open). Window shortcuts are
     Command-1 / Command-2.
   - Custom dragging (`WindowDragArea`) uses `WindowDragConstraint`. There is no
-    magnetic snapping: the window stops at contact with the visible screen frame
-    or another visible normal window and cannot overlap it. Windows already
-    overlapping at drag start are ignored for that drag to avoid teleporting.
-    Drag events are captured in an `eventTracking` loop, and the window origin is
-    accumulated as a fractional point rather than read back from `NSWindow`,
-    because AppKit quantizes window frames and repeatedly reading them back
-    caused cumulative lag/stutter. Moving away from an edge resumes immediately.
+    magnetic snapping. The window stays inside the visible screen frame and
+    stops at contact with other visible normal windows, building up to 12pt of
+    sustained pressure before yielding; after it yields, it may overlap windows
+    for the rest of that drag. Windows already overlapping at drag start are
+    ignored for that drag to avoid teleporting. Drag events are captured in an
+    `eventTracking` loop, and the window origin is accumulated as a fractional
+    point rather than read back from `NSWindow`, because AppKit quantizes window
+    frames and repeatedly reading them back caused cumulative lag/stutter.
+    Reversing away from a barrier resets the pressure and resumes immediately.
   - MiniPlayer uses custom Liquid Glass-style traffic lights inside the cover;
     they stay hidden until the pointer enters the window, matching the old
     compact-player behavior without adding a title-bar strip. The lights use
@@ -371,6 +373,9 @@ Important schema decisions:
 - `ArtworkCache` uses an in-memory cache plus disk cache. Scans write artwork
   directly into the cache. Rebuild Cache clears the disk cache and performs a
   forced rescan to regenerate it.
+- The 45pt top-bar Now Playing cover is downsampled once to its backing-pixel
+  size (45 × displayScale, normally 90×90) with a Core Graphics medium-quality
+  bilinear draw before displaying, instead of relying on SwiftUI's live scaling.
 - Settings shows the current cache size, calculated asynchronously from the
   files under the Artwork cache directory.
 - The Internal Library header no longer shows a "Read & Write" label, and the

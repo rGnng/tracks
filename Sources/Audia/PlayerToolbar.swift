@@ -120,6 +120,12 @@ struct WindowDragArea: NSViewRepresentable {
         private var lastMouseLocation: NSPoint?
         private var dragOrigin: NSPoint?
         private var dragConstraint: WindowDragConstraint?
+        private var collisionReleased = false
+        private var blockedPressureX: CGFloat = 0
+        private var blockedPressureY: CGFloat = 0
+        /// Once the drag keeps pushing into a window for this many points, that
+        /// barrier yields for the remainder of the current mouse-down gesture.
+        private let breakawayDistance: CGFloat = 12
 
         override var mouseDownCanMoveWindow: Bool { false }
 
@@ -129,6 +135,9 @@ struct WindowDragArea: NSViewRepresentable {
             lastMouseLocation = NSEvent.mouseLocation
             dragOrigin = window.frame.origin
             dragConstraint = WindowDragConstraint(excluding: window)
+            collisionReleased = false
+            blockedPressureX = 0
+            blockedPressureY = 0
 
             // Capture the rest of the gesture in a tracking loop. Relying on
             // mouseDragged dispatch can lose events when the pointer crosses
@@ -150,7 +159,10 @@ struct WindowDragArea: NSViewRepresentable {
         }
 
         private func updateDrag() {
-            guard let window, let lastMouseLocation, var dragOrigin else { return }
+            guard let window,
+                  let lastMouseLocation,
+                  let dragConstraint,
+                  var dragOrigin else { return }
             let current = NSEvent.mouseLocation
             let deltaX = current.x - lastMouseLocation.x
             let deltaY = current.y - lastMouseLocation.y
@@ -162,17 +174,70 @@ struct WindowDragArea: NSViewRepresentable {
             // lag and stutter behind the pointer.
             dragOrigin.x += deltaX
             dragOrigin.y += deltaY
-            let origin = dragConstraint?.resolve(proposedOrigin: dragOrigin,
-                                                 size: window.frame.size,
-                                                 previousFrame: window.frame) ?? dragOrigin
-            self.dragOrigin = origin
-            window.setFrameOrigin(origin)
+
+            if collisionReleased {
+                let origin = dragConstraint.resolveScreenOnly(proposedOrigin: dragOrigin,
+                                                              size: window.frame.size)
+                self.dragOrigin = origin
+                window.setFrameOrigin(origin)
+                return
+            }
+
+            let resolution = dragConstraint.resolve(proposedOrigin: dragOrigin,
+                                                    size: window.frame.size,
+                                                    previousFrame: window.frame)
+
+            if resolution.windowBlockSignX != 0 {
+                let pushingRight = resolution.windowBlockSignX > 0
+                if (pushingRight && deltaX > 0.001) || (!pushingRight && deltaX < -0.001) {
+                    blockedPressureX += abs(deltaX)
+                } else if deltaX != 0 {
+                    blockedPressureX = 0
+                }
+            } else {
+                blockedPressureX = 0
+            }
+
+            if resolution.windowBlockSignY != 0 {
+                let pushingUp = resolution.windowBlockSignY > 0
+                if (pushingUp && deltaY > 0.001) || (!pushingUp && deltaY < -0.001) {
+                    blockedPressureY += abs(deltaY)
+                } else if deltaY != 0 {
+                    blockedPressureY = 0
+                }
+            } else {
+                blockedPressureY = 0
+            }
+
+            if blockedPressureX >= breakawayDistance || blockedPressureY >= breakawayDistance {
+                // Yield after sustained pressure. The window catches up to the
+                // pointer and may overlap other windows for the rest of this
+                // drag; a new drag resets the barrier.
+                collisionReleased = true
+                let catchUp = NSPoint(
+                    x: resolution.origin.x + resolution.windowBlockSignX * blockedPressureX,
+                    y: resolution.origin.y + resolution.windowBlockSignY * blockedPressureY
+                )
+                let origin = dragConstraint.resolveScreenOnly(proposedOrigin: catchUp,
+                                                              size: window.frame.size)
+                self.dragOrigin = origin
+                blockedPressureX = 0
+                blockedPressureY = 0
+                window.setFrameOrigin(origin)
+                return
+            }
+
+            self.dragOrigin = resolution.origin
+            window.setFrameOrigin(resolution.origin)
         }
 
         private func finishDrag() {
             lastMouseLocation = nil
             dragOrigin = nil
             dragConstraint = nil
+            collisionReleased = false
+            blockedPressureX = 0
+            blockedPressureY = 0
         }
 
         override func mouseUp(with event: NSEvent) {
@@ -890,7 +955,7 @@ struct NowPlayingView: View {
             }
             .frame(width: width, height: 45, alignment: .top)
 
-            AlbumArtwork(artwork: Library.shared.artwork(forAlbumTitle: song.album))
+            NowPlayingArtwork(artwork: Library.shared.artwork(forAlbumTitle: song.album))
                 .frame(width: Self.artworkSize, height: Self.artworkSize)
                 .clipped()
         }
@@ -908,6 +973,95 @@ struct NowPlayingView: View {
         case .all: return "Repeat All"
         case .one: return "Repeat One"
         }
+    }
+}
+
+// MARK: - Now playing artwork
+
+/// The top-bar cover is small enough that drawing a full-size image into a
+/// 45pt frame can look soft. Downsample once to the actual backing-pixel size
+/// with bilinear interpolation, then let the 1:1 image draw crisply.
+private struct NowPlayingArtwork: View {
+    let artwork: Artwork
+
+    @Environment(\.displayScale) private var displayScale
+    @State private var image: NSImage?
+    @State private var reloadToken = 0
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(nsImage: image)
+                    .resizable()
+                    .frame(width: NowPlayingView.artworkSize,
+                           height: NowPlayingView.artworkSize)
+            } else {
+                Rectangle()
+                    .fill(Color(white: 0.60))
+            }
+        }
+        .background(Theme.controlBackground)
+        .frame(width: NowPlayingView.artworkSize,
+               height: NowPlayingView.artworkSize)
+        .clipped()
+        .task(id: taskKey) {
+            await reload()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .artworkDidChange)) { note in
+            if let id = note.object as? String, id != artwork.cacheKey { return }
+            reloadToken += 1
+        }
+    }
+
+    private var taskKey: String {
+        let inlineKey = "\(artwork.imageData?.count ?? 0)-\(artwork.imageData?.hashValue ?? 0)"
+        return "\(artwork.cacheKey ?? inlineKey)-\(displayScale)-\(reloadToken)"
+    }
+
+    private func reload() async {
+        let source = await ArtworkCache.shared.image(for: artwork, maxPixel: 512)
+        guard !Task.isCancelled else { return }
+        guard let source else {
+            image = nil
+            return
+        }
+        let pointSize = NowPlayingView.artworkSize
+        let pixels = max(1, Int((pointSize * displayScale).rounded()))
+        let downsampled = Self.downsampleBilinear(source, pixelSize: pixels, pointSize: pointSize)
+        guard !Task.isCancelled else { return }
+        image = downsampled
+    }
+
+    private static func downsampleBilinear(_ source: NSImage,
+                                           pixelSize: Int,
+                                           pointSize: CGFloat) -> NSImage? {
+        var proposed = NSRect(origin: .zero, size: source.size)
+        guard let sourceImage = source.cgImage(forProposedRect: &proposed,
+                                               context: nil,
+                                               hints: nil),
+              let context = CGContext(data: nil,
+                                      width: pixelSize,
+                                      height: pixelSize,
+                                      bitsPerComponent: 8,
+                                      bytesPerRow: 0,
+                                      space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
+            return nil
+        }
+
+        context.interpolationQuality = .medium
+        let sourceWidth = CGFloat(sourceImage.width)
+        let sourceHeight = CGFloat(sourceImage.height)
+        let scale = max(CGFloat(pixelSize) / sourceWidth,
+                        CGFloat(pixelSize) / sourceHeight)
+        let drawWidth = sourceWidth * scale
+        let drawHeight = sourceHeight * scale
+        context.draw(sourceImage, in: CGRect(x: (CGFloat(pixelSize) - drawWidth) / 2,
+                                             y: (CGFloat(pixelSize) - drawHeight) / 2,
+                                             width: drawWidth,
+                                             height: drawHeight))
+        guard let scaled = context.makeImage() else { return nil }
+        return NSImage(cgImage: scaled, size: NSSize(width: pointSize, height: pointSize))
     }
 }
 
