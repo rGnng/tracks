@@ -733,28 +733,12 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
         return Int((min(max(value, 0), 1) * 100).rounded())
     }
 
-    private enum OutputEntry {
-        case systemDefault
-        case systemDefaultVolumeControl
-        case device(AudioOutputDevice)
+    private var outputEntries: [AudioOutputDevice] {
+        AudioDevices.shared.devices
     }
 
-    private var outputEntries: [OutputEntry] {
-        let devices = AudioDevices.shared.devices.filter { !$0.isSystemDefault }
-        return [.systemDefault, .systemDefaultVolumeControl] + devices.map { .device($0) }
-    }
-
-    private func outputName(_ entry: OutputEntry) -> String {
-        let name: String
-        switch entry {
-        case .systemDefault:
-            name = "System Default"
-        case .systemDefaultVolumeControl:
-            name = "System Default (Volume Control)"
-        case .device(let device):
-            name = device.name
-        }
-        return name
+    private func outputName(_ device: AudioOutputDevice) -> String {
+        device.name
             .replacingOccurrences(of: "\n", with: " ")
             .replacingOccurrences(of: "\r", with: " ")
     }
@@ -762,23 +746,14 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
     private func outputEnabled(_ id: Int) -> Bool {
         let entries = outputEntries
         guard entries.indices.contains(id) else { return false }
-        let selected = AudioDevices.shared.selectedUID
-        let systemMode = PlayerState.shared.isVolumeLocked
-        switch entries[id] {
-        case .systemDefault:
-            return selected == nil && !systemMode
-        case .systemDefaultVolumeControl:
-            return selected == nil && systemMode
-        case .device(let device):
-            return selected == device.uid
-        }
+        return AudioDevices.shared.selectedDevice.id == entries[id].id
     }
 
     private func outputLines() -> [String] {
         var lines: [String] = []
-        for (index, entry) in outputEntries.enumerated() {
+        for (index, device) in outputEntries.enumerated() {
             lines.append("outputid: \(index)")
-            lines.append("outputname: \(outputName(entry))")
+            lines.append("outputname: \(outputName(device))")
             lines.append("plugin: coreaudio")
             lines.append("outputenabled: \(outputEnabled(index) ? 1 : 0)")
         }
@@ -786,25 +761,16 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
     }
 
     private func selectSystemDefault() {
-        if let systemDefault = AudioDevices.shared.devices.first(where: { $0.isSystemDefault }) {
-            PlayerState.shared.selectAudioOutput(systemDefault)
-        }
+        guard let systemDefault = AudioDevices.shared.devices.first(where: {
+            $0.kind == .systemDefault
+        }) else { return }
+        PlayerState.shared.selectAudioOutput(systemDefault)
     }
 
     private func selectOutput(at index: Int) {
         let entries = outputEntries
         guard entries.indices.contains(index) else { return }
-        switch entries[index] {
-        case .systemDefault:
-            selectSystemDefault()
-        case .systemDefaultVolumeControl:
-            if let systemDefault = AudioDevices.shared.devices.first(where: { $0.isSystemDefault }) {
-                PlayerState.shared.selectAudioOutput(systemDefault,
-                                                     systemVolumeControl: true)
-            }
-        case .device(let device):
-            PlayerState.shared.selectAudioOutput(device)
-        }
+        PlayerState.shared.selectAudioOutput(entries[index])
     }
 
     private func statusLines() -> [String] {

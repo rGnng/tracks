@@ -61,7 +61,7 @@ If no Internal Library exists, the fallback database path is
 - App is running from `/Users/n/Documents/ws/tracks/build/Tracks.app`.
 - Main window frame at the time of this snapshot: about `1098 x 823`.
 - Appearance: system/automatic; highlight color: Red; sidebar: playlist `337845818`;
-  Add Time column hidden; playback queue empty.
+  Add Time column hidden; playback queue empty. Output: plain `System Default`.
 - MPD is enabled, listening on all interfaces, port `6600`, empty password.
 - Current database: `~/Music/Tracks/library.sqlite` (WAL while the app is running).
 - Database counts:
@@ -127,7 +127,7 @@ Sources/Audia/
   PlayerState.swift          AVPlayer engine, queue, history, shuffle/repeat
   SystemNowPlaying.swift     Now Playing metadata/artwork and media-key commands
   AudioDevices.swift         Core Audio output device enumeration and selection
-  SystemVolume.swift         macOS output-volume get/set for MPD system mode
+  SystemVolume.swift         macOS output-volume get/set for system-volume outputs
   WindowMode.swift           Library/MiniPlayer window modes and metrics
   WindowSnapping.swift       Magnetic snapping for custom-dragged main window
   MiniPlayerView.swift       Compact player UI and Liquid Glass mini traffic lights
@@ -270,12 +270,14 @@ Important schema decisions:
   the remainder, and tracks appended while shuffle is active are randomized too.
 - Repeat modes: Off, All, One; persisted in UserDefaults.
 - Volume level is persisted in UserDefaults (`player.volume`) and restored at
-  launch, including when playback starts later. When system-volume control is
-  active, the player is held at 100% and the app volume controls operate on the
-  selected macOS output instead. The prior player volume is saved in
-  `player.volumeBeforeSystemControl` for restoration when the option is turned
-  off. Selecting a real output device (AirPods, USB DAC, etc.) always activates
-  this mode; selecting plain System Default returns to app-controlled volume.
+  launch, including when playback starts later. Output selection is persisted
+  under `audioOutputSelection` (`system-default`,
+  `system-default-volume-control`, or a real device UID). Plain **System
+  Default** uses app-controlled AVPlayer volume. **System Default with Volume
+  Control** and every real output device lock the player at 100% and route the
+  app volume controls to that macOS output. The prior player volume is saved in
+  `player.volumeBeforeSystemControl` for restoration when returning to plain
+  System Default.
 - History is most-recent-first, persisted by song ID.
 - Main window modes:
   - Library: normal main window, minimum about `1040 x 640`.
@@ -284,11 +286,12 @@ Important schema decisions:
     adjustable height (`140...500`, screen permitting). Height is
     `width + 72` (`+ queueHeight` while the queue is open). Window shortcuts are
     Command-1 / Command-2.
-  - Custom dragging (`WindowDragArea`) uses `WindowSnapContext`: it snaps either
-    axis independently only when abutting edges meet (2pt tolerance, 8pt release)
-    against screen visible edges or visible normal windows. It does not attract
-    from a distance or align non-touching edges. The snapshot is captured on
-    mouse-down.
+  - Custom dragging (`WindowDragArea`) uses `WindowSnapContext`: it captures
+    either axis independently within an 8pt approach distance against screen
+    visible edges or visible normal windows. Snapping is direction-aware: when
+    the pointer starts moving away, the active edge releases immediately and
+    does not re-capture until the pointer moves toward it again. There is no
+    magnetic hold on detach. The window snapshot is captured on mouse-down.
   - MiniPlayer uses custom Liquid Glass-style traffic lights inside the cover;
     they stay hidden until the pointer enters the window, matching the old
     compact-player behavior without adding a title-bar strip. The lights use
@@ -432,44 +435,31 @@ Current configuration:
 Do not disable or reconfigure MPD without an explicit user request. Remote clients
 may be connected.
 
-### MPD remote system volume
+### System volume and MPD
 
-Settings > MPD Server has a `Use MPD remote to control system default device
-volume` toggle, default off. The MPD setting only applies while MPD itself is
-enabled, but selecting a real output device enables system-volume control
-independently and persists that state.
+The output-device menu is the single source of truth; there is no separate MPD
+volume toggle in Settings.
 
-- When off, `setvol`/`volume` adjust `PlayerState.volume` as before.
-- When on, the player volume is locked at 100% and `setvol`/`volume` requests
-  change the volume of the selected macOS output device through Core Audio (the
-  system default when no explicit output is selected). The in-app and mini-player
-  volume sliders remain usable and display/control the same macOS output volume.
-- MPD's `volume` command is treated as a **relative** change even when the value
-  has no leading `+`; libmpdclient/ncmpcpp sends `volume 2` for `+2`. `setvol`
-  is absolute, with a leading sign allowed as a relative convenience. A literal
-  `volume 0` is treated as a mute request. This matters for clients whose volume
-  buttons otherwise repeatedly set the same absolute value or whose mute button
-  sends `volume 0`.
+- The menu contains `System Default`, `System Default with Volume Control`, then
+  real Core Audio devices.
+- Plain `System Default` uses `PlayerState.volume` (AVPlayer attenuation).
+- `System Default with Volume Control` and real output devices lock the player
+  at 100% and route MPD `setvol`/`volume` and the in-app slider to the macOS
+  output volume through Core Audio.
+- When system-volume mode is active, `setvol`/`volume` requests change the
+  selected macOS output device. MPD's `volume` command is treated as a
+  **relative** change even without a leading `+`; libmpdclient/ncmpcpp sends
+  `volume 2` for `+2`. `setvol` is absolute with an optional leading sign. A
+  literal `volume 0` is a mute request.
 - While system mode is active the app's mute button and the MPD mute path both
   drive the system volume. Core Audio does not clear the device mute flag when
   the scalar volume is raised, so `SystemVolume` explicitly reads/writes
   `kAudioDevicePropertyMute` as well as the scalar volume. `AVPlayer.isMuted` is
-  synchronized too, so mute remains effective even when the output device does
-  not honor the system mute flag.
-- `status`, `getvol`, and the `volume` query report the live system volume, not
-  the 100% player volume. `setvol`/`volume` changes broadcast `changed: mixer`
-  to idle clients, keeping remote volume displays in sync after MPD or external
-  system volume changes.
+  synchronized too.
+- `status`, `getvol`, and the `volume` query report the live system volume while
+  system mode is active. `setvol`/`volume` changes broadcast `changed: mixer`
+  to idle clients.
 - The remote system volume control does not use AVPlayer attenuation.
-- The option is stored under `mpd.systemVolume`; the effective mode requires
-  `mpd.enabled` as well.
-- MPD's output list contains `System Default`, `System Default (Volume Control)`,
-  then the real output devices. Selecting `System Default (Volume Control)`
-  selects the system-default output, enables this setting, and updates Settings;
-  selecting plain `System Default` disables it. Selecting any real output device
-  always enables system-volume control, fixes AVPlayer at 100%, and routes the
-  app volume slider to that device's system volume. The Settings toggle is
-  disabled while a real device is selected.
 
 Supported areas:
 
@@ -485,12 +475,12 @@ Supported areas:
   honor an optional directory URI. `lsinfo` on a directory returns full song
   metadata including `Track`/`Disc`; the root `lsinfo` remains file-only plus
   playlist entries to keep `mpc lsplaylists` fast.
-- Audio outputs: `outputs` lists `System Default`, `System Default (Volume
-  Control)`, then the real output devices, with `outputid`, `outputname`,
+- Audio outputs: `outputs` lists `System Default`, `System Default with Volume
+  Control`, then the real output devices, with `outputid`, `outputname`,
   `plugin: coreaudio`, and `outputenabled`. `enableoutput`, `disableoutput`, and
-  `toggleoutput` switch the app's selected Core Audio output. The volume-control
-  entry also enables MPD system-volume mode; plain System Default disables it.
-  Selecting a real device preserves the current volume-control mode.
+  `toggleoutput` select the same output options exposed by the toolbar menu.
+  Plain System Default uses app volume; the volume-control entry and real
+  devices lock AVPlayer at 100% and control the macOS output volume.
 - Album art: `albumart`, `readpicture`, `binarylimit`. Responses use the 500x500
   JPEG cache, correct size/type, and JPEG magic. The default chunk size is
   262144 bytes so a typical cover fits in one response; clients can still request

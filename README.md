@@ -34,6 +34,11 @@ SQLite, and includes a built-in MPD server.
   Songs/playlists, Artists, and Genres are remembered across launches.
 - Internal Library (writable) and External Libraries (read-only), with an
   organizer for imports and tag editing.
+- Output menu offers plain System Default, System Default with Volume Control,
+  and all real Core Audio devices. The volume-control option locks player
+  attenuation and routes volume to the macOS output.
+- Custom window dragging snaps to screen and window edges with directional
+  approach capture; moving away releases immediately without a magnetic hold.
 - Built-in MPD server for browsing and controlling the library over TCP.
 
 ## Build and run

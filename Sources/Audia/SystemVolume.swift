@@ -3,18 +3,9 @@ import CoreAudio
 import AudioToolbox
 
 /// Reads and writes the macOS output volume. This is deliberately separate from
-/// `PlayerState.volume`, which attenuates AVPlayer. It is used only when MPD is
-/// configured to own the system volume.
+/// `PlayerState.volume`, which attenuates AVPlayer. It is used when the selected
+/// output option owns the macOS output volume.
 enum SystemVolume {
-    static let defaultsKey = "mpd.systemVolume"
-
-    /// Whether the MPD option itself is enabled. PlayerState also enables
-    /// system-volume control whenever a real output device is selected.
-    static var isEnabled: Bool {
-        let defaults = UserDefaults.standard
-        return defaults.bool(forKey: "mpd.enabled") && defaults.bool(forKey: defaultsKey)
-    }
-
     static func current(deviceID: AudioDeviceID? = nil) -> Double? {
         guard let device = deviceID ?? defaultOutputDevice() else { return nil }
 

@@ -2,21 +2,41 @@ import Foundation
 import CoreAudio
 import Combine
 
-/// One selectable audio output: either the system default or a real Core Audio
-/// device with output streams.
+enum AudioOutputKind: Hashable {
+    case systemDefault
+    case systemDefaultVolumeControl
+    case device
+}
+
+/// One selectable audio output: either a synthetic system-default option or a
+/// real Core Audio device with output streams.
 struct AudioOutputDevice: Identifiable, Hashable {
-    /// nil for the synthetic “System Default” entry.
+    /// nil for the synthetic system-default entries.
     let deviceID: AudioDeviceID?
-    /// nil for the synthetic “System Default” entry.
+    /// nil for the synthetic system-default entries.
     let uid: String?
     let name: String
-    let isDefault: Bool
+    let kind: AudioOutputKind
     let transport: UInt32?
 
-    var id: String { uid ?? "system-default" }
-    var isSystemDefault: Bool { uid == nil }
+    var id: String {
+        switch kind {
+        case .systemDefault:
+            return "system-default"
+        case .systemDefaultVolumeControl:
+            return "system-default-volume-control"
+        case .device:
+            return uid ?? "device-\(deviceID ?? 0)"
+        }
+    }
+
+    /// Plain System Default leaves AVPlayer in charge of volume. The
+    /// volume-control system output and every real output lock the player at
+    /// 100% and control the macOS output volume instead.
+    var controlsSystemVolume: Bool { kind != .systemDefault }
 
     var icon: String {
+        if kind == .systemDefaultVolumeControl { return "speaker.wave.2" }
         guard let transport else { return "airplayvideo" }
         switch transport {
         case kAudioDeviceTransportTypeBuiltIn:
@@ -45,11 +65,9 @@ private enum AudioOutputCatalog {
         let uid: String
         let name: String
         let transport: UInt32
-        let isDefault: Bool
     }
 
     static func list() -> [Device] {
-        let defaultID = defaultOutputDeviceID()
         var result: [Device] = []
         for id in allDeviceIDs() {
             guard hasOutputStreams(id),
@@ -62,8 +80,7 @@ private enum AudioOutputCatalog {
             result.append(Device(id: id,
                                  uid: uid,
                                  name: name,
-                                 transport: transport,
-                                 isDefault: id == defaultID))
+                                 transport: transport))
         }
         return result.sorted {
             $0.name.localizedStandardCompare($1.name) == .orderedAscending
@@ -90,19 +107,6 @@ private enum AudioOutputCatalog {
                                               &address, 0, nil, &size, base)
         }
         return status == noErr ? ids : []
-    }
-
-    private static func defaultOutputDeviceID() -> AudioDeviceID? {
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        var deviceID = AudioDeviceID(0)
-        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
-        let status = AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject),
-                                                &address, 0, nil, &size, &deviceID)
-        return status == noErr ? deviceID : nil
     }
 
     private static func hasOutputStreams(_ deviceID: AudioDeviceID) -> Bool {
@@ -146,48 +150,63 @@ private enum AudioOutputCatalog {
     }
 }
 
-/// The real output devices available to the process, plus a “System Default”
-/// entry. Refreshes on a light timer so plugging in headphones/AirPlay updates
-/// the menu without restarting the app.
+/// The real output devices available to the process, plus the two synthetic
+/// system-default modes. Refreshes on a light timer so plugging in
+/// headphones/AirPlay updates the menu without restarting the app.
 @MainActor
 final class AudioDevices: ObservableObject {
     static let shared = AudioDevices()
 
+    private static let selectionKey = "audioOutputSelection"
+    private static let legacyUIDKey = "audioOutputDeviceUID"
+    private static let legacyVolumeControlKey = "mpd.systemVolume"
+    static let systemDefaultID = "system-default"
+    static let systemDefaultVolumeControlID = "system-default-volume-control"
+
     @Published private(set) var devices: [AudioOutputDevice] = []
-    @Published private(set) var selectedUID: String? =
-        UserDefaults.standard.string(forKey: "audioOutputDeviceUID")
+    @Published private(set) var selectedID: String
 
     private var refreshTimer: Timer?
     private let systemDefault = AudioOutputDevice(deviceID: nil,
-                                                  uid: nil,
-                                                  name: "System Default",
-                                                  isDefault: true,
-                                                  transport: nil)
+                                                 uid: nil,
+                                                 name: "System Default",
+                                                 kind: .systemDefault,
+                                                 transport: nil)
+    private let systemDefaultVolumeControl = AudioOutputDevice(
+        deviceID: nil,
+        uid: nil,
+        name: "System Default with Volume Control",
+        kind: .systemDefaultVolumeControl,
+        transport: nil
+    )
 
     var selectedDevice: AudioOutputDevice {
-        if let selectedUID,
-           let device = devices.first(where: { $0.uid == selectedUID }) {
-            return device
-        }
-        return systemDefault
+        devices.first { $0.id == selectedID } ?? systemDefault
     }
 
     /// nil means “follow the system default output”.
     var effectiveUID: String? {
-        guard let selectedUID,
-              devices.contains(where: { $0.uid == selectedUID }) else { return nil }
-        return selectedUID
+        selectedDevice.kind == .device ? selectedDevice.uid : nil
     }
 
     /// The Core Audio device whose system volume should be controlled. nil asks
     /// `SystemVolume` to resolve the current system default output.
     var effectiveDeviceID: AudioDeviceID? {
-        guard let selectedUID,
-              let device = devices.first(where: { $0.uid == selectedUID }) else { return nil }
-        return device.deviceID
+        selectedDevice.kind == .device ? selectedDevice.deviceID : nil
     }
 
     private init() {
+        let defaults = UserDefaults.standard
+        let legacyUID = defaults.string(forKey: Self.legacyUIDKey)
+        let legacyVolumeControl = defaults.bool(forKey: Self.legacyVolumeControlKey)
+        let initialID = defaults.string(forKey: Self.selectionKey)
+            ?? legacyUID
+            ?? (legacyVolumeControl ? Self.systemDefaultVolumeControlID : Self.systemDefaultID)
+        selectedID = initialID
+        defaults.set(initialID, forKey: Self.selectionKey)
+        defaults.removeObject(forKey: Self.legacyUIDKey)
+        defaults.removeObject(forKey: Self.legacyVolumeControlKey)
+
         refresh()
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.refresh() }
@@ -200,29 +219,23 @@ final class AudioDevices: ObservableObject {
             AudioOutputDevice(deviceID: $0.id,
                               uid: $0.uid,
                               name: $0.name,
-                              isDefault: $0.isDefault,
+                              kind: .device,
                               transport: $0.transport)
         }
-        let updated = [systemDefault] + listed
+        let updated = [systemDefault, systemDefaultVolumeControl] + listed
         if updated != devices {
             devices = updated
         }
 
-        if let selectedUID,
-           !catalog.contains(where: { $0.uid == selectedUID }) {
-            self.selectedUID = nil
-            UserDefaults.standard.removeObject(forKey: "audioOutputDeviceUID")
+        if !updated.contains(where: { $0.id == selectedID }) {
+            selectedID = Self.systemDefaultID
+            UserDefaults.standard.set(selectedID, forKey: Self.selectionKey)
         }
     }
 
     func select(_ device: AudioOutputDevice) {
-        guard device.isSystemDefault
-                || devices.contains(where: { $0.uid == device.uid }) else { return }
-        selectedUID = device.uid
-        if let uid = device.uid {
-            UserDefaults.standard.set(uid, forKey: "audioOutputDeviceUID")
-        } else {
-            UserDefaults.standard.removeObject(forKey: "audioOutputDeviceUID")
-        }
+        guard let selected = devices.first(where: { $0.id == device.id }) else { return }
+        selectedID = selected.id
+        UserDefaults.standard.set(selectedID, forKey: Self.selectionKey)
     }
 }

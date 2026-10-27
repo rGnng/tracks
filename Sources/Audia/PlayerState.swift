@@ -70,12 +70,8 @@ final class PlayerState: ObservableObject {
             .compactMap(UUID.init(uuidString:))
         let storedVolume = UserDefaults.standard.object(forKey: Self.volumeDefaultsKey) as? Double
         volume = min(max(storedVolume ?? 0.65, 0), 1)
-        let hasSelectedOutput = AudioDevices.shared.selectedUID != nil
-        if hasSelectedOutput {
-            // A real output device always owns its system volume.
-            UserDefaults.standard.set(true, forKey: SystemVolume.defaultsKey)
-        }
-        if SystemVolume.isEnabled || hasSelectedOutput {
+        let controlsSystemVolume = AudioDevices.shared.selectedDevice.controlsSystemVolume
+        if controlsSystemVolume {
             let storedBefore = UserDefaults.standard.object(forKey: Self.volumeBeforeSystemControlKey) as? Double
             volumeBeforeSystemControl = min(max(storedBefore ?? (volume > 0 ? volume : 0.65), 0), 1)
             isVolumeLocked = true
@@ -88,7 +84,7 @@ final class PlayerState: ObservableObject {
         volumeBeforeMute = volume > 0 ? volume : 0.65
 
         // Keep the current player on the device selected in the toolbar menu.
-        deviceCancellable = AudioDevices.shared.$selectedUID
+        deviceCancellable = AudioDevices.shared.$selectedID
             .removeDuplicates()
             .sink { [weak self] _ in
                 Task { @MainActor in self?.applyOutputDevice() }
@@ -196,16 +192,12 @@ final class PlayerState: ObservableObject {
         setDisplayVolume(min(max(target, 0), 1))
     }
 
-    /// Selects an output and applies its volume policy. A real output device
-    /// always keeps AVPlayer at 100% and exposes that device's system volume;
-    /// System Default returns to app-controlled volume unless volume control
-    /// is explicitly requested for the MPD volume-control output.
-    func selectAudioOutput(_ device: AudioOutputDevice,
-                           systemVolumeControl: Bool? = nil) {
+    /// Selects an output and applies its volume policy. Real output devices and
+    /// “System Default with Volume Control” keep AVPlayer at 100% and expose
+    /// the macOS output volume; plain System Default uses app-controlled volume.
+    func selectAudioOutput(_ device: AudioOutputDevice) {
         AudioDevices.shared.select(device)
-        let enabled = !device.isSystemDefault || (systemVolumeControl ?? false)
-        UserDefaults.standard.set(enabled, forKey: SystemVolume.defaultsKey)
-        setSystemVolumeControl(enabled)
+        setSystemVolumeControl(AudioDevices.shared.selectedDevice.controlsSystemVolume)
     }
 
     private func syncPlayerMuteState() {
@@ -772,12 +764,9 @@ final class PlayerState: ObservableObject {
         syncPlayerMuteState()
     }
 
-    /// Locks/unlocks the player volume for MPD system-volume control. Enabling
-    /// remembers the player volume so disabling can restore it. A real output
-    /// device always keeps system-volume control enabled; only System Default
-    /// can return to app-controlled volume.
-    func setSystemVolumeControl(_ requested: Bool) {
-        let enabled = requested || AudioDevices.shared.selectedUID != nil
+    /// Locks/unlocks the player volume for the selected output policy.
+    /// Enabling remembers the player volume so disabling can restore it.
+    private func setSystemVolumeControl(_ enabled: Bool) {
         guard enabled != isVolumeLocked else {
             if enabled {
                 volume = 1

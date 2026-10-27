@@ -145,7 +145,6 @@ struct SettingsView: View {
     @AppStorage("mpd.addresses") private var mpdAddresses = "127.0.0.1"
     @AppStorage("mpd.port") private var mpdPort = 6600
     @AppStorage("mpd.password") private var mpdPassword = ""
-    @AppStorage("mpd.systemVolume") private var mpdSystemVolume = false
     @AppStorage("artworkCacheJPEGQuality") private var artworkCacheJPEGQuality = 0.8
     @State private var starShortcut: KeyboardShortcut? = KeyboardShortcutStore.loadStar()
     @State private var muteShortcut: KeyboardShortcut? = KeyboardShortcutStore.loadMute()
@@ -154,7 +153,6 @@ struct SettingsView: View {
     @ObservedObject private var library = Library.shared
     @ObservedObject private var artworkCache = ArtworkCache.shared
     @ObservedObject private var mpd = MPDServer.shared
-    @ObservedObject private var audioDevices = AudioDevices.shared
     @Environment(\.openWindow) private var openWindow
 
     @State private var alert: SettingsAlert?
@@ -335,7 +333,6 @@ struct SettingsView: View {
             volumeDownShortcut = KeyboardShortcutStore.loadVolumeDown()
             volumeUpShortcut = KeyboardShortcutStore.loadVolumeUp()
             artworkCache.refreshCacheSize()
-            PlayerState.shared.setSystemVolumeControl(mpdEnabled && mpdSystemVolume)
         }
         .onChange(of: artworkCacheJPEGQuality) { _, _ in
             if !artworkQualityFocused { artworkQualityText = "\(artworkQualityPercent)" }
@@ -370,14 +367,9 @@ struct SettingsView: View {
                 )
             }
         }
-        .onChange(of: mpdEnabled) { _, enabled in
-            PlayerState.shared.setSystemVolumeControl(enabled && mpdSystemVolume)
+        .onChange(of: mpdEnabled) { _, _ in
             mpd.notifyOutputConfigurationChanged()
             scheduleMPDApply()
-        }
-        .onChange(of: mpdSystemVolume) { _, enabled in
-            PlayerState.shared.setSystemVolumeControl(mpdEnabled && enabled)
-            mpd.notifyOutputConfigurationChanged()
         }
         .onChange(of: mpdAllInterfaces) { _, _ in scheduleMPDApply() }
         .onChange(of: mpdAddresses) { _, _ in scheduleMPDApply() }
@@ -475,17 +467,6 @@ struct SettingsView: View {
                 .foregroundColor(Theme.secondaryText)
 
             if mpdEnabled {
-                Toggle("Use MPD remote to control system default device volume", isOn: $mpdSystemVolume)
-                    .controlSize(.small)
-                    .disabled(audioDevices.selectedUID != nil)
-
-                Text(audioDevices.selectedUID != nil
-                     ? "A specific output device is selected. The player is fixed at 100%, and the volume slider controls that device's system volume."
-                     : "Player audio stays at 100%; MPD remote and in-app volume controls adjust the selected macOS output. The “System Default (Volume Control)” MPD output enables this automatically.")
-                    .font(.system(size: 10.5))
-                    .foregroundColor(Theme.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-
                 Toggle("Listen on all interfaces", isOn: $mpdAllInterfaces)
                     .controlSize(.small)
 

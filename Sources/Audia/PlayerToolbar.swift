@@ -119,6 +119,7 @@ struct WindowDragArea: NSViewRepresentable {
     final class DragHandle: NSView {
         private var initialMouseLocation: NSPoint?
         private var initialWindowOrigin: NSPoint?
+        private var lastProposedOrigin: NSPoint?
         private var snapContext: WindowSnapContext?
         private var snappedX: CGFloat?
         private var snappedY: CGFloat?
@@ -130,6 +131,7 @@ struct WindowDragArea: NSViewRepresentable {
             window.makeKey()
             initialMouseLocation = NSEvent.mouseLocation
             initialWindowOrigin = window.frame.origin
+            lastProposedOrigin = window.frame.origin
             snapContext = WindowSnapContext(excluding: window)
             snappedX = nil
             snappedY = nil
@@ -140,16 +142,23 @@ struct WindowDragArea: NSViewRepresentable {
                   let initialMouseLocation,
                   let initialWindowOrigin else { return }
             let current = NSEvent.mouseLocation
-            var origin = NSPoint(
+            let proposedOrigin = NSPoint(
                 x: initialWindowOrigin.x + current.x - initialMouseLocation.x,
                 y: initialWindowOrigin.y + current.y - initialMouseLocation.y
             )
+            let previousOrigin = lastProposedOrigin ?? proposedOrigin
+            let deltaX = proposedOrigin.x - previousOrigin.x
+            let deltaY = proposedOrigin.y - previousOrigin.y
+            lastProposedOrigin = proposedOrigin
 
+            var origin = proposedOrigin
             if let snapContext {
-                let result = snapContext.snap(proposedOrigin: origin,
+                let result = snapContext.snap(proposedOrigin: proposedOrigin,
                                               size: window.frame.size,
                                               activeX: snappedX,
-                                              activeY: snappedY)
+                                              activeY: snappedY,
+                                              deltaX: deltaX,
+                                              deltaY: deltaY)
                 origin = result.origin
                 snappedX = result.activeX
                 snappedY = result.activeY
@@ -160,6 +169,7 @@ struct WindowDragArea: NSViewRepresentable {
         override func mouseUp(with event: NSEvent) {
             initialMouseLocation = nil
             initialWindowOrigin = nil
+            lastProposedOrigin = nil
             snapContext = nil
             snappedX = nil
             snappedY = nil
@@ -264,8 +274,16 @@ private struct QueuePopover: View {
                             .font(.system(size: 12, weight: .medium))
                             .foregroundColor(Theme.highlight)
                             .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
-                            .contentShape(Rectangle())
+                            .padding(.vertical, 4)
+                            .background(
+                                RoundedRectangle(cornerRadius: 5)
+                                    .fill(Theme.controlBackground)
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 5)
+                                    .strokeBorder(Theme.controlBorder, lineWidth: 1)
+                            )
+                            .contentShape(RoundedRectangle(cornerRadius: 5))
                     }
                     .buttonStyle(.plain)
                     .disabled(songs.isEmpty)
@@ -675,7 +693,7 @@ private struct DeviceMenu: View {
                     DeviceRow(
                         name: device.name,
                         icon: device.icon,
-                        isSelected: audioDevices.selectedUID == device.uid,
+                        isSelected: audioDevices.selectedID == device.id,
                         isHovered: hoveredID == device.id
                     )
                     .contentShape(Rectangle())
@@ -693,14 +711,14 @@ private struct DeviceMenu: View {
                     }
                     .help(device.name)
 
-                    if device.isSystemDefault {
+                    if device.kind == .systemDefaultVolumeControl {
                         Divider()
                             .padding(.vertical, 4)
                     }
                 }
             }
             .padding(.bottom, 6)
-            .frame(width: 230)
+            .frame(width: 330)
         }
     }
 }

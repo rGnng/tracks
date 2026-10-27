@@ -3,9 +3,10 @@ import CoreGraphics
 
 /// Edge-to-edge snapping for the custom-dragged Library/MiniPlayer window.
 /// AppKit's title-bar snapping is bypassed because this window disables native
-/// window movement and drags itself. This deliberately does not attract from a
-/// distance: a snap only takes effect when abutting edges actually meet. The
-/// snapshot is captured once at mouse-down so per-event work stays small.
+/// window movement and drags itself. Snapping captures within a small approach
+/// distance, releases immediately when the drag moves away, and does not stick
+/// when leaving an edge. The snapshot is captured once at mouse-down so
+/// per-event work stays small.
 @MainActor
 struct WindowSnapContext {
     struct Result {
@@ -16,8 +17,7 @@ struct WindowSnapContext {
 
     private let screenFrames: [NSRect]
     private let windowFrames: [NSRect]
-    private let attachDistance: CGFloat = 2
-    private let detachDistance: CGFloat = 8
+    private let attachDistance: CGFloat = 8
 
     init(excluding window: NSWindow) {
         screenFrames = NSScreen.screens.map(\.visibleFrame)
@@ -27,31 +27,38 @@ struct WindowSnapContext {
     func snap(proposedOrigin: NSPoint,
               size: NSSize,
               activeX: CGFloat?,
-              activeY: CGFloat?) -> Result {
+              activeY: CGFloat?,
+              deltaX: CGFloat,
+              deltaY: CGFloat) -> Result {
         let width = size.width
         let height = size.height
         let proposedFrame = NSRect(origin: proposedOrigin, size: size)
 
         var snappedX = activeX
-        if let activeX, abs(proposedOrigin.x - activeX) > detachDistance {
+        // Leaving an edge releases immediately. There is no magnetic hold on
+        // the way out; the direction check below prevents re-capturing the same
+        // edge until the pointer moves toward it again.
+        if let activeX, abs(proposedOrigin.x - activeX) > 0.01 {
             snappedX = nil
         }
         if snappedX == nil {
             snappedX = nearestTarget(
                 proposedOrigin.x,
+                delta: deltaX,
                 candidates: xCandidates(for: proposedFrame)
             )
         }
 
         let x = snappedX ?? proposedOrigin.x
         var snappedY = activeY
-        if let activeY, abs(proposedOrigin.y - activeY) > detachDistance {
+        if let activeY, abs(proposedOrigin.y - activeY) > 0.01 {
             snappedY = nil
         }
         if snappedY == nil {
             let frameForY = NSRect(x: x, y: proposedOrigin.y, width: width, height: height)
             snappedY = nearestTarget(
                 proposedOrigin.y,
+                delta: deltaY,
                 candidates: yCandidates(for: frameForY)
             )
         }
@@ -62,15 +69,23 @@ struct WindowSnapContext {
                       activeY: snappedY)
     }
 
-    private func nearestTarget(_ value: CGFloat, candidates: [CGFloat]) -> CGFloat? {
+    private func nearestTarget(_ value: CGFloat,
+                               delta: CGFloat,
+                               candidates: [CGFloat]) -> CGFloat? {
         var result: CGFloat?
         var best = attachDistance
         for candidate in candidates {
-            let distance = abs(candidate - value)
-            if distance <= best {
-                best = distance
-                result = candidate
-            }
+            let difference = candidate - value
+            let distance = abs(difference)
+            guard distance <= best else { continue }
+
+            // Only capture while approaching the edge. Once a drag moves away,
+            // the same candidate is ignored until the direction reverses.
+            if difference < -0.01, delta > 0.01 { continue }
+            if difference > 0.01, delta < -0.01 { continue }
+
+            best = distance
+            result = candidate
         }
         return result
     }
