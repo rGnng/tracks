@@ -166,6 +166,11 @@ struct SettingsView: View {
     @State private var muteScope = KeyboardShortcutStore.scope(for: .mute)
     @State private var volumeDownScope = KeyboardShortcutStore.scope(for: .volumeDown)
     @State private var volumeUpScope = KeyboardShortcutStore.scope(for: .volumeUp)
+    @State private var enabledShortcuts = Dictionary(
+        uniqueKeysWithValues: ShortcutAction.allCases.map {
+            ($0, KeyboardShortcutStore.isEnabled($0))
+        }
+    )
     @ObservedObject private var library = Library.shared
     @ObservedObject private var artworkCache = ArtworkCache.shared
     @ObservedObject private var mpd = MPDServer.shared
@@ -200,6 +205,7 @@ struct SettingsView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
+        .font(SettingsTypography.body)
         .frame(width: 760, height: 720, alignment: .topLeading)
         .background(SettingsFocusSink())
         .onAppear {
@@ -214,6 +220,11 @@ struct SettingsView: View {
             muteScope = KeyboardShortcutStore.scope(for: .mute)
             volumeDownScope = KeyboardShortcutStore.scope(for: .volumeDown)
             volumeUpScope = KeyboardShortcutStore.scope(for: .volumeUp)
+            enabledShortcuts = Dictionary(
+                uniqueKeysWithValues: ShortcutAction.allCases.map {
+                    ($0, KeyboardShortcutStore.isEnabled($0))
+                }
+            )
             artworkCache.refreshCacheSize()
         }
         .onChange(of: artworkCacheJPEGQuality) { _, _ in
@@ -262,10 +273,10 @@ struct SettingsView: View {
     private func settingsPageHeader(_ section: SettingsSection) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(section.title)
-                .font(.system(size: 18, weight: .semibold))
+                .font(SettingsTypography.pageTitle)
                 .foregroundColor(Theme.primaryText)
             Text(section.subtitle)
-                .font(.system(size: 12))
+                .font(SettingsTypography.help)
                 .foregroundColor(Theme.secondaryText)
         }
     }
@@ -274,21 +285,22 @@ struct SettingsView: View {
     private func settingsContent(_ section: SettingsSection) -> some View {
         switch section {
         case .general:
-            generalBox
+            generalSettings
         case .library:
-            libraryBox
+            librarySettings
         case .shortcuts:
-            shortcutsBox
+            shortcutsSettings
         case .services:
-            VStack(alignment: .leading, spacing: 12) {
-                trayBox
-                mpdBox
+            VStack(alignment: .leading, spacing: 14) {
+                traySettings
+                Divider()
+                mpdSettings
             }
         }
     }
 
-    private var generalBox: some View {
-        VStack(alignment: .leading, spacing: 10) {
+    private var generalSettings: some View {
+        VStack(alignment: .leading, spacing: 14) {
             Picker("Album display as", selection: $albumViewMode) {
                 Text("Grid").tag("grid")
                 Text("List").tag("list")
@@ -350,20 +362,18 @@ struct SettingsView: View {
             }
             .frame(maxWidth: 360, alignment: .leading)
         }
-        .padding(12)
-        .background(boxBackground)
     }
 
-    private var libraryBox: some View {
-        VStack(alignment: .leading, spacing: 10) {
+    private var librarySettings: some View {
+        VStack(alignment: .leading, spacing: 14) {
             HStack {
                 Text("Music Folders")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(.secondary)
+                    .font(SettingsTypography.sectionTitle)
+                    .foregroundColor(Theme.primaryText)
                 Spacer()
                 Text("\(library.albums.count) albums · \(library.allSongs.count) songs")
-                    .font(.system(size: 10.5))
-                    .foregroundColor(.secondary)
+                    .font(SettingsTypography.caption.monospacedDigit())
+                    .foregroundColor(Theme.secondaryText)
             }
 
             if library.isScanning {
@@ -373,31 +383,34 @@ struct SettingsView: View {
                     Text(library.scanTotal > 0
                          ? "Scanning \(library.scanCompleted) of \(library.scanTotal) files…"
                          : "Scanning…")
-                        .font(.system(size: 10.5))
-                        .foregroundColor(.secondary)
+                        .font(SettingsTypography.help)
+                        .foregroundColor(Theme.secondaryText)
                 }
-                .frame(maxWidth: 420, alignment: .leading)
+                .padding(.vertical, 4)
             }
 
-            internalLibraryBox
-            externalLibrariesBox
-            artworkCacheBox
+            internalLibrarySection
+            Divider()
+            externalLibrariesSection
+            Divider()
+            artworkCacheSection
         }
     }
 
-    private var artworkCacheBox: some View {
-        VStack(alignment: .leading, spacing: 8) {
+    private var artworkCacheSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 10) {
                 Image(systemName: "photo.on.rectangle")
                     .font(.system(size: 12))
                     .foregroundColor(.secondary)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Artwork Cache")
-                        .font(.system(size: 11.5, weight: .semibold))
+                        .font(SettingsTypography.cardTitle)
                         .foregroundColor(Theme.primaryText)
                     Text("Cached album art speeds up browsing. It is rebuilt from library files.")
-                        .font(.system(size: 10.5))
+                        .font(SettingsTypography.help)
                         .foregroundColor(Theme.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 0)
                 Button("Rebuild Cache") {
@@ -407,13 +420,13 @@ struct SettingsView: View {
 
             HStack(spacing: 8) {
                 Text("JPEG quality")
-                    .font(.system(size: 11))
+                    .font(SettingsTypography.body)
                     .foregroundColor(Theme.secondaryText)
-                    .frame(width: 84, alignment: .trailing)
+                    .frame(width: 120, alignment: .leading)
                 TextField("80", text: $artworkQualityText)
                     .textFieldStyle(.roundedBorder)
-                    .font(.system(size: 11).monospacedDigit())
-                    .frame(width: 46)
+                    .font(SettingsTypography.body.monospacedDigit())
+                    .frame(width: 58)
                     .multilineTextAlignment(.trailing)
                     .focused($artworkQualityFocused)
                     .onSubmit { commitArtworkQuality() }
@@ -425,41 +438,48 @@ struct SettingsView: View {
                         if digits != value { artworkQualityText = digits }
                     }
                 Text("%")
-                    .font(.system(size: 11))
+                    .font(SettingsTypography.body)
                     .foregroundColor(Theme.secondaryText)
                 Spacer(minLength: 0)
             }
 
             HStack(spacing: 8) {
                 Text("Cache size")
-                    .font(.system(size: 11))
+                    .font(SettingsTypography.body)
                     .foregroundColor(Theme.secondaryText)
-                    .frame(width: 84, alignment: .trailing)
+                    .frame(width: 120, alignment: .leading)
                 Text(artworkCacheSizeText)
-                    .font(.system(size: 11).monospacedDigit())
+                    .font(SettingsTypography.body.monospacedDigit())
                     .foregroundColor(Theme.primaryText)
                 Spacer(minLength: 0)
             }
         }
-        .padding(12)
-        .background(boxBackground)
     }
 
-    private var shortcutsBox: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            shortcutRow(.mute, shortcut: $muteShortcut, scope: $muteScope)
-            shortcutRow(.volumeDown, shortcut: $volumeDownShortcut, scope: $volumeDownScope)
-            shortcutRow(.volumeUp, shortcut: $volumeUpShortcut, scope: $volumeUpScope)
-            shortcutRow(.showHide, shortcut: $showHideShortcut, scope: $showHideScope)
-            shortcutRow(.starCurrent, shortcut: $starShortcut, scope: $starScope)
-
-            Text("System-wide checked: the shortcut works in other apps. Unchecked: it is In-App and only works while Tracks is focused. Volume shortcuts use the 16-step 6.25% volume grid. Defaults: mute m, down -, up =, show/hide F17, add/remove Stared F18.")
-                .font(.system(size: 10.5))
-                .foregroundColor(Theme.secondaryText)
-                .fixedSize(horizontal: false, vertical: true)
+    private var shortcutsSettings: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            shortcutTableHeader
+            shortcutRow(.mute,
+                        enabled: enabledBinding(for: .mute),
+                        shortcut: $muteShortcut,
+                        scope: $muteScope)
+            shortcutRow(.volumeDown,
+                        enabled: enabledBinding(for: .volumeDown),
+                        shortcut: $volumeDownShortcut,
+                        scope: $volumeDownScope)
+            shortcutRow(.volumeUp,
+                        enabled: enabledBinding(for: .volumeUp),
+                        shortcut: $volumeUpShortcut,
+                        scope: $volumeUpScope)
+            shortcutRow(.showHide,
+                        enabled: enabledBinding(for: .showHide),
+                        shortcut: $showHideShortcut,
+                        scope: $showHideScope)
+            shortcutRow(.starCurrent,
+                        enabled: enabledBinding(for: .starCurrent),
+                        shortcut: $starShortcut,
+                        scope: $starScope)
         }
-        .padding(10)
-        .background(boxBackground)
         .onChange(of: starShortcut) { _, value in
             KeyboardShortcutStore.save(value, for: .starCurrent)
             SystemWideShortcutCenter.shared.reload()
@@ -485,6 +505,12 @@ struct SettingsView: View {
         .onChange(of: muteScope) { _, value in saveScope(value, for: .mute) }
         .onChange(of: volumeDownScope) { _, value in saveScope(value, for: .volumeDown) }
         .onChange(of: volumeUpScope) { _, value in saveScope(value, for: .volumeUp) }
+        .onChange(of: enabledShortcuts) { _, values in
+            for action in ShortcutAction.allCases {
+                KeyboardShortcutStore.setEnabled(values[action] ?? true, for: action)
+            }
+            SystemWideShortcutCenter.shared.reload()
+        }
     }
 
     private func saveScope(_ scope: ShortcutScope, for action: ShortcutAction) {
@@ -492,37 +518,72 @@ struct SettingsView: View {
         SystemWideShortcutCenter.shared.reload()
     }
 
+    private var shortcutTableHeader: some View {
+        HStack(spacing: 8) {
+            Text("Enabled")
+                .frame(width: 58)
+            Text("Action")
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Text("System-Wide")
+                .frame(width: 100)
+            Text("Key")
+                .frame(width: 132)
+            Color.clear
+                .frame(width: 48, height: 1)
+        }
+        .font(SettingsTypography.help.weight(.semibold))
+        .foregroundColor(Theme.secondaryText)
+        .padding(.bottom, 2)
+    }
+
+    private func enabledBinding(for action: ShortcutAction) -> Binding<Bool> {
+        Binding(
+            get: { enabledShortcuts[action] ?? true },
+            set: { enabledShortcuts[action] = $0 }
+        )
+    }
+
     private func shortcutRow(_ action: ShortcutAction,
+                             enabled: Binding<Bool>,
                              shortcut: Binding<KeyboardShortcut?>,
                              scope: Binding<ShortcutScope>) -> some View {
         HStack(spacing: 8) {
+            Toggle("", isOn: enabled)
+                .labelsHidden()
+                .toggleStyle(.checkbox)
+                .controlSize(.small)
+                .frame(width: 58)
+                .help("Enable or disable this shortcut")
             Text(action.title)
-                .font(.system(size: 11))
-                .foregroundColor(Theme.secondaryText)
-                .lineLimit(2)
-            Spacer(minLength: 6)
-            Toggle("System-wide", isOn: Binding(
+                .font(SettingsTypography.body)
+                .foregroundColor(enabled.wrappedValue ? Theme.primaryText : Theme.secondaryText)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Toggle("", isOn: Binding(
                 get: { scope.wrappedValue == .systemWide },
                 set: { scope.wrappedValue = $0 ? .systemWide : .inApp }
             ))
+            .labelsHidden()
             .toggleStyle(.checkbox)
             .controlSize(.small)
+            .frame(width: 100)
             .help("Checked: system-wide. Unchecked: in-app.")
             ShortcutRecorder(shortcut: shortcut, label: action.title)
                 .frame(width: 132, height: 22)
             Button("Reset") { shortcut.wrappedValue = action.defaultShortcut }
                 .controlSize(.small)
+                .frame(width: 48, alignment: .trailing)
         }
     }
 
-    private var trayBox: some View {
-        VStack(alignment: .leading, spacing: 8) {
+    private var traySettings: some View {
+        VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 6) {
                 Image(systemName: "opticaldisc")
                     .font(.system(size: 12))
                     .foregroundColor(Theme.secondaryText)
                 Text("System Tray")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(SettingsTypography.cardTitle)
                 Spacer()
                 Toggle("Show icon", isOn: $trayEnabled)
                     .toggleStyle(.switch)
@@ -530,7 +591,7 @@ struct SettingsView: View {
             }
 
             Text("Shows a disc icon in the menu bar. Popups appear below the icon.")
-                .font(.system(size: 10.5))
+                .font(SettingsTypography.help)
                 .foregroundColor(Theme.secondaryText)
 
             if trayEnabled {
@@ -547,7 +608,7 @@ struct SettingsView: View {
                     .controlSize(.small)
                 HStack(spacing: 8) {
                     Text("Popup duration")
-                        .font(.system(size: 11))
+                        .font(SettingsTypography.body)
                         .foregroundColor(Theme.secondaryText)
                     Spacer()
                     Stepper("\(trayPopupDurationMs) ms",
@@ -557,13 +618,11 @@ struct SettingsView: View {
                         .controlSize(.small)
                 }
                 Text("Default: 1500 ms. Popups are suppressed while the Library window is focused.")
-                    .font(.system(size: 10.5))
+                    .font(SettingsTypography.help)
                     .foregroundColor(Theme.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(10)
-        .background(boxBackground)
         .onChange(of: trayEnabled) { _, _ in TrayController.shared.refresh() }
         .onChange(of: trayTrackChange) { _, _ in TrayController.shared.refresh() }
         .onChange(of: trayStarChange) { _, _ in TrayController.shared.refresh() }
@@ -573,14 +632,14 @@ struct SettingsView: View {
         }
     }
 
-    private var mpdBox: some View {
-        VStack(alignment: .leading, spacing: 8) {
+    private var mpdSettings: some View {
+        VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 6) {
                 Image(systemName: "dot.radiowaves.left.and.right")
                     .font(.system(size: 12))
                     .foregroundColor(Theme.secondaryText)
                 Text("MPD Server")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(SettingsTypography.cardTitle)
                 Spacer()
                 Toggle("Enable", isOn: $mpdEnabled)
                     .toggleStyle(.switch)
@@ -588,7 +647,7 @@ struct SettingsView: View {
             }
 
             Text("Lets MPD clients browse and control the library over TCP.")
-                .font(.system(size: 10.5))
+                .font(SettingsTypography.help)
                 .foregroundColor(Theme.secondaryText)
 
             if mpdEnabled {
@@ -597,49 +656,47 @@ struct SettingsView: View {
 
                 HStack(spacing: 8) {
                     Text("Addresses")
-                        .font(.system(size: 11))
+                        .font(SettingsTypography.body)
                         .foregroundColor(Theme.secondaryText)
-                        .frame(width: 64, alignment: .trailing)
+                        .frame(width: 76, alignment: .leading)
                     TextField("127.0.0.1", text: $mpdAddresses)
                         .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 11))
+                        .font(SettingsTypography.body)
                         .disabled(mpdAllInterfaces)
                     Text("Port")
-                        .font(.system(size: 11))
+                        .font(SettingsTypography.body)
                         .foregroundColor(Theme.secondaryText)
                     TextField("6600", value: $mpdPort, format: .number)
                         .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 11))
-                        .frame(width: 64)
+                        .font(SettingsTypography.body.monospacedDigit())
+                        .frame(width: 72)
                 }
 
                 HStack(spacing: 8) {
                     Text("Password")
-                        .font(.system(size: 11))
+                        .font(SettingsTypography.body)
                         .foregroundColor(Theme.secondaryText)
-                        .frame(width: 64, alignment: .trailing)
+                        .frame(width: 76, alignment: .leading)
                     SecureField("optional", text: $mpdPassword)
                         .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 11))
-                        .frame(width: 180)
+                        .font(SettingsTypography.body)
+                        .frame(maxWidth: 240)
                     Spacer()
                     Button("Restart") { mpd.applyPreferences() }
                         .controlSize(.small)
                 }
 
                 Text(mpd.status)
-                    .font(.system(size: 10.5))
+                    .font(SettingsTypography.help)
                     .foregroundColor(Theme.secondaryText)
                     .lineLimit(2)
                     .textSelection(.enabled)
             } else {
                 Text("Disabled")
-                    .font(.system(size: 10.5))
+                    .font(SettingsTypography.help)
                     .foregroundColor(Theme.secondaryText)
             }
         }
-        .padding(10)
-        .background(boxBackground)
     }
 
     private var artworkQualityPercent: Int {
@@ -679,14 +736,14 @@ struct SettingsView: View {
 
     // MARK: Internal library
 
-    private var internalLibraryBox: some View {
-        VStack(alignment: .leading, spacing: 8) {
+    private var internalLibrarySection: some View {
+        VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 6) {
                 Image(systemName: "internaldrive")
                     .font(.system(size: 12))
                     .foregroundColor(Theme.secondaryText)
                 Text("Internal Library")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(SettingsTypography.cardTitle)
                 Spacer()
             }
 
@@ -696,7 +753,7 @@ struct SettingsView: View {
                         .font(.system(size: 10))
                         .foregroundColor(.orange)
                     Text(warning)
-                        .font(.system(size: 10.5))
+                        .font(SettingsTypography.help)
                         .foregroundColor(Theme.secondaryText)
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 0)
@@ -722,7 +779,7 @@ struct SettingsView: View {
                         .font(.system(size: 11))
                         .foregroundColor(.secondary)
                     Text(internalLibrary.path)
-                        .font(.system(size: 11))
+                        .font(SettingsTypography.caption)
                         .foregroundColor(Theme.primaryText)
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -745,11 +802,11 @@ struct SettingsView: View {
                 }
 
                 Text("The database lives in this folder. Music belongs in its Music subfolder.")
-                    .font(.system(size: 10.5))
+                    .font(SettingsTypography.help)
                     .foregroundColor(Theme.secondaryText)
             } else {
                 Text("Not set up yet. Create one folder for your Tracks database and music.")
-                    .font(.system(size: 11))
+                    .font(SettingsTypography.body)
                     .foregroundColor(Theme.secondaryText)
 
                 HStack(spacing: 10) {
@@ -764,9 +821,7 @@ struct SettingsView: View {
                 }
             }
         }
-        .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(boxBackground)
     }
 
     private func openMusicFolder(_ internalLibrary: MusicLibrary) {
@@ -799,43 +854,43 @@ struct SettingsView: View {
 
     // MARK: External libraries
 
-    private var externalLibrariesBox: some View {
-        VStack(alignment: .leading, spacing: 8) {
+    private var externalLibrariesSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 6) {
                 Image(systemName: "externaldrive")
                     .font(.system(size: 12))
                     .foregroundColor(Theme.secondaryText)
                 Text("External Libraries")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(SettingsTypography.cardTitle)
                 Spacer()
                 Text("Read-Only")
-                    .font(.system(size: 10.5))
+                    .font(SettingsTypography.caption)
                     .foregroundColor(.secondary)
             }
 
             Text("Folders managed by iTunes or another music app. Tracks indexes them without modifying the files.")
-                .font(.system(size: 10.5))
+                .font(SettingsTypography.help)
                 .foregroundColor(Theme.secondaryText)
 
             if library.externalLibraries.isEmpty {
                 Text("No external libraries.")
-                    .font(.system(size: 11))
+                    .font(SettingsTypography.body)
                     .foregroundColor(Theme.secondaryText)
                     .padding(.vertical, 4)
             } else {
-                VStack(spacing: 6) {
-                    ForEach(library.externalLibraries) { externalLibrary in
+                VStack(spacing: 0) {
+                    ForEach(Array(library.externalLibraries.enumerated()), id: \.offset) { index, externalLibrary in
                         HStack(spacing: 8) {
                             Image(systemName: "folder")
                                 .font(.system(size: 11))
                                 .foregroundColor(.secondary)
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(externalLibrary.name)
-                                    .font(.system(size: 11.5))
+                                    .font(SettingsTypography.body)
                                     .foregroundColor(Theme.primaryText)
                                     .lineLimit(1)
                                 Text(externalLibrary.path)
-                                    .font(.system(size: 10))
+                                    .font(SettingsTypography.caption)
                                     .foregroundColor(Theme.secondaryText)
                                     .lineLimit(1)
                                     .truncationMode(.middle)
@@ -855,11 +910,10 @@ struct SettingsView: View {
                             .buttonStyle(.borderless)
                             .help("Remove library")
                         }
-                        .padding(7)
-                        .background(
-                            RoundedRectangle(cornerRadius: 5)
-                                .fill(Theme.contentBackground)
-                        )
+                        .padding(.vertical, 9)
+                        if index < library.externalLibraries.count - 1 {
+                            Divider()
+                        }
                     }
                 }
             }
@@ -871,18 +925,7 @@ struct SettingsView: View {
                 Spacer()
             }
         }
-        .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(boxBackground)
-    }
-
-    private var boxBackground: some View {
-        RoundedRectangle(cornerRadius: 8)
-            .fill(Theme.controlBackground)
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .strokeBorder(Theme.controlBorder, lineWidth: 1)
-            )
     }
 
     private func addExternalLibraries() {
@@ -899,6 +942,15 @@ struct SettingsView: View {
             alert = .error(errors.joined(separator: "\n"))
         }
     }
+}
+
+private enum SettingsTypography {
+    static let pageTitle: Font = .system(size: 18, weight: .semibold)
+    static let sectionTitle: Font = .system(size: 14, weight: .semibold)
+    static let cardTitle: Font = .system(size: 13, weight: .semibold)
+    static let body: Font = .system(size: 13)
+    static let help: Font = .system(size: 12)
+    static let caption: Font = .system(size: 11)
 }
 
 private enum SettingsSection: String, CaseIterable, Identifiable {
@@ -1250,7 +1302,8 @@ enum KeyboardShortcuts {
 
         if !isEditingText {
             for action in ShortcutAction.allCases
-                where KeyboardShortcutStore.scope(for: action) == .inApp {
+                where KeyboardShortcutStore.scope(for: action) == .inApp
+                    && KeyboardShortcutStore.isEnabled(action) {
                 if event.isARepeat, !action.allowsRepeat { continue }
                 guard let shortcut = KeyboardShortcutStore.load(action),
                       shortcut.matches(event) else { continue }

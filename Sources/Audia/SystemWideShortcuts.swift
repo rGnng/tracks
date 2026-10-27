@@ -29,6 +29,7 @@ final class SystemWideShortcutCenter {
 
         for (offset, action) in ShortcutAction.allCases.enumerated() {
             guard KeyboardShortcutStore.scope(for: action) == .systemWide,
+                  KeyboardShortcutStore.isEnabled(action),
                   let shortcut = KeyboardShortcutStore.load(action) else { continue }
             let id = UInt32(offset + 1)
             if register(shortcut, id: id) {

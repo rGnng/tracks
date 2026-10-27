@@ -899,7 +899,7 @@ private struct NowPlayingMenu: View {
 
             Divider()
 
-            Button("Song Info…") {
+            Button("Get Info…") {
                 InfoCenter.shared.target = .song(song.id)
                 openWindow(id: "get-info")
             }

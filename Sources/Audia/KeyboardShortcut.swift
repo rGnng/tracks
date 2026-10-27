@@ -150,8 +150,8 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
         case .mute: return "Mute"
         case .volumeDown: return "Volume down"
         case .volumeUp: return "Volume up"
-        case .showHide: return "Show or hide Tracks"
-        case .starCurrent: return "Add or remove current song from Stared playlist"
+        case .showHide: return "Show or hide Library Window"
+        case .starCurrent: return "Star/Unstar current playing"
         }
     }
 
@@ -264,6 +264,16 @@ enum KeyboardShortcutStore {
     static func setScope(_ scope: ShortcutScope, for action: ShortcutAction) {
         UserDefaults.standard.set(scope.rawValue,
                                   forKey: "shortcut.\(action.rawValue).scope.v1")
+    }
+
+    static func isEnabled(_ action: ShortcutAction) -> Bool {
+        let key = "shortcut.\(action.rawValue).enabled.v1"
+        return UserDefaults.standard.object(forKey: key) as? Bool ?? true
+    }
+
+    static func setEnabled(_ enabled: Bool, for action: ShortcutAction) {
+        UserDefaults.standard.set(enabled,
+                                  forKey: "shortcut.\(action.rawValue).enabled.v1")
     }
 
     static func loadMute() -> KeyboardShortcut? {
