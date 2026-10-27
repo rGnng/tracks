@@ -718,7 +718,7 @@ struct NowPlayingView: View {
                         HStack(spacing: 2) {
                             CenterControlButton(icon: isStarred(song) ? "star.fill" : "star",
                                                 active: isStarred(song),
-                                                help: isStarred(song) ? "Unstar" : "Star") {
+                                                help: "Add or remove current song from Stared playlist") {
                                 library.toggleStar(song.id)
                             }
                             CenterControlButton(icon: player.repeatMode == .one ? "repeat.1" : "repeat",

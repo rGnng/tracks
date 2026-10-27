@@ -13,7 +13,7 @@ the project, then verify the current code and running state.
 - SwiftUI plus targeted AppKit. No WebView. Light and dark appearance are supported.
 - Real playback through `AVPlayer`, not a mock transport. The queue, history, play
   counts, stars, playlists, and library are backed by SQLite.
-- Single main window with two modes: Library and MiniPlayer.
+- Separate Library and MiniPlayer windows, with only one visible at a time.
 - No cloud service, no account system, and no multiple-window document model.
 
 ## 2. Environment and build
@@ -128,7 +128,7 @@ Sources/Audia/
   SystemNowPlaying.swift     Now Playing metadata/artwork and media-key commands
   AudioDevices.swift         Core Audio output device enumeration and selection
   SystemVolume.swift         macOS output-volume get/set for system-volume outputs
-  WindowMode.swift           Library/MiniPlayer window modes and metrics
+  WindowMode.swift           Separate Library/MiniPlayer windows and metrics
   MiniPlayerView.swift       Compact player UI and Liquid Glass mini traffic lights
   Components.swift           WindowConfigurator, titlebar layout, native drag, shared controls
   ContentView.swift          Root layout, sidebar/player/content composition
@@ -139,6 +139,9 @@ Sources/Audia/
   BrowserViews.swift         Artists/Genres master-detail browsers
   ContextMenus.swift         Shared album/song context menus
   KeyboardShortcut.swift     Standard AppKit shortcut recorder, matching, persistence
+  GlobalShortcuts.swift      Carbon global hot keys for show/hide and current-song star
+  TrayController.swift       Menu-bar opticaldisc.fill icon, transient track/star popup
+  LibraryFocusSink.swift     Initial first responder for the Library window
   SettingsFocusSink.swift    Invisible initial first responder for Settings
   GetInfo.swift              Details/Artwork/File inspector and tag editing
   StatusBarView.swift        Bottom status bar and status context
@@ -278,13 +281,25 @@ Important schema decisions:
   `player.volumeBeforeSystemControl` for restoration when returning to plain
   System Default.
 - History is most-recent-first, persisted by song ID.
-- Main window modes:
-  - Library: normal main window, minimum about `1040 x 640`.
-  - MiniPlayer: resizable width `320...560`; the cover is a square at the top and
-    grows with the window; middle `42`; bottom `30`. The queue panel has its own
-    adjustable height (`140...500`, screen permitting). Height is
-    `width + 72` (`+ queueHeight` while the queue is open). Window shortcuts are
-    Command-1 / Command-2.
+- Window modes:
+  - Library: SwiftUI main window, minimum about `1040 x 640`.
+  - MiniPlayer: a separate AppKit `NSWindow` hosting `MiniPlayerView`, resizable
+    width `320...560`; the cover is a square at the top and grows with the
+    window; middle `42`; bottom `30`. The queue panel has its own adjustable
+    height (`140...500`, screen permitting). Height is `width + 72`
+    (`+ queueHeight` while the queue is open). Window shortcuts are Command-1 /
+    Command-2. Both call `WindowModeCenter.setMode()`/`showWindow()`, and the
+    windows are mutually exclusive: opening one orders the other out. Closing
+    MiniPlayer (red light or Command-W via `performClose`) restores Library.
+    The main window is retained strongly; `showWindow()` deminiaturizes, orders
+    it front, activates the app, and gives it focus. Global F17 toggles the
+    currently active mode. MiniPlayer has no separate “return to Library”
+    button; the close control is the return path.
+  - `LibraryFocusSink` is the main window's initial first responder and is
+    re-focused when `.libraryWindowDidShow` is posted by `showLibraryWindow`.
+    This prevents SwiftUI from auto-focusing the search field after an explicit
+    show without clearing the responder on a timer. Cmd-F still focuses search
+    through `.focusSearch`.
   - Window movement is AppKit-native. There is no manual mouse/frame tracking,
     collision solver, or magnetic snapping layer. The Library toolbar has one
     full-width `WindowDragSurface` at the bottom of its ZStack; controls sit
@@ -295,10 +310,11 @@ Important schema decisions:
     so AppKit's full-size title bar cannot steal control drags. This is the
     SwiftUI analogue of Chromium/Helium's frame-view `mouseDown` fallthrough,
     not a per-gap overlay.
-  - MiniPlayer uses custom Liquid Glass-style traffic lights inside the cover;
-    they stay hidden until the pointer enters the window, matching the old
-    compact-player behavior without adding a title-bar strip. The lights use
-    symmetric 10pt top/left margins.
+  - MiniPlayer uses two custom Liquid Glass-style traffic lights (close and
+    minimize) inside the cover; they stay hidden until the pointer enters the
+    window, matching the old compact-player behavior without adding a title-bar
+    strip. The close light restores Library. The lights use symmetric 10pt
+    top/left margins.
 - Sidebar selection is persisted under `sidebarSelection` as a stable string:
   `library:<section>`, `starred`, or `playlist:<uuid>`. A missing, malformed,
   or deleted-playlist value falls back to **Recently Added**. The first launch
@@ -355,24 +371,33 @@ Important schema decisions:
 - Play Later appends to the bottom of the queue and sits below Play Next.
 - Get Info has Details, Artwork, and File tabs, with tag/artwork writeback for the
   Internal Library.
-- The default `*` shortcut toggles the playing track or selected track rows in
-  the virtual Stared playlist. If every target is already starred, it unstars
-  all of them; otherwise it stars all of them. Album/artist/genre selections are
-  not expanded into their tracks.
-- Volume shortcuts default to mute `m`, volume down `-`, and volume up `=`.
-  They adjust the player volume, or the selected macOS output volume while
-  system-volume control is active. They use the 16-step 6.25% volume grid:
-  values that are not already on the grid snap to the nearest step in the
-  pressed direction, and volume keys may repeat while held.
+- Every shortcut row has its own **In-App** or **Global** scope. Defaults:
+  mute `m`, volume down `-`, volume up `=` are In-App; show/hide Tracks `F17`
+  and add/remove the current song from Stared playlist `F18` are Global.
+  In-App shortcuts are handled by the local key monitor; Global shortcuts use
+  Carbon hot keys (`GlobalShortcuts.swift`) and work without Accessibility
+  permission while another app is focused. Moving a shortcut between scopes
+  saves the scope and re-registers the Carbon hot keys. The star action always
+  targets the current playing song, not row selection.
 - Settings > Shortcuts uses standard AppKit shortcut recorders
   (`KeyboardShortcut.swift`): click a field, press a key combination, Escape
   cancels, and bare Delete clears the shortcut. Modifiers and shifted symbols
   are supported. Each shortcut is stored as JSON under its own UserDefaults key
-  (`shortcut.starCurrent.v2`, `shortcut.mute.v1`, `shortcut.volumeDown.v1`,
-  `shortcut.volumeUp.v1`). Reset restores that row's default. The global handler
-  skips text editing and returns events untouched while a recorder is active.
-  Command-[ posts `.goBackRequested`; matching also accepts keyCode 33 so the
-  shortcut still works with non-US/IME keyboard input.
+  (`shortcut.showHideWindow.v1`, `shortcut.starCurrent.global.v1`,
+  `shortcut.mute.v1`, `shortcut.volumeDown.v1`, `shortcut.volumeUp.v1`), with a
+  matching `shortcut.<action>.scope.v1` value. Reset restores that row's
+  shortcut default, not its scope. The local handler skips text editing and returns
+  events untouched while a recorder is active. Command-[ posts
+  `.goBackRequested`; matching also accepts keyCode 33 so the shortcut still
+  works with non-US/IME keyboard input.
+- System tray (menu bar) is off by default. `TrayController` uses the SF Symbol
+  `opticaldisc.fill` (fallback `opticaldisc` / `record.circle`). Optional track-change and
+  current-song star popups default to track-change off, star on, and
+  `onlyWhenLibraryNotFocused` on. The compact popup has artwork, title + star,
+  artist/album, and an upward triangle. Its duration is configurable through
+  `tray.popupDurationMs` and defaults to 1500 ms. “Library not focused” means
+  the main Library window is not the key window; MiniPlayer therefore still
+  allows a popup.
 
 ## 7. Artwork cache and Settings
 
@@ -637,15 +662,15 @@ window style.
 
 ### MiniPlayer traffic lights
 
-The MiniPlayer deliberately keeps `_titlebarHeight` at 0 so there is no title-bar
-strip and the cover starts at the top edge. It therefore draws its own three 14pt
-controls at `leading 10` and `top 10`, using Display P3 colors, specular
+The MiniPlayer is its own `NSWindow` hosted by `WindowModeCenter`; it is not a
+mode of the Library window. Its `_titlebarHeight` is 0 so there is no title-bar
+strip and the cover starts at the top edge. It draws two 14pt controls (close
+and minimize) at `leading 10` and `top 10`, using Display P3 colors, specular
 top/bottom highlights, a glass rim, and hover glyphs. They fade in with the
 existing hover chrome and use gray fills when the window is not key.
 
-The MiniPlayer is resizable from `320` to `560` points wide. A small
-`MiniResizeDelegate` temporarily replaces the window delegate in MiniPlayer mode
-(forwarding all other delegate calls to the original), and `windowWillResize`
+The MiniPlayer is resizable from `320` to `560` points wide. Its
+`MiniResizeDelegate` is installed on the mini window, and `windowWillResize`
 forces `height = width + 42 + 30 + (queue ? queueHeight : 0)`. SwiftUI's
 GeometryReader feeds the same width to the square cover, so the cover scales from
 the top while the middle and bottom bars stay fixed. The width is kept in
@@ -661,10 +686,9 @@ while the queue is open so the bottom edge always belongs to this handle; width
 can be changed again after collapsing the queue.
 
 The square cover has a transparent native drag surface that calls
-`NSWindow.performDrag(with:)`. The traffic lights and expand button sit above it
-in the ZStack, so they still receive clicks; the middle controls and queue
-handle are outside the cover drag area. No custom mouse or window-frame tracking
-is involved.
+`NSWindow.performDrag(with:)`. The traffic lights sit above it in the ZStack, so
+they still receive clicks; the middle controls and queue handle are outside the
+cover drag area. No custom mouse or window-frame tracking is involved.
 
 Do not replace these with `standardWindowButton` views. AppKit owns those views
 and reattaches them to `NSTitlebarView` on layout; they are clipped at title-bar
@@ -673,15 +697,16 @@ window height. Reparenting them into the SwiftUI content view also gets undone
 by AppKit's title-bar layout pass.
 
 - `Components.swift` swizzles private AppKit selectors:
-  - `_titlebarHeight` returns 45 for the main Library window.
+  - `_titlebarHeight` returns 45 for the main Library window and 0 for the
+    separate MiniPlayer window.
   - `_shouldCenterTrafficLights` returns true outside full screen **only for the
     main window**.
-- `refreshBrowserTitlebarLayout(for:)` forces a title-bar layout pass by nudging
+- `refreshLibraryTitlebarLayout(for:)` forces a title-bar layout pass by nudging
   the window width by 1pt and restoring the exact frame immediately.
 - It is called:
   - During initial window configuration.
   - From an asynchronous fallback after the first layout turn.
-  - From `WindowModeCenter` when switching Library/MiniPlayer.
+  - When creating the MiniPlayer window.
 - It is deliberately **not** called from `NSWindow.didBecomeKeyNotification`.
   `WindowDragSurface` calls `makeKey()` before `performDrag(with:)` so an
   inactive window can be dragged immediately; refreshing the title bar there
@@ -697,7 +722,7 @@ by AppKit's title-bar layout pass.
     45pt bar (about 14.5pt from the top, `x=20`).
   - Standard-scene windows keep their native 32pt title bar, with the button
     group at `x=8`, `y=8`.
-  - MiniPlayer uses a title-bar-free custom cover; its 14pt lights sit at
+  - MiniPlayer is a separate title-bar-free window; its two 14pt lights sit at
     `x=10`, `y=10` with symmetric top/left margins.
   - Resizing does not change the centered offset.
 - Do not remove the width nudge: a plain `needsLayout` pass was tested and left

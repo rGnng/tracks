@@ -19,8 +19,8 @@ enum MiniPlayerMetrics {
     static var baseHeight: CGFloat { height(forWidth: width) }
 }
 
-/// Switches the single main window between the full Library and the compact
-/// MiniPlayer. There is deliberately no second main window.
+/// Owns the Library and MiniPlayer windows. Only one is visible at a time.
+/// MiniPlayer is a separate borderless window with its own hosting view.
 @MainActor
 final class WindowModeCenter: ObservableObject {
     enum Mode {
@@ -34,15 +34,24 @@ final class WindowModeCenter: ObservableObject {
     @Published private(set) var miniQueueExpanded = false
     @Published private(set) var miniQueueHeight: CGFloat = MiniPlayerMetrics.defaultQueueHeight
 
-    private weak var window: NSWindow?
+    // Keep both windows alive after their last visible state so global
+    // show/hide and Command-1/2 can order them back in.
+    private var window: NSWindow?
+    private var miniWindow: NSWindow?
 
-    /// The single main window. Exposed so the private title-bar height hook only
-    /// applies to it and not to Settings/Get Info windows.
+    /// The single Library window. Exposed so the private title-bar height hook
+    /// only applies to it and not to Settings/Get Info windows.
     var mainWindow: NSWindow? { window }
+    var miniPlayerWindow: NSWindow? { miniWindow }
+
+    var isLibraryWindowVisible: Bool {
+        guard mode == .library, let window else { return false }
+        return window.isVisible && !window.isMiniaturized
+    }
+
     private var libraryFrame: NSRect?
     private var miniWidth: CGFloat = MiniPlayerMetrics.width
     private let miniResizeDelegate = MiniResizeDelegate()
-    private var originalWindowDelegate: NSWindowDelegate?
     private let libraryMinSize = NSSize(width: 1040, height: 640)
     private let miniScreenPadding: CGFloat = 12
     private static let libraryFrameKey = "WindowMode.libraryFrame"
@@ -66,66 +75,205 @@ final class WindowModeCenter: ObservableObject {
         }
     }
 
+    private func libraryWindowBecameKey() {
+        guard mode != .library else { return }
+        mode = .library
+        miniQueueExpanded = false
+        miniWindow?.orderOut(nil)
+        NotificationCenter.default.post(name: .libraryWindowDidShow, object: window)
+    }
+
+    private func miniWindowBecameKey() {
+        guard mode != .miniPlayer else { return }
+        if let window, window.isVisible, !window.isMiniaturized,
+           !window.styleMask.contains(.fullScreen) {
+            libraryFrame = window.frame
+            UserDefaults.standard.set(NSStringFromRect(window.frame),
+                                      forKey: Self.libraryFrameKey)
+        }
+        mode = .miniPlayer
+        miniQueueExpanded = false
+        window?.orderOut(nil)
+    }
+
     func register(_ window: NSWindow) {
         guard self.window !== window else { return }
         self.window = window
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.didBecomeKeyNotification,
+            object: window,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.libraryWindowBecameKey() }
+        }
+        window.styleMask.insert(.resizable)
+        window.minSize = libraryMinSize
+        window.maxSize = NSSize(width: 10000, height: 10000)
+        for type in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
+            window.standardWindowButton(type)?.isHidden = false
+        }
+        if let libraryFrame, !window.styleMask.contains(.fullScreen) {
+            let constrained = window.constrainFrameRect(libraryFrame, to: window.screen)
+            window.setFrame(constrained, display: false)
+        }
+    }
+
+    func showWindow() {
+        switch mode {
+        case .library:
+            showLibraryWindow()
+        case .miniPlayer:
+            showMiniPlayerWindow()
+        }
+    }
+
+    func hideWindow() {
         if mode == .miniPlayer {
-            applyMini(animated: false)
+            miniWindow?.orderOut(nil)
         } else {
-            applyLibrary(animated: false)
+            window?.orderOut(nil)
+        }
+    }
+
+    func toggleWindowVisibility() {
+        let current: NSWindow? = mode == .miniPlayer ? miniWindow : window
+        guard let current else {
+            showWindow()
+            return
+        }
+        if current.isVisible && !current.isMiniaturized {
+            hideWindow()
+        } else {
+            showWindow()
         }
     }
 
     func setMode(_ newMode: Mode) {
         guard newMode != mode else { return }
-        mode = newMode
-        refreshTitlebarLayout()
-        switch newMode {
-        case .library:
-            applyLibrary(animated: true)
-        case .miniPlayer:
-            applyMini(animated: true)
+
+        if newMode == .miniPlayer {
+            if let window, !window.styleMask.contains(.fullScreen) {
+                libraryFrame = window.frame
+                UserDefaults.standard.set(NSStringFromRect(window.frame), forKey: Self.libraryFrameKey)
+            }
+            mode = .miniPlayer
+            miniQueueExpanded = false
+            showMiniPlayerWindow()
+        } else {
+            mode = .library
+            miniQueueExpanded = false
+            miniWindow?.orderOut(nil)
+            showLibraryWindow()
         }
     }
 
-    private func refreshTitlebarLayout() {
-        guard let window else { return }
-        refreshBrowserTitlebarLayout(for: window)
+    func closeMiniPlayer() {
+        setMode(.library)
     }
 
-    private func applyMini(animated: Bool) {
+    func minimizeMiniPlayer() {
+        miniWindow?.miniaturize(nil)
+    }
+
+    private func showLibraryWindow() {
+        miniWindow?.orderOut(nil)
         guard let window else { return }
+        if window.isMiniaturized {
+            window.deminiaturize(nil)
+        }
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        NotificationCenter.default.post(name: .libraryWindowDidShow, object: window)
+    }
+
+    private func showMiniPlayerWindow() {
+        let mini = ensureMiniWindow()
+        window?.orderOut(nil)
+        if mini.isMiniaturized {
+            mini.deminiaturize(nil)
+        }
+        mini.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func ensureMiniWindow() -> NSWindow {
+        if let miniWindow { return miniWindow }
+
+        var frame = initialMiniFrame()
+        let mini = MiniPlayerWindow(contentRect: frame,
+                                    styleMask: [.titled, .closable, .miniaturizable,
+                                                .resizable, .fullSizeContentView],
+                                    backing: .buffered,
+                                    defer: false)
+        mini.isReleasedWhenClosed = false
+        mini.titleVisibility = .hidden
+        mini.titlebarAppearsTransparent = true
+        mini.titlebarSeparatorStyle = .none
+        mini.isMovable = false
+        mini.isMovableByWindowBackground = false
+        mini.isOpaque = true
+        mini.backgroundColor = .windowBackgroundColor
+        mini.hasShadow = true
+        mini.title = "Tracks MiniPlayer"
+        mini.tabbingMode = .disallowed
+        mini.acceptsMouseMovedEvents = true
+        mini.collectionBehavior = [.fullScreenAuxiliary]
+        mini.animationBehavior = .none
+        mini.delegate = miniResizeDelegate
+        miniResizeDelegate.owner = self
         for type in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
-            window.standardWindowButton(type)?.isHidden = true
-        }
-        miniQueueExpanded = false
-        if !window.styleMask.contains(.fullScreen) {
-            libraryFrame = window.frame
-            UserDefaults.standard.set(NSStringFromRect(window.frame), forKey: Self.libraryFrameKey)
+            mini.standardWindowButton(type)?.isHidden = true
         }
 
-        let maxWidth = maxMiniWidth(for: window)
+        let host = NSHostingView(rootView: MiniPlayerView()
+            .environmentObject(PlayerState.shared))
+        host.frame = NSRect(origin: .zero, size: frame.size)
+        host.autoresizingMask = [.width, .height]
+        mini.contentView = host
+
+        let maxWidth = maxMiniWidth(for: mini)
         let width = min(max(miniWidth, MiniPlayerMetrics.minWidth), maxWidth)
         miniWidth = width.rounded()
-        let miniSize = NSSize(width: miniWidth,
-                             height: MiniPlayerMetrics.height(forWidth: miniWidth))
-
-        window.styleMask.insert(.resizable)
-        window.minSize = NSSize(width: MiniPlayerMetrics.minWidth,
-                                height: MiniPlayerMetrics.height(forWidth: MiniPlayerMetrics.minWidth))
-        window.maxSize = NSSize(width: maxWidth,
-                                height: window.screen?.visibleFrame.height ?? 10000)
-        installMiniResizeDelegate(window)
-
-        if !window.styleMask.contains(.fullScreen) {
-            let topLeft = NSPoint(x: window.frame.minX,
-                                  y: window.frame.maxY)
-            var frame = window.frame
-            frame.size = miniSize
-            frame.origin = NSPoint(x: topLeft.x, y: topLeft.y - miniSize.height)
-            frame = window.constrainFrameRect(frame, to: window.screen)
-            window.setFrame(frame, display: true, animate: animated)
+        frame.size = NSSize(width: miniWidth,
+                            height: MiniPlayerMetrics.height(forWidth: miniWidth))
+        frame = mini.constrainFrameRect(frame, to: mini.screen)
+        mini.setFrame(frame, display: false)
+        mini.minSize = NSSize(width: MiniPlayerMetrics.minWidth,
+                              height: MiniPlayerMetrics.height(forWidth: MiniPlayerMetrics.minWidth))
+        mini.maxSize = NSSize(width: maxWidth,
+                              height: mini.screen?.visibleFrame.height ?? 10000)
+        miniWindow = mini
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.didBecomeKeyNotification,
+            object: mini,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.miniWindowBecameKey() }
         }
+        refreshLibraryTitlebarLayout(for: mini)
+        return mini
+    }
+
+    private func initialMiniFrame() -> NSRect {
+        let base = libraryFrame ?? window?.frame ??
+            NSRect(x: 80, y: 120, width: MiniPlayerMetrics.width,
+                   height: MiniPlayerMetrics.baseHeight)
+        let screen = NSScreen.screens.first(where: { $0.frame.intersects(base) })
+            ?? window?.screen
+            ?? NSScreen.main
+        let visible = screen?.visibleFrame ?? .zero
+        let maxWidth = min(MiniPlayerMetrics.maxWidth,
+                           max(MiniPlayerMetrics.minWidth,
+                               visible.width - miniScreenPadding * 2))
+        let width = min(max(miniWidth, MiniPlayerMetrics.minWidth), maxWidth).rounded()
+        let height = MiniPlayerMetrics.height(forWidth: width)
+        var x = base.minX
+        if visible.width > 0 {
+            x = min(max(x, visible.minX + miniScreenPadding),
+                    visible.maxX - width - miniScreenPadding)
+        }
+        let y = max(visible.minY + miniScreenPadding, base.maxY - height)
+        return NSRect(x: x, y: y, width: width, height: height)
     }
 
     func toggleMiniQueue() {
@@ -133,51 +281,53 @@ final class WindowModeCenter: ObservableObject {
     }
 
     func setMiniQueueExpanded(_ expanded: Bool) {
-        guard mode == .miniPlayer else { return }
+        guard mode == .miniPlayer, let miniWindow else { return }
         guard expanded != miniQueueExpanded else { return }
         miniQueueExpanded = expanded
-        guard let window, !window.styleMask.contains(.fullScreen) else { return }
+        guard !miniWindow.styleMask.contains(.fullScreen) else { return }
+
         // While the queue drawer is open the bottom edge belongs to the queue
-        // height handle, so native window edge resizing must be off. Width can
-        // still be changed after collapsing the queue.
+        // height handle, so native edge resizing must be off.
         if expanded {
-            window.styleMask.remove(.resizable)
+            miniWindow.styleMask.remove(.resizable)
         } else {
-            window.styleMask.insert(.resizable)
+            miniWindow.styleMask.insert(.resizable)
         }
-        let width = window.frame.width
-        let queueHeight = expanded ? clampedMiniQueueHeight(miniQueueHeight, for: window, width: width) : 0
+        let width = miniWindow.frame.width
+        let queueHeight = expanded ? clampedMiniQueueHeight(miniQueueHeight,
+                                                           for: miniWindow,
+                                                           width: width) : 0
         if expanded, queueHeight != miniQueueHeight {
             miniQueueHeight = queueHeight
             UserDefaults.standard.set(Double(queueHeight), forKey: Self.miniQueueHeightKey)
         }
         let targetHeight = MiniPlayerMetrics.height(forWidth: width, queueHeight: queueHeight)
-        let top = window.frame.maxY
-        var frame = window.frame
+        let top = miniWindow.frame.maxY
+        var frame = miniWindow.frame
         frame.size.width = width
         frame.size.height = targetHeight
         frame.origin.y = top - targetHeight
-        frame = window.constrainFrameRect(frame, to: window.screen)
-        window.setFrame(frame, display: true, animate: true)
+        frame = miniWindow.constrainFrameRect(frame, to: miniWindow.screen)
+        miniWindow.setFrame(frame, display: true, animate: true)
     }
 
     /// Changes the height of the expanded queue panel. The window top stays put
     /// and the extra height grows downward into the queue.
     func setMiniQueueHeight(_ height: CGFloat) {
-        guard mode == .miniPlayer, miniQueueExpanded, let window else { return }
-        let width = window.frame.width
-        let queueHeight = clampedMiniQueueHeight(height, for: window, width: width)
+        guard mode == .miniPlayer, miniQueueExpanded, let miniWindow else { return }
+        let width = miniWindow.frame.width
+        let queueHeight = clampedMiniQueueHeight(height, for: miniWindow, width: width)
         guard queueHeight != miniQueueHeight else { return }
         miniQueueHeight = queueHeight
         UserDefaults.standard.set(Double(queueHeight), forKey: Self.miniQueueHeightKey)
 
         let targetHeight = MiniPlayerMetrics.height(forWidth: width, queueHeight: queueHeight)
-        let top = window.frame.maxY
-        var frame = window.frame
+        let top = miniWindow.frame.maxY
+        var frame = miniWindow.frame
         frame.size.height = targetHeight
         frame.origin.y = top - targetHeight
-        frame = window.constrainFrameRect(frame, to: window.screen)
-        window.setFrame(frame, display: true, animate: false)
+        frame = miniWindow.constrainFrameRect(frame, to: miniWindow.screen)
+        miniWindow.setFrame(frame, display: true, animate: false)
     }
 
     private func maxMiniWidth(for window: NSWindow) -> CGFloat {
@@ -202,12 +352,15 @@ final class WindowModeCenter: ObservableObject {
         return max(MiniPlayerMetrics.minQueueHeight, result)
     }
 
-    private func clampedMiniQueueHeight(_ height: CGFloat, for window: NSWindow, width: CGFloat) -> CGFloat {
+    private func clampedMiniQueueHeight(_ height: CGFloat,
+                                        for window: NSWindow,
+                                        width: CGFloat) -> CGFloat {
         min(max(height, MiniPlayerMetrics.minQueueHeight),
             maxMiniQueueHeight(for: window, width: width))
     }
 
-    fileprivate func constrainedMiniSize(proposedWidth: CGFloat, window: NSWindow) -> NSSize {
+    fileprivate func constrainedMiniSize(proposedWidth: CGFloat,
+                                         window: NSWindow) -> NSSize {
         let maxWidth = maxMiniWidth(for: window)
         let width = min(max(proposedWidth, MiniPlayerMetrics.minWidth), maxWidth).rounded()
         miniWidth = width
@@ -217,34 +370,9 @@ final class WindowModeCenter: ObservableObject {
                       height: MiniPlayerMetrics.height(forWidth: width, queueHeight: queueHeight).rounded())
     }
 
-    private func installMiniResizeDelegate(_ window: NSWindow) {
-        guard window.delegate !== miniResizeDelegate else { return }
-        originalWindowDelegate = window.delegate
-        miniResizeDelegate.owner = self
-        miniResizeDelegate.original = originalWindowDelegate
-        window.delegate = miniResizeDelegate
-    }
-
-    private func removeMiniResizeDelegate(_ window: NSWindow) {
-        if window.delegate === miniResizeDelegate {
-            window.delegate = originalWindowDelegate
-        }
-        originalWindowDelegate = nil
-    }
-
-    private func applyLibrary(animated: Bool) {
-        guard let window else { return }
-        removeMiniResizeDelegate(window)
-        for type in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
-            window.standardWindowButton(type)?.isHidden = false
-        }
-        miniQueueExpanded = false
-        window.styleMask.insert(.resizable)
-        window.minSize = libraryMinSize
-        window.maxSize = NSSize(width: 10000, height: 10000)
-        guard let target = libraryFrame, !window.styleMask.contains(.fullScreen) else { return }
-        let constrained = window.constrainFrameRect(target, to: window.screen)
-        window.setFrame(constrained, display: true, animate: animated)
+    fileprivate func miniPlayerShouldClose() -> Bool {
+        setMode(.library)
+        return false
     }
 
     /// Called on normal app termination. Quitting while the MiniPlayer is
@@ -258,10 +386,17 @@ final class WindowModeCenter: ObservableObject {
     }
 }
 
+private final class MiniPlayerWindow: NSWindow {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { true }
+
+    override func performClose(_ sender: Any?) {
+        WindowModeCenter.shared.closeMiniPlayer()
+    }
+}
 
 private final class MiniResizeDelegate: NSObject, NSWindowDelegate {
     weak var owner: WindowModeCenter?
-    weak var original: NSWindowDelegate?
 
     func windowWillResize(_ sender: NSWindow, to frameSize: NSSize) -> NSSize {
         MainActor.assumeIsolated {
@@ -269,13 +404,9 @@ private final class MiniResizeDelegate: NSObject, NSWindowDelegate {
         }
     }
 
-    override func responds(to aSelector: Selector!) -> Bool {
-        if super.responds(to: aSelector) { return true }
-        return original?.responds(to: aSelector) ?? false
-    }
-
-    override func forwardingTarget(for aSelector: Selector!) -> Any? {
-        if let original, original.responds(to: aSelector) { return original }
-        return super.forwardingTarget(for: aSelector)
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        MainActor.assumeIsolated {
+            owner?.miniPlayerShouldClose() ?? true
+        }
     }
 }

@@ -33,6 +33,7 @@ struct AudiaApp: App {
                 Button("Find") {
                     let wasMini = WindowModeCenter.shared.mode == .miniPlayer
                     WindowModeCenter.shared.setMode(.library)
+                    WindowModeCenter.shared.showWindow()
                     DispatchQueue.main.asyncAfter(deadline: .now() + (wasMini ? 0.30 : 0.05)) {
                         NotificationCenter.default.post(name: .focusSearch, object: nil)
                     }
@@ -43,11 +44,13 @@ struct AudiaApp: App {
             CommandGroup(before: .windowSize) {
                 Button("Library") {
                     WindowModeCenter.shared.setMode(.library)
+                    WindowModeCenter.shared.showWindow()
                 }
                 .keyboardShortcut("1", modifiers: .command)
 
                 Button("MiniPlayer") {
                     WindowModeCenter.shared.setMode(.miniPlayer)
+                    WindowModeCenter.shared.showWindow()
                 }
                 .keyboardShortcut("2", modifiers: .command)
 
@@ -81,7 +84,7 @@ struct AudiaApp: App {
             SettingsView()
                 .accentColor(highlightColor)
         }
-        .defaultSize(width: 660, height: 640)
+        .defaultSize(width: 700, height: 720)
 
         Window("Get Info", id: "get-info") {
             GetInfoView()
@@ -146,10 +149,23 @@ struct SettingsView: View {
     @AppStorage("mpd.port") private var mpdPort = 6600
     @AppStorage("mpd.password") private var mpdPassword = ""
     @AppStorage("artworkCacheJPEGQuality") private var artworkCacheJPEGQuality = 0.8
+    @AppStorage(TrayController.DefaultsKey.enabled) private var trayEnabled = false
+    @AppStorage(TrayController.DefaultsKey.trackChange) private var trayTrackChange = false
+    @AppStorage(TrayController.DefaultsKey.starChange) private var trayStarChange = true
+    @AppStorage(TrayController.DefaultsKey.onlyWhenLibraryNotFocused)
+    private var trayOnlyWhenLibraryNotFocused = true
+    @AppStorage(TrayController.DefaultsKey.popupDurationMs)
+    private var trayPopupDurationMs = 1500
     @State private var starShortcut: KeyboardShortcut? = KeyboardShortcutStore.loadStar()
+    @State private var showHideShortcut: KeyboardShortcut? = KeyboardShortcutStore.loadShowHide()
     @State private var muteShortcut: KeyboardShortcut? = KeyboardShortcutStore.loadMute()
     @State private var volumeDownShortcut: KeyboardShortcut? = KeyboardShortcutStore.loadVolumeDown()
     @State private var volumeUpShortcut: KeyboardShortcut? = KeyboardShortcutStore.loadVolumeUp()
+    @State private var starScope = KeyboardShortcutStore.scope(for: .starCurrent)
+    @State private var showHideScope = KeyboardShortcutStore.scope(for: .showHide)
+    @State private var muteScope = KeyboardShortcutStore.scope(for: .mute)
+    @State private var volumeDownScope = KeyboardShortcutStore.scope(for: .volumeDown)
+    @State private var volumeUpScope = KeyboardShortcutStore.scope(for: .volumeUp)
     @ObservedObject private var library = Library.shared
     @ObservedObject private var artworkCache = ArtworkCache.shared
     @ObservedObject private var mpd = MPDServer.shared
@@ -162,176 +178,42 @@ struct SettingsView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                Text("Appearance")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(.secondary)
+            VStack(alignment: .leading, spacing: 22) {
+                SettingsGroupHeader(title: "General",
+                                    subtitle: "Appearance and album browsing")
+                generalBox
 
-                Picker("Album display as", selection: $albumViewMode) {
-                    Text("Grid").tag("grid")
-                    Text("List").tag("list")
-                }
-                .pickerStyle(.menu)
-                .frame(width: 260, alignment: .leading)
+                SettingsGroupHeader(title: "Library",
+                                    subtitle: "Music folders, scanning, and artwork")
+                libraryBox
 
-                HStack(spacing: 12) {
-                    Picker("Albums sorted by", selection: $albumSort) {
-                        ForEach(GridSort.allCases, id: \.self) { sort in
-                            Text(sort == .album ? "Album Name" : sort.rawValue)
-                                .tag(sort.rawValue)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                    .fixedSize()
-
-                    Picker("Sort", selection: $albumSortDirection) {
-                        ForEach(GridSortDirection.allCases) { direction in
-                            Text(direction.title).tag(direction.rawValue)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                    .fixedSize()
-                }
-                .frame(maxWidth: 420, alignment: .leading)
-
-                HStack(spacing: 10) {
-                    Text("Highlights")
-
-                    HStack(spacing: 2) {
-                        ForEach(HighlightColor.allCases) { choice in
-                            let selected = highlightColor == choice.rawValue
-                            Button {
-                                highlightColor = choice.rawValue
-                            } label: {
-                                ZStack {
-                                    if selected {
-                                        Circle()
-                                            .strokeBorder(Color.primary, lineWidth: 2)
-                                            .frame(width: 24, height: 24)
-                                    }
-                                    Circle()
-                                        .fill(choice.swatch)
-                                        .frame(width: 18, height: 18)
-                                        .overlay(
-                                            Circle()
-                                                .strokeBorder(Color.black.opacity(0.14), lineWidth: 0.5)
-                                        )
-                                }
-                                .frame(width: 26, height: 26)
-                                .contentShape(Circle())
-                            }
-                            .buttonStyle(.plain)
-                            .help(choice.title)
-                            .accessibilityLabel("\(choice.title) highlight")
-                        }
-                    }
-                }
-                .frame(maxWidth: 360, alignment: .leading)
-
-                Divider()
-
+                SettingsGroupHeader(title: "Shortcuts",
+                                    subtitle: "Each action can be In-App or Global")
                 shortcutsBox
 
-                Divider()
-
-                HStack {
-                    Text("Libraries")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(.secondary)
-                    Spacer()
-                    Text("\(library.albums.count) albums · \(library.allSongs.count) songs")
-                        .font(.system(size: 10.5))
-                        .foregroundColor(.secondary)
-                }
-
-                if library.isScanning {
-                    VStack(alignment: .leading, spacing: 4) {
-                        ProgressView(value: library.scanProgress)
-                            .progressViewStyle(.linear)
-                        Text(library.scanTotal > 0
-                             ? "Scanning \(library.scanCompleted) of \(library.scanTotal) files…"
-                             : "Scanning…")
-                            .font(.system(size: 10.5))
-                            .foregroundColor(.secondary)
-                    }
-                    .frame(maxWidth: 420, alignment: .leading)
-                }
-
-                internalLibraryBox
-                externalLibrariesBox
-
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(spacing: 10) {
-                        Image(systemName: "photo.on.rectangle")
-                            .font(.system(size: 12))
-                            .foregroundColor(.secondary)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Artwork Cache")
-                                .font(.system(size: 11.5, weight: .semibold))
-                                .foregroundColor(Theme.primaryText)
-                            Text("Cached album art speeds up browsing. It is rebuilt from library files.")
-                                .font(.system(size: 10.5))
-                                .foregroundColor(Theme.secondaryText)
-                        }
-                        Spacer(minLength: 0)
-                        Button("Rebuild Cache") {
-                            artworkCache.rebuildCache()
-                        }
-                    }
-
-                    HStack(spacing: 8) {
-                        Text("JPEG quality")
-                            .font(.system(size: 11))
-                            .foregroundColor(Theme.secondaryText)
-                            .frame(width: 84, alignment: .trailing)
-                        TextField("80", text: $artworkQualityText)
-                            .textFieldStyle(.roundedBorder)
-                            .font(.system(size: 11).monospacedDigit())
-                            .frame(width: 46)
-                            .multilineTextAlignment(.trailing)
-                            .focused($artworkQualityFocused)
-                            .onSubmit { commitArtworkQuality() }
-                            .onChange(of: artworkQualityFocused) { _, focused in
-                                if !focused { commitArtworkQuality() }
-                            }
-                            .onChange(of: artworkQualityText) { _, value in
-                                let digits = value.filter(\.isNumber)
-                                if digits != value { artworkQualityText = digits }
-                            }
-                        Text("%")
-                            .font(.system(size: 11))
-                            .foregroundColor(Theme.secondaryText)
-                        Spacer(minLength: 0)
-                    }
-
-                    HStack(spacing: 8) {
-                        Text("Cache size")
-                            .font(.system(size: 11))
-                            .foregroundColor(Theme.secondaryText)
-                            .frame(width: 84, alignment: .trailing)
-                        Text(artworkCacheSizeText)
-                            .font(.system(size: 11).monospacedDigit())
-                            .foregroundColor(Theme.primaryText)
-                        Spacer(minLength: 0)
-                    }
-                }
-                .padding(10)
-                .background(boxBackground)
-
+                SettingsGroupHeader(title: "Services",
+                                    subtitle: "Menu-bar icon, notifications, and MPD")
+                trayBox
                 mpdBox
 
                 Spacer(minLength: 0)
             }
-            .padding(20)
+            .padding(22)
         }
-        .frame(width: 660, height: 640, alignment: .topLeading)
+        .frame(width: 700, height: 720, alignment: .topLeading)
         .background(SettingsFocusSink())
         .onAppear {
             artworkQualityText = "\(artworkQualityPercent)"
             starShortcut = KeyboardShortcutStore.loadStar()
+            showHideShortcut = KeyboardShortcutStore.loadShowHide()
             muteShortcut = KeyboardShortcutStore.loadMute()
             volumeDownShortcut = KeyboardShortcutStore.loadVolumeDown()
             volumeUpShortcut = KeyboardShortcutStore.loadVolumeUp()
+            starScope = KeyboardShortcutStore.scope(for: .starCurrent)
+            showHideScope = KeyboardShortcutStore.scope(for: .showHide)
+            muteScope = KeyboardShortcutStore.scope(for: .mute)
+            volumeDownScope = KeyboardShortcutStore.scope(for: .volumeDown)
+            volumeUpScope = KeyboardShortcutStore.scope(for: .volumeUp)
             artworkCache.refreshCacheSize()
         }
         .onChange(of: artworkCacheJPEGQuality) { _, _ in
@@ -377,41 +259,173 @@ struct SettingsView: View {
         .onChange(of: mpdPassword) { _, _ in scheduleMPDApply() }
     }
 
-    private var shortcutsBox: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Image(systemName: "keyboard")
-                    .font(.system(size: 12))
-                    .foregroundColor(Theme.secondaryText)
-                Text("Shortcuts")
+    private var generalBox: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Picker("Album display as", selection: $albumViewMode) {
+                Text("Grid").tag("grid")
+                Text("List").tag("list")
+            }
+            .pickerStyle(.menu)
+            .frame(width: 260, alignment: .leading)
+
+            HStack(spacing: 12) {
+                Picker("Albums sorted by", selection: $albumSort) {
+                    ForEach(GridSort.allCases, id: \.self) { sort in
+                        Text(sort == .album ? "Album Name" : sort.rawValue)
+                            .tag(sort.rawValue)
+                    }
+                }
+                .pickerStyle(.menu)
+                .fixedSize()
+
+                Picker("Sort", selection: $albumSortDirection) {
+                    ForEach(GridSortDirection.allCases) { direction in
+                        Text(direction.title).tag(direction.rawValue)
+                    }
+                }
+                .pickerStyle(.menu)
+                .fixedSize()
+            }
+            .frame(maxWidth: 420, alignment: .leading)
+
+            HStack(spacing: 10) {
+                Text("Highlights")
+
+                HStack(spacing: 2) {
+                    ForEach(HighlightColor.allCases) { choice in
+                        let selected = highlightColor == choice.rawValue
+                        Button {
+                            highlightColor = choice.rawValue
+                        } label: {
+                            ZStack {
+                                if selected {
+                                    Circle()
+                                        .strokeBorder(Color.primary, lineWidth: 2)
+                                        .frame(width: 24, height: 24)
+                                }
+                                Circle()
+                                    .fill(choice.swatch)
+                                    .frame(width: 18, height: 18)
+                                    .overlay(
+                                        Circle()
+                                            .strokeBorder(Color.black.opacity(0.14), lineWidth: 0.5)
+                                    )
+                            }
+                            .frame(width: 26, height: 26)
+                            .contentShape(Circle())
+                        }
+                        .buttonStyle(.plain)
+                        .help(choice.title)
+                        .accessibilityLabel("\(choice.title) highlight")
+                    }
+                }
+            }
+            .frame(maxWidth: 360, alignment: .leading)
+        }
+        .padding(12)
+        .background(boxBackground)
+    }
+
+    private var libraryBox: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Music Folders")
                     .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.secondary)
                 Spacer()
+                Text("\(library.albums.count) albums · \(library.allSongs.count) songs")
+                    .font(.system(size: 10.5))
+                    .foregroundColor(.secondary)
             }
 
-            shortcutRow("Toggle star current item",
-                        shortcut: $starShortcut,
-                        defaultShortcut: .defaultStar,
-                        accessibilityLabel: "Star current item shortcut")
-            Text("Stars or unstars the playing track or selected tracks. Default: *")
-                .font(.system(size: 10.5))
-                .foregroundColor(Theme.secondaryText)
+            if library.isScanning {
+                VStack(alignment: .leading, spacing: 4) {
+                    ProgressView(value: library.scanProgress)
+                        .progressViewStyle(.linear)
+                    Text(library.scanTotal > 0
+                         ? "Scanning \(library.scanCompleted) of \(library.scanTotal) files…"
+                         : "Scanning…")
+                        .font(.system(size: 10.5))
+                        .foregroundColor(.secondary)
+                }
+                .frame(maxWidth: 420, alignment: .leading)
+            }
 
-            Divider()
+            internalLibraryBox
+            externalLibrariesBox
+            artworkCacheBox
+        }
+    }
 
-            shortcutRow("Mute",
-                        shortcut: $muteShortcut,
-                        defaultShortcut: .defaultMute,
-                        accessibilityLabel: "Mute shortcut")
-            shortcutRow("Volume down",
-                        shortcut: $volumeDownShortcut,
-                        defaultShortcut: .defaultVolumeDown,
-                        accessibilityLabel: "Volume down shortcut")
-            shortcutRow("Volume up",
-                        shortcut: $volumeUpShortcut,
-                        defaultShortcut: .defaultVolumeUp,
-                        accessibilityLabel: "Volume up shortcut")
+    private var artworkCacheBox: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                Image(systemName: "photo.on.rectangle")
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Artwork Cache")
+                        .font(.system(size: 11.5, weight: .semibold))
+                        .foregroundColor(Theme.primaryText)
+                    Text("Cached album art speeds up browsing. It is rebuilt from library files.")
+                        .font(.system(size: 10.5))
+                        .foregroundColor(Theme.secondaryText)
+                }
+                Spacer(minLength: 0)
+                Button("Rebuild Cache") {
+                    artworkCache.rebuildCache()
+                }
+            }
 
-            Text("Volume shortcuts adjust the player volume, or the selected macOS output volume when system volume control is active. They use 6.25% steps aligned to the 16-step system volume grid. Defaults: mute m, down -, up =.")
+            HStack(spacing: 8) {
+                Text("JPEG quality")
+                    .font(.system(size: 11))
+                    .foregroundColor(Theme.secondaryText)
+                    .frame(width: 84, alignment: .trailing)
+                TextField("80", text: $artworkQualityText)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 11).monospacedDigit())
+                    .frame(width: 46)
+                    .multilineTextAlignment(.trailing)
+                    .focused($artworkQualityFocused)
+                    .onSubmit { commitArtworkQuality() }
+                    .onChange(of: artworkQualityFocused) { _, focused in
+                        if !focused { commitArtworkQuality() }
+                    }
+                    .onChange(of: artworkQualityText) { _, value in
+                        let digits = value.filter(\.isNumber)
+                        if digits != value { artworkQualityText = digits }
+                    }
+                Text("%")
+                    .font(.system(size: 11))
+                    .foregroundColor(Theme.secondaryText)
+                Spacer(minLength: 0)
+            }
+
+            HStack(spacing: 8) {
+                Text("Cache size")
+                    .font(.system(size: 11))
+                    .foregroundColor(Theme.secondaryText)
+                    .frame(width: 84, alignment: .trailing)
+                Text(artworkCacheSizeText)
+                    .font(.system(size: 11).monospacedDigit())
+                    .foregroundColor(Theme.primaryText)
+                Spacer(minLength: 0)
+            }
+        }
+        .padding(12)
+        .background(boxBackground)
+    }
+
+    private var shortcutsBox: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            shortcutRow(.mute, shortcut: $muteShortcut, scope: $muteScope)
+            shortcutRow(.volumeDown, shortcut: $volumeDownShortcut, scope: $volumeDownScope)
+            shortcutRow(.volumeUp, shortcut: $volumeUpShortcut, scope: $volumeUpScope)
+            shortcutRow(.showHide, shortcut: $showHideShortcut, scope: $showHideScope)
+            shortcutRow(.starCurrent, shortcut: $starShortcut, scope: $starScope)
+
+            Text("Each shortcut can be In-App (only while Tracks is focused) or Global (works system-wide). Volume shortcuts use the 16-step 6.25% volume grid. Defaults: mute m, down -, up =, show/hide F17, add/remove Stared F18.")
                 .font(.system(size: 10.5))
                 .foregroundColor(Theme.secondaryText)
                 .fixedSize(horizontal: false, vertical: true)
@@ -419,32 +433,117 @@ struct SettingsView: View {
         .padding(10)
         .background(boxBackground)
         .onChange(of: starShortcut) { _, value in
-            KeyboardShortcutStore.saveStar(value)
+            KeyboardShortcutStore.save(value, for: .starCurrent)
+            GlobalShortcutCenter.shared.reload()
+        }
+        .onChange(of: showHideShortcut) { _, value in
+            KeyboardShortcutStore.save(value, for: .showHide)
+            GlobalShortcutCenter.shared.reload()
         }
         .onChange(of: muteShortcut) { _, value in
-            KeyboardShortcutStore.saveMute(value)
+            KeyboardShortcutStore.save(value, for: .mute)
+            GlobalShortcutCenter.shared.reload()
         }
         .onChange(of: volumeDownShortcut) { _, value in
-            KeyboardShortcutStore.saveVolumeDown(value)
+            KeyboardShortcutStore.save(value, for: .volumeDown)
+            GlobalShortcutCenter.shared.reload()
         }
         .onChange(of: volumeUpShortcut) { _, value in
-            KeyboardShortcutStore.saveVolumeUp(value)
+            KeyboardShortcutStore.save(value, for: .volumeUp)
+            GlobalShortcutCenter.shared.reload()
+        }
+        .onChange(of: starScope) { _, value in saveScope(value, for: .starCurrent) }
+        .onChange(of: showHideScope) { _, value in saveScope(value, for: .showHide) }
+        .onChange(of: muteScope) { _, value in saveScope(value, for: .mute) }
+        .onChange(of: volumeDownScope) { _, value in saveScope(value, for: .volumeDown) }
+        .onChange(of: volumeUpScope) { _, value in saveScope(value, for: .volumeUp) }
+    }
+
+    private func saveScope(_ scope: ShortcutScope, for action: ShortcutAction) {
+        KeyboardShortcutStore.setScope(scope, for: action)
+        GlobalShortcutCenter.shared.reload()
+    }
+
+    private func shortcutRow(_ action: ShortcutAction,
+                             shortcut: Binding<KeyboardShortcut?>,
+                             scope: Binding<ShortcutScope>) -> some View {
+        HStack(spacing: 8) {
+            Text(action.title)
+                .font(.system(size: 11))
+                .foregroundColor(Theme.secondaryText)
+                .lineLimit(2)
+            Spacer(minLength: 6)
+            Picker("", selection: scope) {
+                ForEach(ShortcutScope.allCases) { value in
+                    Text(value.title).tag(value)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .controlSize(.small)
+            .frame(width: 88)
+            ShortcutRecorder(shortcut: shortcut, label: action.title)
+                .frame(width: 132, height: 22)
+            Button("Reset") { shortcut.wrappedValue = action.defaultShortcut }
+                .controlSize(.small)
         }
     }
 
-    private func shortcutRow(_ title: String,
-                             shortcut: Binding<KeyboardShortcut?>,
-                             defaultShortcut: KeyboardShortcut,
-                             accessibilityLabel: String) -> some View {
-        HStack(spacing: 8) {
-            Text(title)
-                .font(.system(size: 11))
+    private var trayBox: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "opticaldisc")
+                    .font(.system(size: 12))
+                    .foregroundColor(Theme.secondaryText)
+                Text("System Tray")
+                    .font(.system(size: 12, weight: .semibold))
+                Spacer()
+                Toggle("Show icon", isOn: $trayEnabled)
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+            }
+
+            Text("Shows a disc icon in the menu bar. Popups appear below the icon.")
+                .font(.system(size: 10.5))
                 .foregroundColor(Theme.secondaryText)
-            Spacer()
-            ShortcutRecorder(shortcut: shortcut, label: accessibilityLabel)
-                .frame(width: 132, height: 22)
-            Button("Reset") { shortcut.wrappedValue = defaultShortcut }
-                .controlSize(.small)
+
+            if trayEnabled {
+                Toggle("Track change", isOn: $trayTrackChange)
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                Toggle("Add or remove current song from Stared playlist",
+                       isOn: $trayStarChange)
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                Toggle("Only display popup when Library window is not focused",
+                       isOn: $trayOnlyWhenLibraryNotFocused)
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                HStack(spacing: 8) {
+                    Text("Popup duration")
+                        .font(.system(size: 11))
+                        .foregroundColor(Theme.secondaryText)
+                    Spacer()
+                    Stepper("\(trayPopupDurationMs) ms",
+                            value: $trayPopupDurationMs,
+                            in: 300...10000,
+                            step: 100)
+                        .controlSize(.small)
+                }
+                Text("Default: 1500 ms. Popups are suppressed while the Library window is focused.")
+                    .font(.system(size: 10.5))
+                    .foregroundColor(Theme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(10)
+        .background(boxBackground)
+        .onChange(of: trayEnabled) { _, _ in TrayController.shared.refresh() }
+        .onChange(of: trayTrackChange) { _, _ in TrayController.shared.refresh() }
+        .onChange(of: trayStarChange) { _, _ in TrayController.shared.refresh() }
+        .onChange(of: trayOnlyWhenLibraryNotFocused) { _, _ in TrayController.shared.refresh() }
+        .onChange(of: trayPopupDurationMs) { _, value in
+            trayPopupDurationMs = min(max(value, 300), 10000)
         }
     }
 
@@ -752,10 +851,10 @@ struct SettingsView: View {
     }
 
     private var boxBackground: some View {
-        RoundedRectangle(cornerRadius: 6)
+        RoundedRectangle(cornerRadius: 8)
             .fill(Theme.controlBackground)
             .overlay(
-                RoundedRectangle(cornerRadius: 6)
+                RoundedRectangle(cornerRadius: 8)
                     .strokeBorder(Theme.controlBorder, lineWidth: 1)
             )
     }
@@ -772,6 +871,22 @@ struct SettingsView: View {
         let errors = library.addExternalLibraries(panel.urls.map(\.path))
         if !errors.isEmpty {
             alert = .error(errors.joined(separator: "\n"))
+        }
+    }
+}
+
+private struct SettingsGroupHeader: View {
+    let title: String
+    let subtitle: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(Theme.primaryText)
+            Text(subtitle)
+                .font(.system(size: 11.5))
+                .foregroundColor(Theme.secondaryText)
         }
     }
 }
@@ -892,10 +1007,10 @@ struct InternalLibrarySetupView: View {
     }
 
     private var boxBackground: some View {
-        RoundedRectangle(cornerRadius: 6)
+        RoundedRectangle(cornerRadius: 8)
             .fill(Theme.controlBackground)
             .overlay(
-                RoundedRectangle(cornerRadius: 6)
+                RoundedRectangle(cornerRadius: 8)
                     .strokeBorder(Theme.controlBorder, lineWidth: 1)
             )
     }
@@ -1015,6 +1130,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         installFocusMonitor()
         installKeyMonitor()
         MPDServer.shared.startFromPreferences()
+        GlobalShortcutCenter.shared.start()
+        TrayController.shared.start()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -1061,6 +1178,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if !flag {
             WindowModeCenter.shared.setMode(.library)
+            WindowModeCenter.shared.showWindow()
         }
         return true
     }
@@ -1084,29 +1202,13 @@ enum KeyboardShortcuts {
             return nil
         }
 
-        if !isEditingText,
-           !event.isARepeat,
-           let shortcut = KeyboardShortcutStore.loadStar(),
-           shortcut.matches(event) {
-            toggleStarCurrentItem()
-            return nil
-        }
-
         if !isEditingText {
-            if !event.isARepeat,
-               let shortcut = KeyboardShortcutStore.loadMute(),
-               shortcut.matches(event) {
-                PlayerState.shared.toggleMute()
-                return nil
-            }
-            if let shortcut = KeyboardShortcutStore.loadVolumeDown(),
-               shortcut.matches(event) {
-                PlayerState.shared.stepDisplayVolume(up: false)
-                return nil
-            }
-            if let shortcut = KeyboardShortcutStore.loadVolumeUp(),
-               shortcut.matches(event) {
-                PlayerState.shared.stepDisplayVolume(up: true)
+            for action in ShortcutAction.allCases
+                where KeyboardShortcutStore.scope(for: action) == .inApp {
+                if event.isARepeat, !action.allowsRepeat { continue }
+                guard let shortcut = KeyboardShortcutStore.load(action),
+                      shortcut.matches(event) else { continue }
+                action.perform()
                 return nil
             }
         }
@@ -1147,32 +1249,6 @@ enum KeyboardShortcuts {
         default:
             return event
         }
-    }
-
-    /// Toggles the current selection (or the playing track when nothing is
-    /// selected). If every target is already starred, clears all of them;
-    /// otherwise stars all of them.
-    private static func toggleStarCurrentItem() {
-        let library = Library.shared
-        var songs: [Song] = []
-
-        // Prefer the selected track rows. Album/artist/genre selection is not
-        // expanded into every contained track; without a track selection the
-        // shortcut targets the currently playing track. In MiniPlayer there is
-        // no visible selection, so it also targets the playing track.
-        if WindowModeCenter.shared.mode == .library,
-           case .tracks(let ids) = StatusBarCenter.shared.context {
-            songs = ids.compactMap { library.song(withID: $0)?.song }
-        }
-
-        if songs.isEmpty, let current = PlayerState.shared.currentSong {
-            songs = [current]
-        }
-
-        let ids = Array(Set(songs.map(\.id)))
-        guard !ids.isEmpty else { return }
-        let allStarred = ids.allSatisfy { library.isStarred(songID: $0) }
-        library.setStarred(ids, starred: !allStarred)
     }
 
     private static func scrollByPage(up: Bool, event: NSEvent) {

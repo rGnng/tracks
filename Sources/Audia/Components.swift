@@ -50,7 +50,7 @@ private func configureWindow(_ window: NSWindow) {
     window.initialFirstResponder = nil
     window.tabbingMode = .disallowed
 
-    configureBrowserStyleTitlebar(for: window)
+    configureLibraryTitlebarStyle(for: window)
     WindowModeCenter.shared.register(window)
 
     // The first synchronous pass runs while SwiftUI is still sizing/showing the
@@ -58,7 +58,7 @@ private func configureWindow(_ window: NSWindow) {
     // title-bar height is applied to the final frame.
     DispatchQueue.main.async { [weak window] in
         guard let window else { return }
-        refreshBrowserTitlebarLayout(for: window)
+        refreshLibraryTitlebarLayout(for: window)
     }
 }
 
@@ -71,7 +71,7 @@ private func configureWindow(_ window: NSWindow) {
 /// hook for them shifts the group 12pt to the right. Fall back to the stock
 /// behaviour if the private hooks are gone.
 @MainActor
-private func configureBrowserStyleTitlebar(for window: NSWindow) {
+private func configureLibraryTitlebarStyle(for window: NSWindow) {
     guard !didConfigureFrameView, let frameView = window.contentView?.superview else { return }
     didConfigureFrameView = true
 
@@ -103,16 +103,18 @@ private func configureBrowserStyleTitlebar(for window: NSWindow) {
                   !window.styleMask.contains(.fullScreen) else {
                 return original(object, heightSelector)
             }
-            guard window === WindowModeCenter.shared.mainWindow else {
-                return original(object, heightSelector)
+            if window === WindowModeCenter.shared.mainWindow {
+                return toolbarHeight
             }
-            if WindowModeCenter.shared.mode == .miniPlayer { return 0 }
-            return toolbarHeight
+            if window === WindowModeCenter.shared.miniPlayerWindow {
+                return 0
+            }
+            return original(object, heightSelector)
         }
         method_setImplementation(method, imp_implementationWithBlock(replacement))
     }
 
-    refreshBrowserTitlebarLayout(for: window)
+    refreshLibraryTitlebarLayout(for: window)
 }
 
 /// AppKit only re-reads `_titlebarHeight` during a title-bar layout pass that is
@@ -121,7 +123,7 @@ private func configureBrowserStyleTitlebar(for window: NSWindow) {
 /// full-screen transitions, never merely because the window becomes key; an
 /// activation refresh here caused a visible one-frame jitter at drag start.
 @MainActor
-func refreshBrowserTitlebarLayout(for window: NSWindow) {
+func refreshLibraryTitlebarLayout(for window: NSWindow) {
     guard !window.styleMask.contains(.fullScreen),
           let frameView = window.contentView?.superview else { return }
     frameView.needsLayout = true
@@ -344,8 +346,8 @@ struct StarButton: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help(starred ? "Unstar" : "Star")
-        .accessibilityLabel(starred ? "Unstar" : "Star")
+        .help("Add or remove current song from Stared playlist")
+        .accessibilityLabel("Add or remove current song from Stared playlist")
     }
 
     private var iconColor: Color {

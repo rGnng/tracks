@@ -16,31 +16,18 @@ struct ContentView: View {
     @State private var pendingAlbumID: UUID?
 
     var body: some View {
-        Group {
-            if windowMode.mode == .miniPlayer {
-                MiniPlayerView()
-            } else {
-                libraryView
-            }
-        }
-        .background(Theme.contentBackground)
-        .background(WindowConfigurator())
-        .ignoresSafeArea(edges: .top)
-        .overlay {
-            if windowMode.mode == .library {
+        libraryView
+            .background(Theme.contentBackground)
+            .background(WindowConfigurator())
+            .background(LibraryFocusSink())
+            .ignoresSafeArea(edges: .top)
+            .overlay {
                 DragPreviewOverlay()
                     .allowsHitTesting(false)
             }
-        }
         .onAppear {
             PlayerState.shared.restorePersistedQueueIfNeeded()
             validateSelection()
-
-            // SwiftUI focuses the search field when the window first appears.
-            // Clear the first responder so nothing is selected on launch.
-            DispatchQueue.main.async {
-                NSApp.keyWindow?.makeFirstResponder(nil)
-            }
 
             // Invite the user to create the writable Internal Library. Doing it
             // from a window (and later via NSOpenPanel) is also what gives the

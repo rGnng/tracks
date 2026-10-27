@@ -30,6 +30,17 @@ SQLite, and includes a built-in MPD server.
   previous/next track, not skip-by-15-second buttons.
 - The top-bar album cover is bilinear-downsampled to its backing-pixel size
   before display for a crisper 45pt thumbnail.
+- Optional menu-bar **disc** icon with compact track-change and Stared-playlist
+  popups. The icon is off by default; star popups default on, track-change
+  popups default off, and popups can be limited to when the Library window is
+  not focused. Popup duration is configurable and defaults to 1500 ms.
+- Each shortcut can be independently set to In-App or Global. Defaults are
+  in-app mute/volume and global show/hide Tracks (F17) plus add/remove current
+  song from Stared playlist (F18). Command-1/2 reopen the main window when every
+  window is closed.
+- Library and MiniPlayer are separate windows and are never shown together.
+  Opening MiniPlayer hides Library; closing MiniPlayer restores Library. The
+  MiniPlayer has no separate return-to-Library button.
 - Album detail keeps the underlying grid mounted, so returning restores the
   previous scroll position instead of recentering an already-visible album.
   Opening an album from another view via **Go to Album** instead brings that
@@ -99,7 +110,10 @@ Sources/Audia/
   FLACLibrary.swift      Metadata readers and scanner
   Theme.swift            Light/dark palette and dynamic colors
   DragController.swift   Long-press drag and marquee support
-  KeyboardShortcut.swift Shortcut recorder and global handler
+  KeyboardShortcut.swift Shortcut recorder and persistence
+  GlobalShortcuts.swift  Carbon global hot keys
+  TrayController.swift   Menu-bar disc icon and popups
+  LibraryFocusSink.swift Keeps search from auto-focusing on window show
 
 Assets/AccentColors.xcassets  Static Graphite accent for native menus
 Resources/AppIcon.icns        Built app icon

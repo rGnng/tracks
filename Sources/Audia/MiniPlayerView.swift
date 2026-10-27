@@ -67,39 +67,17 @@ struct MiniPlayerView: View {
                 MiniTrafficLight(color: Color(.displayP3, red: 0.886, green: 0.396, blue: 0.341),
                                  symbol: "xmark",
                                  help: "Close") {
-                    windowMode.mainWindow?.performClose(nil)
+                    windowMode.closeMiniPlayer()
                 }
                 MiniTrafficLight(color: Color(.displayP3, red: 0.953, green: 0.753, blue: 0.094),
                                  symbol: "minus",
                                  help: "Minimize") {
-                    windowMode.mainWindow?.miniaturize(nil)
-                }
-                MiniTrafficLight(color: Color(.displayP3, red: 0.361, green: 0.737, blue: 0.106),
-                                 symbol: "arrow.up.left.and.arrow.down.right",
-                                 help: "Show Library") {
-                    windowMode.setMode(.library)
+                    windowMode.minimizeMiniPlayer()
                 }
             }
             .padding(.leading, 10)
             .padding(.top, 10)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .opacity(hovering ? 1 : 0)
-            .allowsHitTesting(hovering)
-            .animation(.easeInOut(duration: 0.12), value: hovering)
-
-            Button {
-                windowMode.setMode(.library)
-            } label: {
-                Image(systemName: "rectangle.expand.vertical")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.9))
-                    .frame(width: 26, height: 26)
-                    .background(Circle().fill(Color.black.opacity(0.35)))
-                    .contentShape(Circle())
-            }
-            .buttonStyle(.plain)
-            .padding(8)
-            .help("Show Library (⌘1)")
             .opacity(hovering ? 1 : 0)
             .allowsHitTesting(hovering)
             .animation(.easeInOut(duration: 0.12), value: hovering)

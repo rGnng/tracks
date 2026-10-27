@@ -9,20 +9,31 @@ struct KeyboardShortcut: Codable, Equatable {
     var key: String
     var modifiers: UInt
     var display: String
+    /// Physical key code, used by Carbon global hot keys. Older persisted
+    /// shortcuts may not have one.
+    var keyCode: UInt16? = nil
 
-    static let defaultStar = KeyboardShortcut(key: "*", modifiers: [], display: "*")
-    static let defaultMute = KeyboardShortcut(key: "m", modifiers: [], display: "M")
-    static let defaultVolumeDown = KeyboardShortcut(key: "-", modifiers: [], display: "-")
-    static let defaultVolumeUp = KeyboardShortcut(key: "=", modifiers: [], display: "=")
+    static let defaultShowHide = KeyboardShortcut(key: "keyCode:64",
+                                                  modifiers: [],
+                                                  display: "F17",
+                                                  keyCode: 64)
+    static let defaultStarCurrent = KeyboardShortcut(key: "keyCode:79",
+                                                     modifiers: [],
+                                                     display: "F18",
+                                                     keyCode: 79)
+    static let defaultMute = KeyboardShortcut(key: "m", modifiers: [], display: "M", keyCode: 46)
+    static let defaultVolumeDown = KeyboardShortcut(key: "-", modifiers: [], display: "-", keyCode: 27)
+    static let defaultVolumeUp = KeyboardShortcut(key: "=", modifiers: [], display: "=", keyCode: 24)
 
     var modifierFlags: NSEvent.ModifierFlags {
         NSEvent.ModifierFlags(rawValue: modifiers)
     }
 
-    init(key: String, modifiers: NSEvent.ModifierFlags, display: String) {
+    init(key: String, modifiers: NSEvent.ModifierFlags, display: String, keyCode: UInt16? = nil) {
         self.key = key
         self.modifiers = modifiers.rawValue
         self.display = display
+        self.keyCode = keyCode
     }
 
     func matches(_ event: NSEvent) -> Bool {
@@ -51,6 +62,7 @@ struct KeyboardShortcut: Codable, Equatable {
         key = rawCharacters.isEmpty ? "keyCode:\(event.keyCode)" : rawCharacters
         modifiers = flags.rawValue
         display = Self.displayString(label: label, flags: flags, characters: displayCharacters)
+        keyCode = event.keyCode
     }
 
     private static func displayString(label: String,
@@ -110,8 +122,84 @@ struct KeyboardShortcut: Codable, Equatable {
     }
 }
 
+enum ShortcutScope: String, CaseIterable, Identifiable {
+    case inApp
+    case global
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .inApp: return "In-App"
+        case .global: return "Global"
+        }
+    }
+}
+
+enum ShortcutAction: String, CaseIterable, Identifiable {
+    case mute
+    case volumeDown
+    case volumeUp
+    case showHide
+    case starCurrent
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .mute: return "Mute"
+        case .volumeDown: return "Volume down"
+        case .volumeUp: return "Volume up"
+        case .showHide: return "Show or hide Tracks"
+        case .starCurrent: return "Add or remove current song from Stared playlist"
+        }
+    }
+
+    var defaultShortcut: KeyboardShortcut {
+        switch self {
+        case .mute: return .defaultMute
+        case .volumeDown: return .defaultVolumeDown
+        case .volumeUp: return .defaultVolumeUp
+        case .showHide: return .defaultShowHide
+        case .starCurrent: return .defaultStarCurrent
+        }
+    }
+
+    var defaultScope: ShortcutScope {
+        switch self {
+        case .mute, .volumeDown, .volumeUp: return .inApp
+        case .showHide, .starCurrent: return .global
+        }
+    }
+
+    var allowsRepeat: Bool {
+        switch self {
+        case .volumeDown, .volumeUp: return true
+        default: return false
+        }
+    }
+
+    @MainActor
+    func perform() {
+        switch self {
+        case .mute:
+            PlayerState.shared.toggleMute()
+        case .volumeDown:
+            PlayerState.shared.stepDisplayVolume(up: false)
+        case .volumeUp:
+            PlayerState.shared.stepDisplayVolume(up: true)
+        case .showHide:
+            WindowModeCenter.shared.toggleWindowVisibility()
+        case .starCurrent:
+            guard let song = PlayerState.shared.currentSong else { return }
+            Library.shared.toggleStar(song.id)
+        }
+    }
+}
+
 enum KeyboardShortcutStore {
-    private static let starKey = "shortcut.starCurrent.v2"
+    private static let showHideKey = "shortcut.showHideWindow.v1"
+    private static let starKey = "shortcut.starCurrent.global.v1"
     private static let muteKey = "shortcut.mute.v1"
     private static let volumeDownKey = "shortcut.volumeDown.v1"
     private static let volumeUpKey = "shortcut.volumeUp.v1"
@@ -120,12 +208,54 @@ enum KeyboardShortcutStore {
         var shortcut: KeyboardShortcut?
     }
 
+    static func loadShowHide() -> KeyboardShortcut? {
+        load(key: showHideKey, fallback: .defaultShowHide)
+    }
+
+    static func saveShowHide(_ shortcut: KeyboardShortcut?) {
+        save(shortcut, key: showHideKey)
+    }
+
     static func loadStar() -> KeyboardShortcut? {
-        load(key: starKey, fallback: .defaultStar)
+        load(key: starKey, fallback: .defaultStarCurrent)
     }
 
     static func saveStar(_ shortcut: KeyboardShortcut?) {
         save(shortcut, key: starKey)
+    }
+
+    static func load(_ action: ShortcutAction) -> KeyboardShortcut? {
+        switch action {
+        case .mute: return loadMute()
+        case .volumeDown: return loadVolumeDown()
+        case .volumeUp: return loadVolumeUp()
+        case .showHide: return loadShowHide()
+        case .starCurrent: return loadStar()
+        }
+    }
+
+    static func save(_ shortcut: KeyboardShortcut?, for action: ShortcutAction) {
+        switch action {
+        case .mute: saveMute(shortcut)
+        case .volumeDown: saveVolumeDown(shortcut)
+        case .volumeUp: saveVolumeUp(shortcut)
+        case .showHide: saveShowHide(shortcut)
+        case .starCurrent: saveStar(shortcut)
+        }
+    }
+
+    static func scope(for action: ShortcutAction) -> ShortcutScope {
+        let key = "shortcut.\(action.rawValue).scope.v1"
+        guard let raw = UserDefaults.standard.string(forKey: key),
+              let scope = ShortcutScope(rawValue: raw) else {
+            return action.defaultScope
+        }
+        return scope
+    }
+
+    static func setScope(_ scope: ShortcutScope, for action: ShortcutAction) {
+        UserDefaults.standard.set(scope.rawValue,
+                                  forKey: "shortcut.\(action.rawValue).scope.v1")
     }
 
     static func loadMute() -> KeyboardShortcut? {
@@ -157,7 +287,13 @@ enum KeyboardShortcutStore {
         let defaults = UserDefaults.standard
         if let data = defaults.data(forKey: key),
            let setting = try? JSONDecoder().decode(Setting.self, from: data) {
-            return setting.shortcut
+            guard var shortcut = setting.shortcut else { return nil }
+            if shortcut.keyCode == nil,
+               shortcut.key == fallback.key,
+               shortcut.modifiers == fallback.modifiers {
+                shortcut.keyCode = fallback.keyCode
+            }
+            return shortcut
         }
         return fallback
     }
@@ -222,7 +358,7 @@ final class ShortcutRecorderView: NSView {
         setAccessibilityRole(.button)
         setAccessibilityLabel("Shortcut")
         setAccessibilityHelp("Click, then press a key combination.")
-        setShortcut(.defaultStar)
+        setShortcut(nil)
     }
 
     override var acceptsFirstResponder: Bool { true }
