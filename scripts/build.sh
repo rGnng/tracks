@@ -5,9 +5,16 @@ cd "$(dirname "$0")/.."
 
 CONFIG="${1:-release}"
 
-echo "==> swift build -c $CONFIG"
-export AUDIA_MACOS_SDK_VERSION="$(xcrun --show-sdk-version)"
-swift build -c "$CONFIG"
+SDK_VERSION="$(xcrun --show-sdk-version)"
+echo "==> swift build -c $CONFIG (SDK $SDK_VERSION)"
+# SwiftPM otherwise records the macOS 15 deployment target as the SDK version,
+# which makes AppKit use the legacy window design. This override is build-only
+# and lives here rather than in Package.swift as an unsafe linker flag.
+swift build -c "$CONFIG" \
+  -Xlinker -platform_version \
+  -Xlinker macos \
+  -Xlinker 15.0 \
+  -Xlinker "$SDK_VERSION"
 
 BIN=".build/$CONFIG/Audia"
 if [[ ! -f "$BIN" ]]; then

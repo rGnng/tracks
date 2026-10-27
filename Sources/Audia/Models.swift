@@ -295,25 +295,41 @@ enum SidebarSelectionStore {
     }
 }
 
-/// Persists lightweight view anchors across launches. We store the item at the
-/// top of each scroll view rather than a pixel offset; this survives font,
-/// column-width, and window-size changes and avoids a forced recenter.
+/// Persists a focused item and a viewport anchor per view across launches.
+/// The viewport anchor is the item that was at the top edge of the saved
+/// viewport; it preserves the viewport, not the focus position. The focus
+/// remains selected even when it is outside that viewport. No pixel offset is
+/// stored.
 enum ViewPositionStore {
-    private static func topKey(_ name: String) -> String {
-        "viewPosition.\(name).top"
+    private static func viewportAnchorKey(_ name: String) -> String {
+        "viewPosition.\(name).viewportAnchor"
     }
 
     private static func selectionKey(_ name: String) -> String {
         "viewPosition.\(name).selection"
     }
 
-    static func topID(for name: String) -> String? {
-        UserDefaults.standard.string(forKey: topKey(name))
+    static func viewportAnchorID(for name: String) -> String? {
+        let defaults = UserDefaults.standard
+        if let value = defaults.string(forKey: viewportAnchorKey(name)) {
+            return value
+        }
+        // Migrate the old, ambiguously named `.top` key once.
+        let legacyKey = "viewPosition.\(name).top"
+        guard let legacy = defaults.string(forKey: legacyKey) else { return nil }
+        defaults.set(legacy, forKey: viewportAnchorKey(name))
+        defaults.removeObject(forKey: legacyKey)
+        return legacy
     }
 
-    static func setTopID(_ id: String?, for name: String) {
-        guard let id else { return }
-        UserDefaults.standard.set(id, forKey: topKey(name))
+    static func setViewportAnchorID(_ id: String?, for name: String) {
+        let defaults = UserDefaults.standard
+        if let id {
+            defaults.set(id, forKey: viewportAnchorKey(name))
+        } else {
+            defaults.removeObject(forKey: viewportAnchorKey(name))
+        }
+        defaults.removeObject(forKey: "viewPosition.\(name).top")
     }
 
     static func selectionID(for name: String) -> String? {
@@ -321,7 +337,10 @@ enum ViewPositionStore {
     }
 
     static func setSelectionID(_ id: String?, for name: String) {
-        guard let id else { return }
-        UserDefaults.standard.set(id, forKey: selectionKey(name))
+        if let id {
+            UserDefaults.standard.set(id, forKey: selectionKey(name))
+        } else {
+            UserDefaults.standard.removeObject(forKey: selectionKey(name))
+        }
     }
 }

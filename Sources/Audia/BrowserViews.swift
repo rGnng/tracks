@@ -34,7 +34,7 @@ struct ArtistsBrowser: View {
                 selectedID: $selectedID,
                 title: { $0.name },
                 detail: { "\($0.albums.count)" },
-                positionKey: "artists.list"
+                viewportAnchorKey: "artists.list"
             ) { artist in
                 player.play(artist.albums.flatMap(\.songs))
             }
@@ -46,8 +46,7 @@ struct ArtistsBrowser: View {
                 BrowserAlbumPane(
                     title: artist.name,
                     subtitle: "\(artist.albums.count) albums",
-                    albums: artist.albums,
-                    positionKey: "artists.albums.\(artist.name)"
+                    albums: artist.albums
                 )
                 .id(artist.name)
             } else {
@@ -124,7 +123,7 @@ struct GenresBrowser: View {
                 selectedID: $selectedID,
                 title: { $0.name },
                 detail: { "\($0.count)" },
-                positionKey: "genres.list"
+                viewportAnchorKey: "genres.list"
             ) { genre in
                 player.play(library.albums.filter { $0.genre == genre.name }.flatMap(\.songs))
             }
@@ -136,8 +135,7 @@ struct GenresBrowser: View {
                 BrowserAlbumPane(
                     title: genre.name,
                     subtitle: "\(albumsForSelected.count) albums",
-                    albums: albumsForSelected,
-                    positionKey: "genres.albums.\(genre.name)"
+                    albums: albumsForSelected
                 )
                 .id(genre.name)
             } else {
@@ -177,27 +175,28 @@ private struct BrowserList<Item: Identifiable>: View where Item.ID == String {
     @Binding var selectedID: Item.ID?
     let title: (Item) -> String
     let detail: (Item) -> String
-    let positionKey: String
+    let viewportAnchorKey: String
     let onDoubleTap: (Item) -> Void
 
     @ObservedObject private var navigator = KeyboardNavigator.shared
-    @State private var topID: Item.ID?
+    @State private var viewportAnchorID: Item.ID?
 
     init(items: [Item], selectedID: Binding<Item.ID?>,
          title: @escaping (Item) -> String,
          detail: @escaping (Item) -> String,
-         positionKey: String,
+         viewportAnchorKey: String,
          onDoubleTap: @escaping (Item) -> Void) {
         self.items = items
         self._selectedID = selectedID
         self.title = title
         self.detail = detail
-        self.positionKey = positionKey
+        self.viewportAnchorKey = viewportAnchorKey
         self.onDoubleTap = onDoubleTap
-        let saved = ViewPositionStore.topID(for: positionKey)
-        _topID = State(initialValue: saved.flatMap { id in
+        let savedAnchor = ViewPositionStore.viewportAnchorID(for: viewportAnchorKey)
+        let anchor = savedAnchor.flatMap { id in
             items.contains(where: { $0.id == id }) ? id : nil
-        })
+        }
+        _viewportAnchorID = State(initialValue: anchor ?? selectedID.wrappedValue)
     }
 
     var body: some View {
@@ -221,13 +220,7 @@ private struct BrowserList<Item: Identifiable>: View where Item.ID == String {
                 .scrollTargetLayout()
                 .padding(.vertical, 6)
             }
-            .scrollPosition(id: $topID, anchor: .top)
-            .onAppear {
-                guard let topID else { return }
-                DispatchQueue.main.async {
-                    proxy.scrollTo(topID, anchor: .top)
-                }
-            }
+            .scrollPosition(id: $viewportAnchorID, anchor: .top)
             .onChange(of: navigator.moveCount) { _, _ in
                 guard moveSelection(), let id = selectedID else { return }
                 withAnimation(.easeInOut(duration: 0.08)) {
@@ -239,9 +232,8 @@ private struct BrowserList<Item: Identifiable>: View where Item.ID == String {
             }
         }
         .background(Theme.contentBackground)
-        .onChange(of: topID) { _, id in
-            guard let id else { return }
-            ViewPositionStore.setTopID(id, for: positionKey)
+        .onChange(of: viewportAnchorID) { _, id in
+            ViewPositionStore.setViewportAnchorID(id, for: viewportAnchorKey)
         }
     }
 
@@ -303,7 +295,6 @@ private struct BrowserAlbumPane: View {
     let title: String
     let subtitle: String
     let albums: [Album]
-    let positionKey: String
 
     @EnvironmentObject private var player: PlayerState
     @AppStorage("albumSort") private var albumSort = GridSort.album.rawValue
@@ -311,17 +302,11 @@ private struct BrowserAlbumPane: View {
         GridSortDirection.ascending.rawValue
     @State private var selectedSongIDs: Set<UUID> = []
     @State private var selectionAnchor: UUID?
-    @State private var topAlbumID: UUID?
 
-    init(title: String, subtitle: String, albums: [Album], positionKey: String) {
+    init(title: String, subtitle: String, albums: [Album]) {
         self.title = title
         self.subtitle = subtitle
         self.albums = albums
-        self.positionKey = positionKey
-        let saved = ViewPositionStore.topID(for: positionKey).flatMap(UUID.init)
-        _topAlbumID = State(initialValue: saved.flatMap { id in
-            albums.contains(where: { $0.id == id }) ? id : nil
-        })
     }
 
     private var allSongs: [Song] { albums.flatMap(\.songs) }
@@ -339,7 +324,7 @@ private struct BrowserAlbumPane: View {
         VStack(spacing: 0) {
             header
             Hairline()
-            ScrollViewReader { proxy in
+            ScrollViewReader { _ in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 0) {
                         ForEach(sortedAlbums) { album in
@@ -357,21 +342,10 @@ private struct BrowserAlbumPane: View {
                     .onTapGesture { clearSelection() }
                     .marqueeSelectable(selection: $selectedSongIDs, space: "browserTrackSpace")
                 }
-                .scrollPosition(id: $topAlbumID, anchor: .top)
-                .onAppear {
-                    guard let topAlbumID else { return }
-                    DispatchQueue.main.async {
-                        proxy.scrollTo(topAlbumID, anchor: .top)
-                    }
-                }
                 .onTapGesture { clearSelection() }
             }
         }
         .background(Theme.contentBackground)
-        .onChange(of: topAlbumID) { _, id in
-            guard let id else { return }
-            ViewPositionStore.setTopID(id.uuidString, for: positionKey)
-        }
     }
 
     private func clearSelection() {

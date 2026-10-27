@@ -32,8 +32,12 @@ SQLite, and includes a built-in MPD server.
   before display for a crisper 45pt thumbnail.
 - Album detail keeps the underlying grid mounted, so returning restores the
   previous scroll position instead of recentering an already-visible album.
-- The active sidebar view and the top visible item in Albums, Recently Added,
-  Songs/playlists, Artists, and Genres are remembered across launches.
+  Opening an album from another view via **Go to Album** instead brings that
+  album row to the top when the detail closes.
+- The active sidebar view, focused item, and viewport anchor in Albums, Recently
+  Added, Songs/playlists, Artists, and Genres are remembered across launches.
+  Returning to a view therefore keeps an already-visible focus item in place
+  instead of pulling it to the top.
 - Internal Library (writable) and External Libraries (read-only), with an
   organizer for imports and tag editing.
 - Output menu offers plain System Default, System Default with Volume Control,
@@ -46,18 +50,18 @@ SQLite, and includes a built-in MPD server.
 ## Build and run
 
 ```bash
-# Fast development build
-swift build
-
-# Build a double-clickable app bundle
+# Build and launch the app bundle
 ./scripts/build.sh
 open build/Tracks.app
 ```
 
-`scripts/build.sh [debug|release]` builds with SwiftPM, assembles
-`build/Tracks.app`, copies the icon, writes `Info.plist`, and ad-hoc signs the
-bundle. The complete signature is required by macOS MediaRemote/Now Playing;
-a linker-only signature is not accepted.
+`scripts/build.sh [debug|release]` builds with SwiftPM, passes the current macOS
+SDK version to the linker (needed for the current AppKit window design),
+assembles `build/Tracks.app`, copies the icon, writes `Info.plist`, and ad-hoc
+signs the bundle. The complete signature is required by macOS
+MediaRemote/Now Playing; a linker-only signature is not accepted. A bare
+`swift build` is useful for compiler checks but does not produce the properly
+configured app bundle.
 
 Requires Xcode 16+ and Swift 6 on macOS 15+.
 

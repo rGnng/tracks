@@ -303,12 +303,22 @@ Important schema decisions:
   `library:<section>`, `starred`, or `playlist:<uuid>`. A missing, malformed,
   or deleted-playlist value falls back to **Recently Added**. The first launch
   and library switches also use Recently Added as the default view.
-- Scrollable content remembers its top visible item under
-  `viewPosition.<view>.top` (Albums, Recently Added, each song-table context,
-  Artists, Genres, and artist/genre album panes). Artists/Genres also persist
-  the selected browser row under `viewPosition.<view>.selection`. Views restore
-  with `scrollPosition(id:anchor:)` plus a `ScrollViewReader.scrollTo` fallback
-  on appear, so launch restores the last viewport without centering an item.
+- Scrollable content persists a focus item under
+  `viewPosition.<view>.selection` and a viewport anchor under
+  `viewPosition.<view>.viewportAnchor` (Albums, Recently Added, each song-table
+  context, and the Artists/Genres browser lists). The viewport anchor is the
+  item that was at the top edge of the saved viewport; it is not the focus
+  target. On first appearance or launch the view restores both: the selection
+  stays focused and the viewport anchor avoids pulling an already-visible focus
+  to the top. If there is no valid anchor, the focused item is used as the
+  anchor. Lists shorter than the viewport naturally stay at the top, and
+  SwiftUI clamps anchors at the last row. There is no center-on-selection
+  fallback.
+- Opening an album detail from the current grid keeps the mounted grid's scroll
+  offset unchanged, so returning leaves the clicked album where it was.
+  `Go to Album` from another view overrides the anchor with the target album;
+  returning from that detail therefore brings the album row to the first row
+  rather than centering it.
 - Album cards/rows use single click for selection or album-detail navigation.
   Double-click no longer starts album playback; use the hover Play button or the
   context menu instead.
@@ -607,19 +617,23 @@ The main window uses a hidden/full-size content view and a custom 45pt title bar
 SwiftPM records the package's deployment target as the linked SDK version unless
 overridden. With the old build the binary contained `LC_BUILD_VERSION sdk 15.0`,
 so AppKit deliberately used the legacy window design (flat traffic lights) even
-on macOS 27. `Package.swift` now adds:
+on macOS 27. `scripts/build.sh` now passes the build-only linker override:
 
 ```text
--Xlinker -platform_version -Xlinker macos
--Xlinker 15.0 -Xlinker $AUDIA_MACOS_SDK_VERSION
+swift build -c <config> \
+  -Xlinker -platform_version -Xlinker macos \
+  -Xlinker 15.0 -Xlinker "$(xcrun --show-sdk-version)"
 ```
 
-`scripts/build.sh` exports `AUDIA_MACOS_SDK_VERSION="$(xcrun --show-sdk-version)"`.
-The result is `minos 15.0` and `sdk 27.0`; the macOS 15 deployment target is kept,
-but AppKit now opts into the current design and native Library traffic lights.
+This override is intentionally not in `Package.swift`; using `.unsafeFlags`
+there made the package unusable as a dependency. The result is `minos 15.0` and
+`sdk 27.0`; the macOS 15 deployment target is kept, but AppKit now opts into the
+current design and native Library traffic lights. A bare `swift build` is only
+for compiler checks and does not apply the app window-design override.
 
-Do not remove this linker override. Building the app while it records SDK 15
-silently opts the whole app out of the macOS 26/27 Liquid Glass window style.
+Do not remove the linker override from `scripts/build.sh`. Building the app
+without it silently opts the whole app out of the macOS 26/27 Liquid Glass
+window style.
 
 ### MiniPlayer traffic lights
 

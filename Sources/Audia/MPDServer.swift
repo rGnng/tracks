@@ -8,6 +8,17 @@ struct MPDResponse: Sendable {
     var close: Bool = false
     var authenticated: Bool? = nil
     var idle: Bool = false
+    var idleSubsystems: [String]? = nil
+}
+
+private struct PlayerIdleSnapshot: Equatable {
+    var queueIDs: [UUID]
+    var currentSongID: UUID?
+    var isPlaying: Bool
+    var displayVolume: Int
+    var isMuted: Bool
+    var isShuffleOn: Bool
+    var repeatMode: String
 }
 
 @MainActor
@@ -29,6 +40,10 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
     private var singleMode = false
     private var consumeMode = false
     private var startedAt = Date()
+    private var idleCancellables: Set<AnyCancellable> = []
+    private var lastPlayerIdleSnapshot: PlayerIdleSnapshot?
+    private var pendingIdleSubsystems: Set<String> = []
+    private var idleBroadcastScheduled = false
 
     private init() {
         NotificationCenter.default.addObserver(
@@ -36,7 +51,94 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in self?.albumIDCache.removeAll() }
+            Task { @MainActor in
+                self?.albumIDCache.removeAll()
+                self?.broadcastIdle("database")
+                self?.broadcastIdle("update")
+            }
+        }
+        observeIdleSources()
+    }
+
+    /// MPD commands already notify their own idle subsystems. These observers
+    /// cover the other state sources: clicks in the app UI, automatic track
+    /// changes, the macOS volume keys, playlist/library maintenance, and output
+    /// changes made in Settings.
+    private func observeIdleSources() {
+        let player = PlayerState.shared
+        let signals: [AnyPublisher<Void, Never>] = [
+            player.$queue.map { _ in () }.eraseToAnyPublisher(),
+            player.$currentIndex.map { _ in () }.eraseToAnyPublisher(),
+            player.$isPlaying.map { _ in () }.eraseToAnyPublisher(),
+            player.$volume.map { _ in () }.eraseToAnyPublisher(),
+            player.$isVolumeLocked.map { _ in () }.eraseToAnyPublisher(),
+            player.$isSystemMuted.map { _ in () }.eraseToAnyPublisher(),
+            player.$systemVolume.map { _ in () }.eraseToAnyPublisher(),
+            player.$isShuffleOn.map { _ in () }.eraseToAnyPublisher(),
+            player.$repeatMode.map { _ in () }.eraseToAnyPublisher(),
+        ]
+        Publishers.MergeMany(signals)
+            .debounce(for: .milliseconds(40), scheduler: RunLoop.main)
+            .sink { [weak self] in self?.syncPlayerIdle() }
+            .store(in: &idleCancellables)
+
+        Library.shared.$playlists
+            .dropFirst()
+            .debounce(for: .milliseconds(80), scheduler: RunLoop.main)
+            .sink { [weak self] _ in self?.broadcastIdle("stored_playlist") }
+            .store(in: &idleCancellables)
+
+        AudioDevices.shared.$selectedID
+            .dropFirst()
+            .removeDuplicates()
+            .sink { [weak self] _ in self?.notifyOutputConfigurationChanged() }
+            .store(in: &idleCancellables)
+
+        lastPlayerIdleSnapshot = playerIdleSnapshot()
+    }
+
+    private func playerIdleSnapshot() -> PlayerIdleSnapshot {
+        let player = PlayerState.shared
+        return PlayerIdleSnapshot(
+            queueIDs: player.queue.map(\.id),
+            currentSongID: player.currentSong?.id,
+            isPlaying: player.isPlaying,
+            displayVolume: Int((player.displayVolume * 100).rounded()),
+            isMuted: player.isMutedForUI,
+            isShuffleOn: player.isShuffleOn,
+            repeatMode: player.repeatMode.rawValue
+        )
+    }
+
+    private func syncPlayerIdle() {
+        let current = playerIdleSnapshot()
+        guard let previous = lastPlayerIdleSnapshot else {
+            lastPlayerIdleSnapshot = current
+            return
+        }
+        guard previous != current else { return }
+
+        var changed = Set<String>()
+        if previous.queueIDs != current.queueIDs {
+            playlistVersion &+= 1
+            changed.insert("playlist")
+            changed.insert("player")
+        }
+        if previous.currentSongID != current.currentSongID
+            || previous.isPlaying != current.isPlaying {
+            changed.insert("player")
+        }
+        if previous.displayVolume != current.displayVolume
+            || previous.isMuted != current.isMuted {
+            changed.insert("mixer")
+        }
+        if previous.isShuffleOn != current.isShuffleOn
+            || previous.repeatMode != current.repeatMode {
+            changed.insert("options")
+        }
+        lastPlayerIdleSnapshot = current
+        for subsystem in changed {
+            broadcastIdle(subsystem)
         }
     }
 
@@ -128,13 +230,23 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
     }
 
     private func broadcastIdle(_ subsystem: String) {
-        // Notify every connection, not just the ones currently blocked in
-        // `idle`. libmpdclient/ncmpcpp calls `noidle` before a command such as
-        // `volume`, then re-enters idle afterwards; queueing the event for that
-        // short gap is what makes the client's volume display update.
-        let sessions = Array(self.sessions.values)
-        idleSessions.removeAll()
-        for session in sessions { session.sendChanged(subsystem) }
+        pendingIdleSubsystems.insert(subsystem)
+        guard !idleBroadcastScheduled else { return }
+        idleBroadcastScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            let subsystems = self.pendingIdleSubsystems
+            self.pendingIdleSubsystems.removeAll()
+            self.idleBroadcastScheduled = false
+            // Notify every connection, not just the ones currently blocked in
+            // `idle`. libmpdclient/ncmpcpp calls `noidle` before a command such
+            // as `volume`, then re-enters idle afterwards; queueing the event
+            // for that short gap is what makes the client's volume display
+            // update. Multiple related changes are coalesced into one wakeup.
+            let sessions = Array(self.sessions.values)
+            self.idleSessions.removeAll()
+            for session in sessions { session.sendChanged(subsystems) }
+        }
     }
 
     // MARK: Protocol
@@ -209,7 +321,7 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
             return lines(["replay_gain_mode: off"])
         case "idle":
             if let session { registerIdle(session) }
-            return MPDResponse(idle: true)
+            return MPDResponse(idle: true, idleSubsystems: args)
         case "noidle":
             if let session { unregisterIdle(session) }
             return ok()
@@ -1262,6 +1374,7 @@ final class MPDClientSession: @unchecked Sendable {
     private var authenticated = false
     private var isClosed = false
     private var isIdle = false
+    private var idleFilter: Set<String>?
     private var pendingChanges = Set<String>()
     private var listBuffer: [String]?
     private var listOK = false
@@ -1296,24 +1409,27 @@ final class MPDClientSession: @unchecked Sendable {
         }
     }
 
-    func sendChanged(_ subsystem: String) {
+    func sendChanged(_ subsystems: Set<String>) {
         queue.async { [weak self] in
             guard let self, !self.isClosed else { return }
+            let changes = self.idleFilter.map { subsystems.intersection($0) } ?? subsystems
+            guard !changes.isEmpty else { return }
             if self.isIdle {
                 self.isIdle = false
-                self.send("changed: \(subsystem)\nOK\n")
+                self.send(changes.sorted().map { "changed: \($0)\n" }.joined() + "OK\n")
             } else {
-                self.pendingChanges.insert(subsystem)
+                self.pendingChanges.formUnion(changes)
             }
         }
     }
 
     private func sendPendingChanges() {
         guard !pendingChanges.isEmpty else { return }
-        let changes = pendingChanges
-        pendingChanges.removeAll()
+        let changes = idleFilter.map { pendingChanges.intersection($0) } ?? pendingChanges
+        guard !changes.isEmpty else { return }
+        pendingChanges.subtract(changes)
         isIdle = false
-        let text = changes.map { "changed: \($0)\n" }.joined() + "OK\n"
+        let text = changes.sorted().map { "changed: \($0)\n" }.joined() + "OK\n"
         send(text)
     }
 
@@ -1362,9 +1478,23 @@ final class MPDClientSession: @unchecked Sendable {
             return
         }
 
+        if command == "noidle" {
+            let changes = idleFilter.map { pendingChanges.intersection($0) } ?? pendingChanges
+            pendingChanges.subtract(changes)
+            isIdle = false
+            idleFilter = nil
+            let text = changes.isEmpty
+                ? "OK\n"
+                : changes.sorted().map { "changed: \($0)\n" }.joined() + "OK\n"
+            send(text)
+            return
+        }
+
         let response = executeOnMain(trimmed)
         if let auth = response.authenticated { authenticated = auth }
         if response.idle {
+            idleFilter = response.idleSubsystems.map { Set($0.map { $0.lowercased() }) }
+            if idleFilter?.isEmpty == true { idleFilter = nil }
             isIdle = true
             sendPendingChanges()
             return

@@ -27,7 +27,7 @@ struct AlbumGrid: View {
     @State private var marqueeCurrent: CGPoint?
     @State private var marqueeBaseSelection: Set<UUID> = []
     @State private var gridGlobalOrigin: CGPoint = .zero
-    @State private var topAlbumID: UUID?
+    @State private var viewportAnchorID: UUID?
 
     private let columns = [GridItem(.adaptive(minimum: 158, maximum: 240), spacing: 22)]
 
@@ -35,10 +35,17 @@ struct AlbumGrid: View {
         self.albums = albums
         self._openAlbumID = openAlbumID
         self.scrollKey = scrollKey
-        let saved = ViewPositionStore.topID(for: scrollKey).flatMap(UUID.init)
-        _topAlbumID = State(initialValue: saved.flatMap { id in
+        let savedFocus = ViewPositionStore.selectionID(for: scrollKey).flatMap(UUID.init)
+        let focus = savedFocus.flatMap { id in
             albums.contains(where: { $0.id == id }) ? id : nil
-        })
+        }
+        let savedAnchor = ViewPositionStore.viewportAnchorID(for: scrollKey).flatMap(UUID.init)
+        let anchor = savedAnchor.flatMap { id in
+            albums.contains(where: { $0.id == id }) ? id : nil
+        }
+        _selectedIDs = State(initialValue: focus.map { [$0] } ?? [])
+        _selectionAnchor = State(initialValue: focus)
+        _viewportAnchorID = State(initialValue: anchor ?? focus)
     }
 
     var body: some View {
@@ -70,7 +77,14 @@ struct AlbumGrid: View {
             revealAlbum(id: id, in: albums)
         }
         .onAppear { updateStatusBar() }
-        .onChange(of: selectedIDs) { _, _ in updateStatusBar() }
+        .onChange(of: selectedIDs) { _, _ in
+            updateStatusBar()
+            persistFocus()
+        }
+        .onChange(of: selectionAnchor) { _, _ in persistFocus() }
+        .onChange(of: viewportAnchorID) { _, id in
+            ViewPositionStore.setViewportAnchorID(id?.uuidString, for: scrollKey)
+        }
         .onChange(of: expandedAlbum) { _, _ in updateStatusBar() }
         .onChange(of: albums) { _, newAlbums in
             // If the target album was hidden by the previous search results,
@@ -88,16 +102,21 @@ struct AlbumGrid: View {
             }
             updateStatusBar()
         }
-        .onChange(of: topAlbumID) { _, id in
-            guard let id else { return }
-            ViewPositionStore.setTopID(id.uuidString, for: scrollKey)
-        }
+    }
+
+    private func persistFocus() {
+        let id = selectionAnchor ?? selectedIDs.first
+        ViewPositionStore.setSelectionID(id?.uuidString, for: scrollKey)
     }
 
     private func revealAlbum(id: UUID, in albums: [Album]) {
         guard let album = albums.first(where: { $0.id == id }) else { return }
         selectedIDs = [album.id]
         selectionAnchor = album.id
+        // An album opened from another view (for example Go to Album from a
+        // song table) must be brought to the first visible row. Opening an
+        // album from this grid leaves the current relative position alone.
+        viewportAnchorID = album.id
         expandedAlbum = album
         openAlbumID = nil
     }
@@ -192,7 +211,7 @@ struct AlbumGrid: View {
                     .overlay { marqueeOverlay }
                     .simultaneousGesture(marqueeGesture)
                 }
-                .scrollPosition(id: $topAlbumID, anchor: .top)
+                .scrollPosition(id: $viewportAnchorID, anchor: .top)
                 .onChange(of: navigator.moveCount) { _, _ in
                     guard expandedAlbum == nil else { return }
                     moveSelection(proxy: proxy)
@@ -205,38 +224,6 @@ struct AlbumGrid: View {
                 .onChange(of: navigator.activateCount) { _, _ in
                     activateSelection()
                 }
-                .onAppear {
-                    restoreSavedTop(proxy: proxy)
-                    scrollToFirstSelectedAlbum(proxy: proxy, animated: false)
-                }
-                .onChange(of: albums) { _, _ in
-                    guard expandedAlbum == nil else { return }
-                    scrollToFirstSelectedAlbum(proxy: proxy, animated: true)
-                }
-            }
-        }
-    }
-
-    private func firstSelectedAlbumID() -> UUID? {
-        albums.first { selectedIDs.contains($0.id) }?.id
-    }
-
-    private func restoreSavedTop(proxy: ScrollViewProxy) {
-        guard let topAlbumID else { return }
-        DispatchQueue.main.async {
-            proxy.scrollTo(topAlbumID, anchor: .top)
-        }
-    }
-
-    private func scrollToFirstSelectedAlbum(proxy: ScrollViewProxy, animated: Bool) {
-        DispatchQueue.main.async {
-            guard let id = firstSelectedAlbumID() else { return }
-            if animated {
-                withAnimation(.easeInOut(duration: 0.15)) {
-                    proxy.scrollTo(id, anchor: .center)
-                }
-            } else {
-                proxy.scrollTo(id, anchor: .center)
             }
         }
     }
@@ -814,15 +801,22 @@ struct AlbumList: View {
     @State private var marqueeCurrent: CGPoint?
     @State private var marqueeBaseSelection: Set<UUID> = []
     @State private var listGlobalOrigin: CGPoint = .zero
-    @State private var topAlbumID: UUID?
+    @State private var viewportAnchorID: UUID?
 
     init(albums: [Album], scrollKey: String) {
         self.albums = albums
         self.scrollKey = scrollKey
-        let saved = ViewPositionStore.topID(for: scrollKey).flatMap(UUID.init)
-        _topAlbumID = State(initialValue: saved.flatMap { id in
+        let savedFocus = ViewPositionStore.selectionID(for: scrollKey).flatMap(UUID.init)
+        let focus = savedFocus.flatMap { id in
             albums.contains(where: { $0.id == id }) ? id : nil
-        })
+        }
+        let savedAnchor = ViewPositionStore.viewportAnchorID(for: scrollKey).flatMap(UUID.init)
+        let anchor = savedAnchor.flatMap { id in
+            albums.contains(where: { $0.id == id }) ? id : nil
+        }
+        _selectedIDs = State(initialValue: focus.map { [$0] } ?? [])
+        _selectionAnchor = State(initialValue: focus)
+        _viewportAnchorID = State(initialValue: anchor ?? focus)
     }
 
     var body: some View {
@@ -914,7 +908,7 @@ struct AlbumList: View {
                     .overlay { marqueeOverlay }
                     .simultaneousGesture(marqueeGesture)
                 }
-                .scrollPosition(id: $topAlbumID, anchor: .top)
+                .scrollPosition(id: $viewportAnchorID, anchor: .top)
                 .onChange(of: navigator.moveCount) { _, _ in
                     moveSelection()
                     if let id = selectionAnchor {
@@ -926,18 +920,18 @@ struct AlbumList: View {
                 .onChange(of: navigator.activateCount) { _, _ in
                     activateSelection()
                 }
-                .onAppear {
-                    restoreSavedTop(proxy: proxy)
-                    scrollToFirstSelectedAlbum(proxy: proxy, animated: false)
-                }
-                .onChange(of: albums) { _, _ in
-                    scrollToFirstSelectedAlbum(proxy: proxy, animated: true)
-                }
             }
         }
         .background(Theme.contentBackground)
         .onAppear { updateStatusBar() }
-        .onChange(of: selectedIDs) { _, _ in updateStatusBar() }
+        .onChange(of: selectedIDs) { _, _ in
+            updateStatusBar()
+            persistFocus()
+        }
+        .onChange(of: selectionAnchor) { _, _ in persistFocus() }
+        .onChange(of: viewportAnchorID) { _, id in
+            ViewPositionStore.setViewportAnchorID(id?.uuidString, for: scrollKey)
+        }
         .onChange(of: albums) { _, newAlbums in
             let valid = Set(newAlbums.map(\.id))
             selectedIDs.formIntersection(valid)
@@ -946,34 +940,11 @@ struct AlbumList: View {
             }
             updateStatusBar()
         }
-        .onChange(of: topAlbumID) { _, id in
-            guard let id else { return }
-            ViewPositionStore.setTopID(id.uuidString, for: scrollKey)
-        }
     }
 
-    private func firstSelectedAlbumID() -> UUID? {
-        albums.first { selectedIDs.contains($0.id) }?.id
-    }
-
-    private func restoreSavedTop(proxy: ScrollViewProxy) {
-        guard let topAlbumID else { return }
-        DispatchQueue.main.async {
-            proxy.scrollTo(topAlbumID, anchor: .top)
-        }
-    }
-
-    private func scrollToFirstSelectedAlbum(proxy: ScrollViewProxy, animated: Bool) {
-        DispatchQueue.main.async {
-            guard let id = firstSelectedAlbumID() else { return }
-            if animated {
-                withAnimation(.easeInOut(duration: 0.15)) {
-                    proxy.scrollTo(id, anchor: .center)
-                }
-            } else {
-                proxy.scrollTo(id, anchor: .center)
-            }
-        }
+    private func persistFocus() {
+        let id = selectionAnchor ?? selectedIDs.first
+        ViewPositionStore.setSelectionID(id?.uuidString, for: scrollKey)
     }
 
     private func contextAlbums(for album: Album) -> [Album] {
@@ -1234,7 +1205,7 @@ struct SongTable: View {
     @AppStorage private var sortKeyRaw: String
     @AppStorage private var sortAscending: Bool
     @State private var sortedSongs: [Song] = []
-    @State private var topSongID: UUID?
+    @State private var viewportAnchorID: UUID?
 
     @AppStorage private var nameWidth: Double
     @AppStorage private var trackWidth: Double
@@ -1305,10 +1276,17 @@ struct SongTable: View {
                                                        by: initialKey,
                                                        ascending: initialAscending,
                                                        playlistInfo: playlistInfo))
-        let savedTop = ViewPositionStore.topID(for: context.scrollPositionKey).flatMap(UUID.init)
-        _topSongID = State(initialValue: savedTop.flatMap { id in
+        let savedFocus = ViewPositionStore.selectionID(for: context.scrollPositionKey).flatMap(UUID.init)
+        let focus = savedFocus.flatMap { id in
             songs.contains(where: { $0.id == id }) ? id : nil
-        })
+        }
+        let savedAnchor = ViewPositionStore.viewportAnchorID(for: context.scrollPositionKey).flatMap(UUID.init)
+        let anchor = savedAnchor.flatMap { id in
+            songs.contains(where: { $0.id == id }) ? id : nil
+        }
+        _selectedIDs = State(initialValue: focus.map { [$0] } ?? [])
+        _selectionAnchor = State(initialValue: focus)
+        _viewportAnchorID = State(initialValue: anchor ?? focus)
     }
 
     // MARK: Column metadata
@@ -1431,7 +1409,14 @@ struct SongTable: View {
             }
         }
         .background(Theme.contentBackground)
-        .onChange(of: selectedIDs) { _, _ in updateStatusBar() }
+        .onChange(of: selectedIDs) { _, _ in
+            updateStatusBar()
+            persistFocus()
+        }
+        .onChange(of: selectionAnchor) { _, _ in persistFocus() }
+        .onChange(of: viewportAnchorID) { _, id in
+            ViewPositionStore.setViewportAnchorID(id?.uuidString, for: context.scrollPositionKey)
+        }
         .onChange(of: songs) { _, newSongs in
             let valid = Set(newSongs.map(\.id))
             selectedIDs.formIntersection(valid)
@@ -1444,10 +1429,11 @@ struct SongTable: View {
         .onChange(of: playlistInfo) { _, _ in
             rebuildSorted()
         }
-        .onChange(of: topSongID) { _, id in
-            guard let id else { return }
-            ViewPositionStore.setTopID(id.uuidString, for: context.scrollPositionKey)
-        }
+    }
+
+    private func persistFocus() {
+        let id = selectionAnchor ?? selectedIDs.first
+        ViewPositionStore.setSelectionID(id?.uuidString, for: context.scrollPositionKey)
     }
 
     private func updateStatusBar() {
@@ -1674,6 +1660,7 @@ struct SongTable: View {
                 LazyVStack(spacing: 0) {
                     ForEach(Array(sorted.enumerated()), id: \.element.id) { index, song in
                         rowView(song, index: index)
+                            .id(song.id)
                     }
                 }
                 .scrollTargetLayout()
@@ -1681,13 +1668,7 @@ struct SongTable: View {
                 .onTapGesture { clearSelection() }
                 .marqueeSelectable(selection: $selectedIDs, space: "songTableSpace")
             }
-            .scrollPosition(id: $topSongID, anchor: .top)
-            .onAppear {
-                guard let topSongID else { return }
-                DispatchQueue.main.async {
-                    proxy.scrollTo(topSongID, anchor: .top)
-                }
-            }
+            .scrollPosition(id: $viewportAnchorID, anchor: .top)
             .onChange(of: navigator.moveCount) { _, _ in
                 moveSelection()
                 if let id = selectionAnchor {
