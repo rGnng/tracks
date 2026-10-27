@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 struct MiniPlayerView: View {
     @EnvironmentObject private var player: PlayerState
@@ -56,10 +57,10 @@ struct MiniPlayerView: View {
             .frame(width: width, height: width)
             .clipped()
 
-            // The artwork is the window's drag surface. It sits below the
-            // traffic lights and the expand button, so those controls still
-            // receive their own clicks.
-            WindowDragArea()
+            // Keep the cover draggable in MiniPlayer without manual position
+            // tracking. AppKit owns the move, including native screen/window
+            // behavior; acceptsFirstMouse makes it work when Tracks is inactive.
+            WindowDragSurface()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             HStack(spacing: 9) {

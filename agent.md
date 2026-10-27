@@ -129,9 +129,8 @@ Sources/Audia/
   AudioDevices.swift         Core Audio output device enumeration and selection
   SystemVolume.swift         macOS output-volume get/set for system-volume outputs
   WindowMode.swift           Library/MiniPlayer window modes and metrics
-  WindowDragConstraint.swift  Collision limits for custom-dragged main window
   MiniPlayerView.swift       Compact player UI and Liquid Glass mini traffic lights
-  Components.swift           WindowConfigurator, titlebar layout, shared controls
+  Components.swift           WindowConfigurator, titlebar layout, native drag, shared controls
   ContentView.swift          Root layout, sidebar/player/content composition
   PlayerToolbar.swift        Top transport bar, seek, volume, output, search
   SidebarView.swift          Library and playlist sidebar
@@ -286,16 +285,16 @@ Important schema decisions:
     adjustable height (`140...500`, screen permitting). Height is
     `width + 72` (`+ queueHeight` while the queue is open). Window shortcuts are
     Command-1 / Command-2.
-  - Custom dragging (`WindowDragArea`) uses `WindowDragConstraint`. There is no
-    magnetic snapping. The window stays inside the visible screen frame and
-    stops at contact with other visible normal windows, building up to 12pt of
-    sustained pressure before yielding; after it yields, it may overlap windows
-    for the rest of that drag. Windows already overlapping at drag start are
-    ignored for that drag to avoid teleporting. Drag events are captured in an
-    `eventTracking` loop, and the window origin is accumulated as a fractional
-    point rather than read back from `NSWindow`, because AppKit quantizes window
-    frames and repeatedly reading them back caused cumulative lag/stutter.
-    Reversing away from a barrier resets the pressure and resumes immediately.
+  - Window movement is AppKit-native. There is no manual mouse/frame tracking,
+    collision solver, or magnetic snapping layer. The Library toolbar has one
+    full-width `WindowDragSurface` at the bottom of its ZStack; controls sit
+    above it and therefore get hit-test priority, and unclaimed empty
+    mouse-downs fall through to `NSWindow.performDrag(with:)`. The MiniPlayer
+    cover uses the same native surface beneath its controls. It accepts first
+    mouse so dragging works while Tracks is inactive. `isMovable` is false only
+    so AppKit's full-size title bar cannot steal control drags. This is the
+    SwiftUI analogue of Chromium/Helium's frame-view `mouseDown` fallthrough,
+    not a per-gap overlay.
   - MiniPlayer uses custom Liquid Glass-style traffic lights inside the cover;
     they stay hidden until the pointer enters the window, matching the old
     compact-player behavior without adding a title-bar strip. The lights use
@@ -647,9 +646,11 @@ by the queue list, not by the player chrome. Native window resizing is disabled
 while the queue is open so the bottom edge always belongs to this handle; width
 can be changed again after collapsing the queue.
 
-The entire square cover is a window-drag surface. The traffic lights and the
-expand button sit above it in the ZStack, so they still receive clicks; the
-middle controls and queue handle are outside the cover drag area.
+The square cover has a transparent native drag surface that calls
+`NSWindow.performDrag(with:)`. The traffic lights and expand button sit above it
+in the ZStack, so they still receive clicks; the middle controls and queue
+handle are outside the cover drag area. No custom mouse or window-frame tracking
+is involved.
 
 Do not replace these with `standardWindowButton` views. AppKit owns those views
 and reattaches them to `NSTitlebarView` on layout; they are clipped at title-bar

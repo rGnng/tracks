@@ -13,29 +13,25 @@ struct PlayerToolbar: View {
 
     private let queueGap: CGFloat = 10
     private let queueButtonSize: CGFloat = ToolbarButtonMetrics.size
-    private let searchFieldWidth: CGFloat = 180
     private let searchTrailing: CGFloat = 14
     // Traffic lights are centered in the 45pt title bar; with the inset style
     // used by Chrome/Helium they end around x = 74. Controls start a little
     // further right so nothing ever needs to move when the window is resized.
     private let leadingInset: CGFloat = 96
 
-    @State private var leadingControlsWidth: CGFloat = 316
-
     var body: some View {
         ZStack(alignment: .leading) {
             LinearGradient(colors: [Theme.toolbarTop, Theme.toolbarBottom],
                            startPoint: .top, endPoint: .bottom)
 
+            // Bottom-most interactive layer: anything not claimed by a control
+            // above falls through here and starts AppKit's native window drag.
+            WindowDragSurface()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
             HStack(spacing: 0) {
                 LeadingControls()
                     .padding(.leading, leadingInset)
-                    .background(
-                        GeometryReader { geo in
-                            Color.clear.preference(key: LeadingControlsWidthKey.self,
-                                                   value: geo.size.width)
-                        }
-                    )
                 Spacer()
                 SearchField(text: $searchText)
                     .padding(.trailing, searchTrailing)
@@ -48,10 +44,6 @@ struct PlayerToolbar: View {
                 let centerX = geo.size.width / 2
                 let centerY = geo.size.height / 2
                 let playWidth = min(max(geo.size.width * 0.36, 400), 680)
-                let playLeft = centerX - playWidth / 2
-                let playRight = centerX + playWidth / 2 + queueGap + queueButtonSize
-                let searchLeft = geo.size.width - searchTrailing - searchFieldWidth
-                let leftGapStart = max(leadingControlsWidth, leadingInset)
 
                 NowPlayingView(width: playWidth)
                     .position(x: centerX, y: centerY)
@@ -59,190 +51,10 @@ struct PlayerToolbar: View {
                 QueueButton()
                     .position(x: centerX + playWidth / 2 + queueGap + queueButtonSize / 2,
                               y: centerY)
-
-                // Window dragging is scoped to genuinely empty chrome. Attaching
-                // `WindowDragGesture` to the whole background made it win over the
-                // custom sliders (SwiftUI gestures see events even when an AppKit
-                // view is the hit target), so the drag areas exclude the controls.
-                // Left of the traffic lights.
-                let leftEdgeWidth = max(leadingInset - 6, 0)
-                WindowDragArea()
-                    .frame(width: leftEdgeWidth, height: 45)
-                    .position(x: leftEdgeWidth / 2, y: centerY)
-
-                // Strips above and below the transport/volume controls, so the
-                // whole left side of the bar can be dragged without covering the
-                // buttons themselves.
-                WindowDragArea()
-                    .frame(width: leftGapStart, height: 9)
-                    .position(x: leftGapStart / 2, y: 4.5)
-                WindowDragArea()
-                    .frame(width: leftGapStart, height: 9)
-                    .position(x: leftGapStart / 2, y: 40.5)
-
-                if playLeft - leftGapStart > 8 {
-                    WindowDragArea()
-                        .frame(width: playLeft - leftGapStart, height: 45)
-                        .position(x: (leftGapStart + playLeft) / 2, y: centerY)
-                }
-                if searchLeft - playRight > 8 {
-                    WindowDragArea()
-                        .frame(width: searchLeft - playRight, height: 45)
-                        .position(x: (playRight + searchLeft) / 2, y: centerY)
-                }
             }
         }
         .frame(height: 45)
         .clipped()
-        .onPreferenceChange(LeadingControlsWidthKey.self) { leadingControlsWidth = $0 }
-    }
-}
-
-private struct LeadingControlsWidthKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = max(value, nextValue())
-    }
-}
-
-/// Explicit window-drag strip for the top bar's empty chrome.
-///
-/// This follows Chromium/Helium's macOS approach (`NativeWidgetMacNSWindow` +
-/// frame-view drag): the window's automatic title-bar drag is disabled, and
-/// window movement is applied explicitly. Only one mechanism is used — mixing
-/// `performDrag(with:)` with manual frame updates made the window fight itself
-/// and jitter more the further it was dragged.
-struct WindowDragArea: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSView { DragHandle() }
-    func updateNSView(_ nsView: NSView, context: Context) {}
-
-    final class DragHandle: NSView {
-        private var lastMouseLocation: NSPoint?
-        private var dragOrigin: NSPoint?
-        private var dragConstraint: WindowDragConstraint?
-        private var collisionReleased = false
-        private var blockedPressureX: CGFloat = 0
-        private var blockedPressureY: CGFloat = 0
-        /// Once the drag keeps pushing into a window for this many points, that
-        /// barrier yields for the remainder of the current mouse-down gesture.
-        private let breakawayDistance: CGFloat = 12
-
-        override var mouseDownCanMoveWindow: Bool { false }
-
-        override func mouseDown(with event: NSEvent) {
-            guard let window else { return }
-            window.makeKey()
-            lastMouseLocation = NSEvent.mouseLocation
-            dragOrigin = window.frame.origin
-            dragConstraint = WindowDragConstraint(excluding: window)
-            collisionReleased = false
-            blockedPressureX = 0
-            blockedPressureY = 0
-
-            // Capture the rest of the gesture in a tracking loop. Relying on
-            // mouseDragged dispatch can lose events when the pointer crosses
-            // another toolbar view while the window is being moved.
-            window.trackEvents(matching: [.leftMouseDragged, .leftMouseUp],
-                               timeout: TimeInterval.greatestFiniteMagnitude,
-                               mode: .eventTracking) { [weak self] event, stop in
-                guard let self, let event else {
-                    stop.pointee = true
-                    return
-                }
-                if event.type == .leftMouseUp {
-                    self.finishDrag()
-                    stop.pointee = true
-                } else {
-                    self.updateDrag()
-                }
-            }
-        }
-
-        private func updateDrag() {
-            guard let window,
-                  let lastMouseLocation,
-                  let dragConstraint,
-                  var dragOrigin else { return }
-            let current = NSEvent.mouseLocation
-            let deltaX = current.x - lastMouseLocation.x
-            let deltaY = current.y - lastMouseLocation.y
-            self.lastMouseLocation = current
-
-            // Accumulate in a fractional origin. NSWindow may quantize its frame
-            // to whole screen points; reading that quantized origin back on the
-            // next event drops the fractional remainder and makes the window
-            // lag and stutter behind the pointer.
-            dragOrigin.x += deltaX
-            dragOrigin.y += deltaY
-
-            if collisionReleased {
-                let origin = dragConstraint.resolveScreenOnly(proposedOrigin: dragOrigin,
-                                                              size: window.frame.size)
-                self.dragOrigin = origin
-                window.setFrameOrigin(origin)
-                return
-            }
-
-            let resolution = dragConstraint.resolve(proposedOrigin: dragOrigin,
-                                                    size: window.frame.size,
-                                                    previousFrame: window.frame)
-
-            if resolution.windowBlockSignX != 0 {
-                let pushingRight = resolution.windowBlockSignX > 0
-                if (pushingRight && deltaX > 0.001) || (!pushingRight && deltaX < -0.001) {
-                    blockedPressureX += abs(deltaX)
-                } else if deltaX != 0 {
-                    blockedPressureX = 0
-                }
-            } else {
-                blockedPressureX = 0
-            }
-
-            if resolution.windowBlockSignY != 0 {
-                let pushingUp = resolution.windowBlockSignY > 0
-                if (pushingUp && deltaY > 0.001) || (!pushingUp && deltaY < -0.001) {
-                    blockedPressureY += abs(deltaY)
-                } else if deltaY != 0 {
-                    blockedPressureY = 0
-                }
-            } else {
-                blockedPressureY = 0
-            }
-
-            if blockedPressureX >= breakawayDistance || blockedPressureY >= breakawayDistance {
-                // Yield after sustained pressure. The window catches up to the
-                // pointer and may overlap other windows for the rest of this
-                // drag; a new drag resets the barrier.
-                collisionReleased = true
-                let catchUp = NSPoint(
-                    x: resolution.origin.x + resolution.windowBlockSignX * blockedPressureX,
-                    y: resolution.origin.y + resolution.windowBlockSignY * blockedPressureY
-                )
-                let origin = dragConstraint.resolveScreenOnly(proposedOrigin: catchUp,
-                                                              size: window.frame.size)
-                self.dragOrigin = origin
-                blockedPressureX = 0
-                blockedPressureY = 0
-                window.setFrameOrigin(origin)
-                return
-            }
-
-            self.dragOrigin = resolution.origin
-            window.setFrameOrigin(resolution.origin)
-        }
-
-        private func finishDrag() {
-            lastMouseLocation = nil
-            dragOrigin = nil
-            dragConstraint = nil
-            collisionReleased = false
-            blockedPressureX = 0
-            blockedPressureY = 0
-        }
-
-        override func mouseUp(with event: NSEvent) {
-            finishDrag()
-        }
     }
 }
 

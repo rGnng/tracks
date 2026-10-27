@@ -33,18 +33,20 @@ private var didConfigureFrameView = false
 // by -9pt used to push the traffic lights into the custom toolbar, but it also
 // broke full-screen layout.
 //
-// Window dragging is taken over explicitly (see Chromium/Helium's macOS window
-// code): AppKit treats the title-bar strip as a drag area and that wins over
-// controls drawn underneath it, which made dragging the volume slider move the
-// window. So the automatic title-bar drag is disabled here and `WindowDragArea`
-// starts drags explicitly from empty toolbar chrome.
+// Window movement is delegated to AppKit from a bottom-most toolbar surface and
+// the MiniPlayer cover. The automatic title-bar drag is disabled because it
+// would swallow control drags in the full-size toolbar.
 @MainActor
 private func configureWindow(_ window: NSWindow) {
     window.titleVisibility = .hidden
     window.titlebarAppearsTransparent = true
     window.styleMask.insert(.fullSizeContentView)
     window.titlebarSeparatorStyle = .none
+    // AppKit's title-bar drag would also swallow mouse-downs on controls in the
+    // full-size toolbar. Drag surfaces below ask AppKit to perform the native
+    // window move explicitly instead.
     window.isMovable = false
+    window.isMovableByWindowBackground = false
     window.initialFirstResponder = nil
     window.tabbingMode = .disallowed
 
@@ -183,6 +185,28 @@ struct FractionDragControl: NSViewRepresentable {
             let point = convert(event.locationInWindow, from: nil)
             let fraction = min(max(point.x / bounds.width, 0), 1)
             onChanged?(fraction)
+        }
+    }
+}
+
+// MARK: - Native window drag surface
+
+/// Transparent hit surface that hands dragging to AppKit's native window move.
+/// It does not track the mouse or window frame itself.
+struct WindowDragSurface: NSViewRepresentable {
+    func makeNSView(context: Context) -> DragView { DragView() }
+    func updateNSView(_ nsView: DragView, context: Context) {}
+
+    final class DragView: NSView {
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+            // Activate before the drag begins so the first mouse-down is not
+            // consumed by window activation.
+            window?.makeKey()
+            return true
+        }
+
+        override func mouseDown(with event: NSEvent) {
+            window?.performDrag(with: event)
         }
     }
 }

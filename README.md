@@ -39,9 +39,8 @@ SQLite, and includes a built-in MPD server.
 - Output menu offers plain System Default, System Default with Volume Control,
   and all real Core Audio devices. The volume-control option locks player
   attenuation and routes volume to the macOS output.
-- Custom window dragging stays inside screen bounds and resists crossing other
-  windows; after 12pt of sustained pressure it yields and can overlap for the
-  rest of that drag. It never snaps toward other windows.
+- Window movement is native AppKit dragging. There is no custom collision
+  barrier, manual position tracking, or magnetic snapping layer.
 - Built-in MPD server for browsing and controlling the library over TCP.
 
 ## Build and run
