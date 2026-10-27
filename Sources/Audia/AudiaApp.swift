@@ -1054,7 +1054,9 @@ struct SettingsView: View {
     private func runFullScan(_ mediaLibrary: MusicLibrary) {
         Task { @MainActor in
             if let report = await library.fullScan(mediaLibrary) {
-                missingFileReport = report
+                if !report.songs.isEmpty {
+                    missingFileReport = report
+                }
             }
         }
     }
@@ -1071,7 +1073,17 @@ struct SettingsView: View {
 
         Task { @MainActor in
             if let report = await library.previewRelocation(of: mediaLibrary, to: url.path) {
-                missingFileReport = report
+                if report.songs.isEmpty {
+                    do {
+                        let backup = try await library.applyRelocation(report, removingMissingIDs: [])
+                        alert = .notice(title: "Library Relocated",
+                                        message: "The library was relocated. Backup saved at:\n\(backup.path)")
+                    } catch {
+                        alert = .error(error.localizedDescription)
+                    }
+                } else {
+                    missingFileReport = report
+                }
             }
         }
     }
@@ -1111,6 +1123,18 @@ private struct MissingFilesReviewView: View {
 
             TextField("Search title, artist, album, or path", text: $searchText)
                 .textFieldStyle(.roundedBorder)
+
+            HStack(spacing: 8) {
+                Spacer()
+                Button("Select All") {
+                    selectedIDs = Set(report.songs.map(\.id))
+                }
+                .disabled(report.songs.isEmpty || selectedIDs.count == report.songs.count)
+                Button("Deselect All") {
+                    selectedIDs.removeAll()
+                }
+                .disabled(selectedIDs.isEmpty)
+            }
 
             HStack(spacing: 10) {
                 Text("Remove")
@@ -1180,7 +1204,7 @@ private struct MissingFilesReviewView: View {
                     .font(SettingsTypography.caption)
                     .foregroundColor(Theme.secondaryText)
                 Spacer()
-                Button("Keep") {
+                Button(report.relocation == nil ? "Keep" : "Cancel") {
                     onKeep()
                     dismiss()
                 }
@@ -1239,9 +1263,9 @@ private struct MissingFilesReviewView: View {
 
     private var relocationConfirmation: String {
         if selectedIDs.isEmpty {
-            return "Matched song paths will be updated. Unmatched entries will remain in the database and be marked missing. No audio files are moved or deleted."
+            return "Every stored song path will be updated to its relative location under the new root, even if its file is missing. No database entries or audio files will be deleted."
         }
-        return "Matched song paths will be updated. The \(selectedIDs.count) selected unmatched index entries and playlist references will be removed; audio files are not touched."
+        return "Unselected song paths will be updated to their relative locations under the new root, even if their files are missing. The \(selectedIDs.count) selected unmatched entries and playlist references will be removed; audio files are not touched."
     }
 
     private func selectionBinding(for id: UUID) -> Binding<Bool> {

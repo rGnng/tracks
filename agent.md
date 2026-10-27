@@ -239,13 +239,19 @@ Important schema decisions:
   new paths only; do not reparse known paths or remove missing rows.
 - Full Scan refreshes files when `mtime` or `file_size` changes. File contents are
   never hashed. Missing rows are reviewed per track in a searchable table; only
-  explicitly selected rows are removed from the Tracks index.
+  explicitly selected rows are removed from the Tracks index. No review sheet is
+  shown when there are no missing rows.
 - Scan deletion candidates are available only if the root exists, is readable,
   and enumeration completed. A readable empty root still produces a missing-file
   report; no volume UUID/label is checked or stored.
 - Relocate matches the full relative path beneath the old and new library roots,
   preserving song IDs and playlist/play-count/star metadata. Unmatched tracks use
-  the same searchable missing-file review as Full Scan.
+  the same searchable missing-file review as Full Scan. If none are unmatched,
+  relocation completes without a review sheet. During relocation, every
+  unselected song path is rewritten under the new root even when that file is
+  currently absent; explicitly selected unmatched rows and their playlist items
+  are deleted. The review's left action is Cancel, and it offers Select All and
+  Deselect All.
 - `LibraryScanner` resolves symlinks and reads metadata concurrently.
 - Internal imports use `LibraryOrganizer`:
   - Canonical path: `<Album Artist>/<Album>/[disc-]track.title-artist.ext`

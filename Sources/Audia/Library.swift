@@ -731,14 +731,14 @@ final class Library: ObservableObject {
         let missingIDs = matching.unmatchedIDs
         let songByID = Dictionary(uniqueKeysWithValues: allSongs.map { ($0.id, $0) })
         let missingSongs = missingIDs.compactMap { songByID[$0] }
-        let matchedPaths = Set(matches.values)
+        let matchedPaths = Set(matching.matchedIDs.compactMap { matches[$0] })
         let additionalCount = max(0, foundPaths.subtracting(matchedPaths).count)
         let plan = LibraryRelocationPlan(libraryID: location.id,
                                          newRoot: newRoot,
                                          matchedSongPaths: matches,
                                          discoveredPaths: foundPaths,
                                          scannedTracks: result.tracks,
-                                         matchedCount: matches.count,
+                                         matchedCount: matching.matchedIDs.count,
                                          additionalFileCount: additionalCount)
         isScanning = false
         scanProgress = 1

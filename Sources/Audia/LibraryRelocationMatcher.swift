@@ -6,7 +6,10 @@ struct LibrarySongPath: Sendable {
 }
 
 struct LibraryRelocationMatch: Sendable {
+    /// New absolute path for every stored song under the old root, including
+    /// missing files that the user chooses to keep.
     let songPaths: [UUID: String]
+    let matchedIDs: Set<UUID>
     let unmatchedIDs: Set<UUID>
 }
 
@@ -18,7 +21,8 @@ enum LibraryRelocationMatcher {
         let old = canonicalPath(oldRoot)
         let new = canonicalPath(newRoot)
         let discovered = Set(discoveredPaths.map(canonicalPath))
-        var matched: [UUID: String] = [:]
+        var relocated: [UUID: String] = [:]
+        var matched = Set<UUID>()
 
         for song in songs {
             let oldPath = canonicalPath(song.path)
@@ -27,13 +31,16 @@ enum LibraryRelocationMatcher {
             while relative.hasPrefix("/") { relative.removeFirst() }
             let candidate = canonicalPath(URL(fileURLWithPath: new)
                 .appendingPathComponent(relative).path)
+            relocated[song.id] = candidate
             if discovered.contains(candidate) {
-                matched[song.id] = candidate
+                matched.insert(song.id)
             }
         }
 
-        let unmatched = Set(songs.map(\.id)).subtracting(matched.keys)
-        return LibraryRelocationMatch(songPaths: matched, unmatchedIDs: unmatched)
+        let unmatched = Set(songs.map(\.id)).subtracting(matched)
+        return LibraryRelocationMatch(songPaths: relocated,
+                                      matchedIDs: matched,
+                                      unmatchedIDs: unmatched)
     }
 
     private static func canonicalPath(_ path: String) -> String {

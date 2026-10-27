@@ -72,6 +72,10 @@ final class LibraryWorkflowTests: XCTestCase {
         try FileManager.default.createDirectory(at: newAudio.deletingLastPathComponent(), withIntermediateDirectories: true)
         try makeWaveFile().write(to: oldAudio)
         try makeWaveFile().write(to: newAudio)
+        let oldMissingAudio = oldRoot.appendingPathComponent("Album/missing.wav")
+        let newMissingAudio = newRoot.appendingPathComponent("Album/missing.wav")
+        let oldDeletedAudio = oldRoot.appendingPathComponent("Album/deleted.wav")
+        let newDeletedAudio = newRoot.appendingPathComponent("Album/deleted.wav")
 
         let database = LibraryDatabase(path: fixture.appendingPathComponent("library.sqlite").path)
         defer { database.closeForTermination() }
@@ -79,24 +83,40 @@ final class LibraryWorkflowTests: XCTestCase {
                                              kind: .external,
                                              name: "Move Me")
         let track = makeTrack(path: oldAudio.path, title: "Move Me")
-        _ = database.sync(tracks: [track], internalMusicRoot: nil, libraries: [library])
-        let song = try XCTUnwrap(database.loadLibrary().albums.first?.songs.first)
+        let missingTrack = makeTrack(path: oldMissingAudio.path, title: "Keep Missing")
+        let deletedTrack = makeTrack(path: oldDeletedAudio.path, title: "Delete Missing")
+        _ = database.sync(tracks: [track, missingTrack, deletedTrack],
+                          internalMusicRoot: nil,
+                          libraries: [library])
+        let allSongs = database.loadLibrary().albums.flatMap(\.songs)
+        let song = try XCTUnwrap(allSongs.first { $0.title == "Move Me" })
+        let missingSong = try XCTUnwrap(allSongs.first { $0.title == "Keep Missing" })
+        let deletedSong = try XCTUnwrap(allSongs.first { $0.title == "Delete Missing" })
         let playlist = database.createPlaylist(name: "Keep Empty Playlist")
-        database.addSongsToPlaylist(playlist.id, songIDs: [song.id])
+        database.addSongsToPlaylist(playlist.id, songIDs: [song.id, missingSong.id, deletedSong.id])
         database.recordPlay(song.id)
 
         let backup = try database.backup()
         XCTAssertTrue(FileManager.default.fileExists(atPath: backup.path))
         XCTAssertTrue(backup.lastPathComponent.contains(".backup-"))
-        XCTAssertEqual(LibraryDatabase.inspect(path: backup.path)?.songCount, 1)
+        XCTAssertEqual(LibraryDatabase.inspect(path: backup.path)?.songCount, 3)
 
         try database.relocateLibrary(id: library.id,
                                      to: newRoot.path,
-                                     songPaths: [song.id: newAudio.path])
-        let relocated = try XCTUnwrap(database.loadLibrary().albums.first?.songs.first)
+                                     songPaths: [song.id: newAudio.path,
+                                                 missingSong.id: newMissingAudio.path,
+                                                 deletedSong.id: newDeletedAudio.path],
+                                     removingSongIDs: [deletedSong.id])
+        let relocatedSongs = database.loadLibrary().albums.flatMap(\.songs)
+        let relocated = try XCTUnwrap(relocatedSongs.first { $0.id == song.id })
         XCTAssertEqual(relocated.id, song.id)
         XCTAssertEqual(relocated.fileURL?.path, newAudio.path)
         XCTAssertEqual(relocated.plays, 1)
+        let relocatedMissing = try XCTUnwrap(relocatedSongs.first { $0.id == missingSong.id })
+        XCTAssertEqual(relocatedMissing.fileURL?.path, newMissingAudio.path)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: relocatedMissing.fileURL!.path))
+        XCTAssertNil(relocatedSongs.first { $0.id == deletedSong.id })
+        XCTAssertEqual(database.playlistSongIDs(playlist.id), [song.id, missingSong.id])
         XCTAssertEqual(database.loadLibraries().first?.path, newRoot.path)
 
         XCTAssertThrowsError(try database.deleteLibraryAndSongs(id: library.id),
@@ -142,7 +162,8 @@ final class LibraryWorkflowTests: XCTestCase {
                                                       newRoot: newRoot,
                                                       songs: [songs[1]],
                                                       discoveredPaths: changedFolder)
-        XCTAssertTrue(partial.songPaths.isEmpty)
+        XCTAssertEqual(partial.songPaths[secondID], "\(newRoot)/albumB/1-helloworld.mp3")
+        XCTAssertTrue(partial.matchedIDs.isEmpty)
         XCTAssertEqual(partial.unmatchedIDs, [secondID])
     }
 
@@ -192,7 +213,8 @@ final class LibraryWorkflowTests: XCTestCase {
             songs: [LibrarySongPath(id: songID, path: originalTrack.path)],
             discoveredPaths: Set([movedTrack.path])
         )
-        XCTAssertNil(afterRelativePathChange.songPaths[songID])
+        XCTAssertEqual(afterRelativePathChange.songPaths[songID],
+                       "\(renamedRoot.path)/albumA/1-helloworld.wav")
         XCTAssertEqual(afterRelativePathChange.unmatchedIDs, [songID])
         XCTAssertTrue(FileManager.default.fileExists(atPath: movedTrack.path))
     }
