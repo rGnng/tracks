@@ -745,8 +745,8 @@ struct NowPlayingView: View {
     /// Shuffle moves this far toward the artwork; star/repeat move the same
     /// distance toward the trailing edge.
     private let sideControlsOutset: CGFloat = 4
-    /// Lift shuffle/star/repeat slightly above the vertical center.
-    private let sideControlsLift: CGFloat = 1
+    /// Lift shuffle/star/repeat so their visual centers align with the title line.
+    private let sideControlsLift: CGFloat = 3
     /// The 15pt icons sit inside a 20pt hit frame, so the visible edge is
     /// inset by half the difference. Use that to line up the time labels.
     private let sideControlIconInset: CGFloat = 2.5
@@ -809,7 +809,7 @@ struct NowPlayingView: View {
                             .allowsHitTesting(titleHovering)
                     }
                     .padding(.horizontal, 60)
-                    .offset(y: 3)
+                    .offset(y: 5)
                     .onHover { titleHovering = $0 }
 
                     HStack(spacing: 0) {
@@ -862,7 +862,7 @@ struct NowPlayingView: View {
                 .padding(.leading, Self.artworkSize + contentInset - sideControlsOutset + sideControlIconInset)
                 .padding(.trailing, max(0, contentInset - sideControlsOutset + sideControlIconInset))
                 .frame(height: 10)
-                .offset(y: -1)
+                .offset(y: -3)
 
                 // Full-bleed seek bar: starts at the artwork's right edge and runs
                 // to the panel's right edge, with no padding.
