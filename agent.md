@@ -666,9 +666,13 @@ by AppKit's title-bar layout pass.
   the window width by 1pt and restoring the exact frame immediately.
 - It is called:
   - During initial window configuration.
-  - From `NSWindow.didBecomeKeyNotification` for the first and later key changes.
-  - From an asynchronous fallback after registration.
+  - From an asynchronous fallback after the first layout turn.
   - From `WindowModeCenter` when switching Library/MiniPlayer.
+- It is deliberately **not** called from `NSWindow.didBecomeKeyNotification`.
+  `WindowDragSurface` calls `makeKey()` before `performDrag(with:)` so an
+  inactive window can be dragged immediately; refreshing the title bar there
+  would run the width nudge during drag start and produce a visible one-frame
+  jitter.
 - This fixed a first-open bug where traffic lights were 7pt from the top instead
   of the centered 15pt offset. Resizing the window used to fix it by accident.
 - Do not apply `_shouldCenterTrafficLights` to standard windows. AppKit's native
@@ -682,8 +686,11 @@ by AppKit's title-bar layout pass.
   - MiniPlayer uses a title-bar-free custom cover; its 14pt lights sit at
     `x=10`, `y=10` with symmetric top/left margins.
   - Resizing does not change the centered offset.
-- Do not remove the key-window refresh or the width nudge. The private title-bar
-  height is only re-read during a frame/layout pass.
+- Do not remove the width nudge: a plain `needsLayout` pass was tested and left
+  the initial traffic lights at the stock `8pt` inset instead of the centered
+  `14.5pt` offset. The private title-bar height is only re-read during a
+  frame/layout pass. Keep the nudge restricted to initial setup and mode
+  changes; never run it from a key/activation notification.
 
 ## 11. Schema migrations
 

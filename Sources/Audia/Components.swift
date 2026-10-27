@@ -53,8 +53,9 @@ private func configureWindow(_ window: NSWindow) {
     configureBrowserStyleTitlebar(for: window)
     WindowModeCenter.shared.register(window)
 
-    // Fallback for the case where the window was already key before the
-    // didBecomeKey observer was installed.
+    // The first synchronous pass runs while SwiftUI is still sizing/showing the
+    // window. Run one more after the current layout turn so the private
+    // title-bar height is applied to the final frame.
     DispatchQueue.main.async { [weak window] in
         guard let window else { return }
         refreshBrowserTitlebarLayout(for: window)
@@ -112,27 +113,13 @@ private func configureBrowserStyleTitlebar(for window: NSWindow) {
     }
 
     refreshBrowserTitlebarLayout(for: window)
-
-    // The first layout happens before SwiftUI has finished sizing/showing the
-    // window, so the private title-bar height has not been applied yet. Refresh
-    // once more when the window becomes key; resizing previously did this by
-    // accident, which is why the traffic lights only centred after a resize.
-    NotificationCenter.default.addObserver(
-        forName: NSWindow.didBecomeKeyNotification,
-        object: window,
-        queue: .main
-    ) { [weak window] _ in
-        Task { @MainActor in
-            guard let window else { return }
-            refreshBrowserTitlebarLayout(for: window)
-        }
-    }
 }
 
 /// AppKit only re-reads `_titlebarHeight` during a title-bar layout pass that is
 /// triggered by a frame change. Nudge the width by one point and restore the
-/// exact frame immediately; this is invisible but applies the title-bar height
-/// and centres the traffic lights.
+/// exact frame. This is only called during initial setup, mode changes and
+/// full-screen transitions, never merely because the window becomes key; an
+/// activation refresh here caused a visible one-frame jitter at drag start.
 @MainActor
 func refreshBrowserTitlebarLayout(for window: NSWindow) {
     guard !window.styleMask.contains(.fullScreen),
