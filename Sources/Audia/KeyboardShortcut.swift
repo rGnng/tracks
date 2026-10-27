@@ -9,7 +9,7 @@ struct KeyboardShortcut: Codable, Equatable {
     var key: String
     var modifiers: UInt
     var display: String
-    /// Physical key code, used by Carbon global hot keys. Older persisted
+    /// Physical key code, used by Carbon system-wide hot keys. Older persisted
     /// shortcuts may not have one.
     var keyCode: UInt16? = nil
 
@@ -124,14 +124,14 @@ struct KeyboardShortcut: Codable, Equatable {
 
 enum ShortcutScope: String, CaseIterable, Identifiable {
     case inApp
-    case global
+    case systemWide
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .inApp: return "In-App"
-        case .global: return "Global"
+        case .systemWide: return "System-wide"
         }
     }
 }
@@ -168,7 +168,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
     var defaultScope: ShortcutScope {
         switch self {
         case .mute, .volumeDown, .volumeUp: return .inApp
-        case .showHide, .starCurrent: return .global
+        case .showHide, .starCurrent: return .systemWide
         }
     }
 
@@ -199,7 +199,8 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
 
 enum KeyboardShortcutStore {
     private static let showHideKey = "shortcut.showHideWindow.v1"
-    private static let starKey = "shortcut.starCurrent.global.v1"
+    private static let starKey = "shortcut.starCurrent.systemWide.v1"
+    private static let legacyStarKey = "shortcut.starCurrent.global.v1"
     private static let muteKey = "shortcut.mute.v1"
     private static let volumeDownKey = "shortcut.volumeDown.v1"
     private static let volumeUpKey = "shortcut.volumeUp.v1"
@@ -217,11 +218,18 @@ enum KeyboardShortcutStore {
     }
 
     static func loadStar() -> KeyboardShortcut? {
-        load(key: starKey, fallback: .defaultStarCurrent)
+        let defaults = UserDefaults.standard
+        if defaults.data(forKey: starKey) == nil,
+           let legacy = defaults.data(forKey: legacyStarKey) {
+            defaults.set(legacy, forKey: starKey)
+            defaults.removeObject(forKey: legacyStarKey)
+        }
+        return load(key: starKey, fallback: .defaultStarCurrent)
     }
 
     static func saveStar(_ shortcut: KeyboardShortcut?) {
         save(shortcut, key: starKey)
+        UserDefaults.standard.removeObject(forKey: legacyStarKey)
     }
 
     static func load(_ action: ShortcutAction) -> KeyboardShortcut? {
@@ -246,11 +254,11 @@ enum KeyboardShortcutStore {
 
     static func scope(for action: ShortcutAction) -> ShortcutScope {
         let key = "shortcut.\(action.rawValue).scope.v1"
-        guard let raw = UserDefaults.standard.string(forKey: key),
-              let scope = ShortcutScope(rawValue: raw) else {
+        guard let raw = UserDefaults.standard.string(forKey: key) else {
             return action.defaultScope
         }
-        return scope
+        if raw == "global" { return .systemWide }
+        return ShortcutScope(rawValue: raw) ?? action.defaultScope
     }
 
     static func setScope(_ scope: ShortcutScope, for action: ShortcutAction) {

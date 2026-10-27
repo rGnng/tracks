@@ -34,10 +34,10 @@ SQLite, and includes a built-in MPD server.
   popups. The icon is off by default; star popups default on, track-change
   popups default off, and popups can be limited to when the Library window is
   not focused. Popup duration is configurable and defaults to 1500 ms.
-- Each shortcut can be independently set to In-App or Global. Defaults are
-  in-app mute/volume and global show/hide Tracks (F17) plus add/remove current
-  song from Stared playlist (F18). Command-1/2 reopen the main window when every
-  window is closed.
+- Each shortcut has a System-wide checkbox. Unchecked means In-App only; checked
+  works in other apps. Defaults are in-app mute/volume and system-wide show/hide
+  Tracks (F17) plus add/remove current song from Stared playlist (F18).
+  Command-1/2 reopen the main window when every window is closed.
 - Library and MiniPlayer are separate windows and are never shown together.
   Opening MiniPlayer hides Library; closing MiniPlayer restores Library. The
   MiniPlayer has no separate return-to-Library button.
@@ -111,7 +111,7 @@ Sources/Audia/
   Theme.swift            Light/dark palette and dynamic colors
   DragController.swift   Long-press drag and marquee support
   KeyboardShortcut.swift Shortcut recorder and persistence
-  GlobalShortcuts.swift  Carbon global hot keys
+  SystemWideShortcuts.swift Carbon system-wide hot keys
   TrayController.swift   Menu-bar disc icon and popups
   LibraryFocusSink.swift Keeps search from auto-focusing on window show
 

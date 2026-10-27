@@ -7,8 +7,8 @@ import Carbon
 /// work without requiring Accessibility permission and consume the key before
 /// it reaches the foreground app.
 @MainActor
-final class GlobalShortcutCenter {
-    static let shared = GlobalShortcutCenter()
+final class SystemWideShortcutCenter {
+    static let shared = SystemWideShortcutCenter()
 
     private static let signature = OSType(0x54524B53) // "TRKS"
 
@@ -28,7 +28,7 @@ final class GlobalShortcutCenter {
         unregisterAll()
 
         for (offset, action) in ShortcutAction.allCases.enumerated() {
-            guard KeyboardShortcutStore.scope(for: action) == .global,
+            guard KeyboardShortcutStore.scope(for: action) == .systemWide,
                   let shortcut = KeyboardShortcutStore.load(action) else { continue }
             let id = UInt32(offset + 1)
             if register(shortcut, id: id) {
@@ -61,7 +61,7 @@ final class GlobalShortcutCenter {
                 guard status == noErr else { return status }
                 DispatchQueue.main.async {
                     MainActor.assumeIsolated {
-                        GlobalShortcutCenter.shared.handle(id: hotKeyID.id)
+                        SystemWideShortcutCenter.shared.handle(id: hotKeyID.id)
                     }
                 }
                 return noErr

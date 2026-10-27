@@ -139,7 +139,7 @@ Sources/Audia/
   BrowserViews.swift         Artists/Genres master-detail browsers
   ContextMenus.swift         Shared album/song context menus
   KeyboardShortcut.swift     Standard AppKit shortcut recorder, matching, persistence
-  GlobalShortcuts.swift      Carbon global hot keys for show/hide and current-song star
+  SystemWideShortcuts.swift  Carbon system-wide hot keys for show/hide and current-song star
   TrayController.swift       Menu-bar opticaldisc.fill icon, transient track/star popup
   LibraryFocusSink.swift     Initial first responder for the Library window
   SettingsFocusSink.swift    Invisible initial first responder for Settings
@@ -292,8 +292,8 @@ Important schema decisions:
     windows are mutually exclusive: opening one orders the other out. Closing
     MiniPlayer (red light or Command-W via `performClose`) restores Library.
     The main window is retained strongly; `showWindow()` deminiaturizes, orders
-    it front, activates the app, and gives it focus. Global F17 toggles the
-    currently active mode. MiniPlayer has no separate “return to Library”
+    it front, activates the app, and gives it focus. The system-wide F17
+    shortcut toggles the currently active mode. MiniPlayer has no separate “return to Library”
     button; the close control is the return path.
   - `LibraryFocusSink` is the main window's initial first responder and is
     re-focused when `.libraryWindowDidShow` is posted by `showLibraryWindow`.
@@ -371,19 +371,19 @@ Important schema decisions:
 - Play Later appends to the bottom of the queue and sits below Play Next.
 - Get Info has Details, Artwork, and File tabs, with tag/artwork writeback for the
   Internal Library.
-- Every shortcut row has its own **In-App** or **Global** scope. Defaults:
-  mute `m`, volume down `-`, volume up `=` are In-App; show/hide Tracks `F17`
-  and add/remove the current song from Stared playlist `F18` are Global.
-  In-App shortcuts are handled by the local key monitor; Global shortcuts use
-  Carbon hot keys (`GlobalShortcuts.swift`) and work without Accessibility
-  permission while another app is focused. Moving a shortcut between scopes
-  saves the scope and re-registers the Carbon hot keys. The star action always
-  targets the current playing song, not row selection.
+- Every shortcut row has a **System-wide** checkbox. Unchecked means in-app
+  (only while Tracks is focused); checked uses Carbon hot keys
+  (`SystemWideShortcuts.swift`) and works in other apps without Accessibility
+  permission. Defaults: mute `m`, volume down `-`, volume up `=` are unchecked;
+  show/hide Tracks `F17` and add/remove the current song from Stared playlist
+  `F18` are checked. Moving a shortcut between scopes saves the scope and
+  re-registers the Carbon hot keys. The star action always targets the current
+  playing song, not row selection.
 - Settings > Shortcuts uses standard AppKit shortcut recorders
   (`KeyboardShortcut.swift`): click a field, press a key combination, Escape
   cancels, and bare Delete clears the shortcut. Modifiers and shifted symbols
   are supported. Each shortcut is stored as JSON under its own UserDefaults key
-  (`shortcut.showHideWindow.v1`, `shortcut.starCurrent.global.v1`,
+  (`shortcut.showHideWindow.v1`, `shortcut.starCurrent.systemWide.v1`,
   `shortcut.mute.v1`, `shortcut.volumeDown.v1`, `shortcut.volumeUp.v1`), with a
   matching `shortcut.<action>.scope.v1` value. Reset restores that row's
   shortcut default, not its scope. The local handler skips text editing and returns
@@ -391,7 +391,7 @@ Important schema decisions:
   `.goBackRequested`; matching also accepts keyCode 33 so the shortcut still
   works with non-US/IME keyboard input.
 - System tray (menu bar) is off by default. `TrayController` uses the SF Symbol
-  `opticaldisc.fill` (fallback `opticaldisc` / `record.circle`). Optional track-change and
+  `opticaldisc.fill`. Optional track-change and
   current-song star popups default to track-change off, star on, and
   `onlyWhenLibraryNotFocused` on. The compact popup has artwork, title + star,
   artist/album, and an upward triangle. Its duration is configurable through

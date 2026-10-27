@@ -22,6 +22,7 @@ final class TrayController: NSObject {
     private var lastSongID: UUID?
     private var lastStarred: Bool?
     private var started = false
+    private var starCheckScheduled = false
 
     private override init() {
         super.init()
@@ -82,9 +83,8 @@ final class TrayController: NSObject {
 
         guard statusItem == nil else { return }
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        let image = NSImage(systemSymbolName: "opticaldisc.fill", accessibilityDescription: "Tracks")
-            ?? NSImage(systemSymbolName: "opticaldisc", accessibilityDescription: "Tracks")
-            ?? NSImage(systemSymbolName: "record.circle", accessibilityDescription: "Tracks")
+        let image = NSImage(systemSymbolName: "opticaldisc.fill",
+                            accessibilityDescription: "Tracks")
         image?.isTemplate = true
         item.button?.image = image
         item.button?.toolTip = "Tracks"
@@ -135,16 +135,33 @@ final class TrayController: NSObject {
             .store(in: &cancellables)
 
         Library.shared.$starredSongIDs
-            .sink { [weak self] ids in
-                guard let self, let song = PlayerState.shared.currentSong else { return }
-                let starred = ids.contains(song.id)
-                let changed = starred != self.lastStarred
-                self.lastStarred = starred
-                if changed, self.starChangeEnabled {
-                    self.showPopup()
-                }
+            .sink { [weak self] _ in
+                // @Published emits before the property reflects the new set.
+                // Defer one main-queue turn, then query the authoritative
+                // Library state and pop the value that was actually read.
+                self?.scheduleStarPopupCheck()
             }
             .store(in: &cancellables)
+    }
+
+    private func scheduleStarPopupCheck() {
+        guard !starCheckScheduled else { return }
+        starCheckScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.starCheckScheduled = false
+            self.checkStarState()
+        }
+    }
+
+    private func checkStarState() {
+        guard let song = PlayerState.shared.currentSong else { return }
+        let starred = Library.shared.isStarred(songID: song.id)
+        let changed = starred != lastStarred
+        lastStarred = starred
+        if changed, starChangeEnabled {
+            showPopup(starred: starred)
+        }
     }
 
     private func currentSongChanged() {
@@ -163,11 +180,11 @@ final class TrayController: NSObject {
         return window.isVisible && window.isKeyWindow
     }
 
-    private func showPopup() {
+    private func showPopup(starred: Bool? = nil) {
         guard enabled, let song = PlayerState.shared.currentSong else { return }
         if onlyWhenLibraryNotFocused, libraryIsFocused { return }
 
-        let isStarred = Library.shared.isStarred(songID: song.id)
+        let isStarred = starred ?? Library.shared.isStarred(songID: song.id)
         let view = TrayPopupView(song: song, isStarred: isStarred)
         let size = NSSize(width: 300, height: 63)
 

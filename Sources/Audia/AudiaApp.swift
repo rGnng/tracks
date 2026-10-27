@@ -84,7 +84,7 @@ struct AudiaApp: App {
             SettingsView()
                 .accentColor(highlightColor)
         }
-        .defaultSize(width: 700, height: 720)
+        .defaultSize(width: 760, height: 720)
 
         Window("Get Info", id: "get-info") {
             GetInfoView()
@@ -174,33 +174,33 @@ struct SettingsView: View {
     @State private var alert: SettingsAlert?
     @State private var mpdApplyTask: Task<Void, Never>?
     @State private var artworkQualityText = "80"
+    @State private var selectedSection: SettingsSection? = .general
     @FocusState private var artworkQualityFocused: Bool
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
-                SettingsGroupHeader(title: "General",
-                                    subtitle: "Appearance and album browsing")
-                generalBox
-
-                SettingsGroupHeader(title: "Library",
-                                    subtitle: "Music folders, scanning, and artwork")
-                libraryBox
-
-                SettingsGroupHeader(title: "Shortcuts",
-                                    subtitle: "Each action can be In-App or Global")
-                shortcutsBox
-
-                SettingsGroupHeader(title: "Services",
-                                    subtitle: "Menu-bar icon, notifications, and MPD")
-                trayBox
-                mpdBox
-
-                Spacer(minLength: 0)
+        HStack(spacing: 0) {
+            List(selection: $selectedSection) {
+                ForEach(SettingsSection.allCases) { section in
+                    Label(section.title, systemImage: section.icon)
+                        .tag(section)
+                }
             }
-            .padding(22)
+            .listStyle(.sidebar)
+            .frame(width: 180)
+
+            Divider()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    settingsPageHeader(selectedSection ?? .general)
+                    settingsContent(selectedSection ?? .general)
+                    Spacer(minLength: 0)
+                }
+                .padding(24)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        .frame(width: 700, height: 720, alignment: .topLeading)
+        .frame(width: 760, height: 720, alignment: .topLeading)
         .background(SettingsFocusSink())
         .onAppear {
             artworkQualityText = "\(artworkQualityPercent)"
@@ -257,6 +257,34 @@ struct SettingsView: View {
         .onChange(of: mpdAddresses) { _, _ in scheduleMPDApply() }
         .onChange(of: mpdPort) { _, _ in scheduleMPDApply() }
         .onChange(of: mpdPassword) { _, _ in scheduleMPDApply() }
+    }
+
+    private func settingsPageHeader(_ section: SettingsSection) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(section.title)
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundColor(Theme.primaryText)
+            Text(section.subtitle)
+                .font(.system(size: 12))
+                .foregroundColor(Theme.secondaryText)
+        }
+    }
+
+    @ViewBuilder
+    private func settingsContent(_ section: SettingsSection) -> some View {
+        switch section {
+        case .general:
+            generalBox
+        case .library:
+            libraryBox
+        case .shortcuts:
+            shortcutsBox
+        case .services:
+            VStack(alignment: .leading, spacing: 12) {
+                trayBox
+                mpdBox
+            }
+        }
     }
 
     private var generalBox: some View {
@@ -425,7 +453,7 @@ struct SettingsView: View {
             shortcutRow(.showHide, shortcut: $showHideShortcut, scope: $showHideScope)
             shortcutRow(.starCurrent, shortcut: $starShortcut, scope: $starScope)
 
-            Text("Each shortcut can be In-App (only while Tracks is focused) or Global (works system-wide). Volume shortcuts use the 16-step 6.25% volume grid. Defaults: mute m, down -, up =, show/hide F17, add/remove Stared F18.")
+            Text("System-wide checked: the shortcut works in other apps. Unchecked: it is In-App and only works while Tracks is focused. Volume shortcuts use the 16-step 6.25% volume grid. Defaults: mute m, down -, up =, show/hide F17, add/remove Stared F18.")
                 .font(.system(size: 10.5))
                 .foregroundColor(Theme.secondaryText)
                 .fixedSize(horizontal: false, vertical: true)
@@ -434,23 +462,23 @@ struct SettingsView: View {
         .background(boxBackground)
         .onChange(of: starShortcut) { _, value in
             KeyboardShortcutStore.save(value, for: .starCurrent)
-            GlobalShortcutCenter.shared.reload()
+            SystemWideShortcutCenter.shared.reload()
         }
         .onChange(of: showHideShortcut) { _, value in
             KeyboardShortcutStore.save(value, for: .showHide)
-            GlobalShortcutCenter.shared.reload()
+            SystemWideShortcutCenter.shared.reload()
         }
         .onChange(of: muteShortcut) { _, value in
             KeyboardShortcutStore.save(value, for: .mute)
-            GlobalShortcutCenter.shared.reload()
+            SystemWideShortcutCenter.shared.reload()
         }
         .onChange(of: volumeDownShortcut) { _, value in
             KeyboardShortcutStore.save(value, for: .volumeDown)
-            GlobalShortcutCenter.shared.reload()
+            SystemWideShortcutCenter.shared.reload()
         }
         .onChange(of: volumeUpShortcut) { _, value in
             KeyboardShortcutStore.save(value, for: .volumeUp)
-            GlobalShortcutCenter.shared.reload()
+            SystemWideShortcutCenter.shared.reload()
         }
         .onChange(of: starScope) { _, value in saveScope(value, for: .starCurrent) }
         .onChange(of: showHideScope) { _, value in saveScope(value, for: .showHide) }
@@ -461,7 +489,7 @@ struct SettingsView: View {
 
     private func saveScope(_ scope: ShortcutScope, for action: ShortcutAction) {
         KeyboardShortcutStore.setScope(scope, for: action)
-        GlobalShortcutCenter.shared.reload()
+        SystemWideShortcutCenter.shared.reload()
     }
 
     private func shortcutRow(_ action: ShortcutAction,
@@ -473,15 +501,13 @@ struct SettingsView: View {
                 .foregroundColor(Theme.secondaryText)
                 .lineLimit(2)
             Spacer(minLength: 6)
-            Picker("", selection: scope) {
-                ForEach(ShortcutScope.allCases) { value in
-                    Text(value.title).tag(value)
-                }
-            }
-            .labelsHidden()
-            .pickerStyle(.menu)
+            Toggle("System-wide", isOn: Binding(
+                get: { scope.wrappedValue == .systemWide },
+                set: { scope.wrappedValue = $0 ? .systemWide : .inApp }
+            ))
+            .toggleStyle(.checkbox)
             .controlSize(.small)
-            .frame(width: 88)
+            .help("Checked: system-wide. Unchecked: in-app.")
             ShortcutRecorder(shortcut: shortcut, label: action.title)
                 .frame(width: 132, height: 22)
             Button("Reset") { shortcut.wrappedValue = action.defaultShortcut }
@@ -875,18 +901,38 @@ struct SettingsView: View {
     }
 }
 
-private struct SettingsGroupHeader: View {
-    let title: String
-    let subtitle: String
+private enum SettingsSection: String, CaseIterable, Identifiable {
+    case general
+    case library
+    case shortcuts
+    case services
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(title)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(Theme.primaryText)
-            Text(subtitle)
-                .font(.system(size: 11.5))
-                .foregroundColor(Theme.secondaryText)
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .general: return "General"
+        case .library: return "Library"
+        case .shortcuts: return "Shortcuts"
+        case .services: return "Services"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .general: return "Appearance and album browsing"
+        case .library: return "Music folders, scanning, and artwork"
+        case .shortcuts: return "In-App and system-wide key bindings"
+        case .services: return "Menu-bar icon, notifications, and MPD"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .general: return "gearshape"
+        case .library: return "music.note.list"
+        case .shortcuts: return "keyboard"
+        case .services: return "menubar.rectangle"
         }
     }
 }
@@ -1130,7 +1176,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         installFocusMonitor()
         installKeyMonitor()
         MPDServer.shared.startFromPreferences()
-        GlobalShortcutCenter.shared.start()
+        SystemWideShortcutCenter.shared.start()
         TrayController.shared.start()
     }
 
