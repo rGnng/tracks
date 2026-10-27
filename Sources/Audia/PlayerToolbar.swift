@@ -117,62 +117,66 @@ struct WindowDragArea: NSViewRepresentable {
     func updateNSView(_ nsView: NSView, context: Context) {}
 
     final class DragHandle: NSView {
-        private var initialMouseLocation: NSPoint?
-        private var initialWindowOrigin: NSPoint?
-        private var lastProposedOrigin: NSPoint?
-        private var snapContext: WindowSnapContext?
-        private var snappedX: CGFloat?
-        private var snappedY: CGFloat?
+        private var lastMouseLocation: NSPoint?
+        private var dragOrigin: NSPoint?
+        private var dragConstraint: WindowDragConstraint?
 
         override var mouseDownCanMoveWindow: Bool { false }
 
         override func mouseDown(with event: NSEvent) {
             guard let window else { return }
             window.makeKey()
-            initialMouseLocation = NSEvent.mouseLocation
-            initialWindowOrigin = window.frame.origin
-            lastProposedOrigin = window.frame.origin
-            snapContext = WindowSnapContext(excluding: window)
-            snappedX = nil
-            snappedY = nil
+            lastMouseLocation = NSEvent.mouseLocation
+            dragOrigin = window.frame.origin
+            dragConstraint = WindowDragConstraint(excluding: window)
+
+            // Capture the rest of the gesture in a tracking loop. Relying on
+            // mouseDragged dispatch can lose events when the pointer crosses
+            // another toolbar view while the window is being moved.
+            window.trackEvents(matching: [.leftMouseDragged, .leftMouseUp],
+                               timeout: TimeInterval.greatestFiniteMagnitude,
+                               mode: .eventTracking) { [weak self] event, stop in
+                guard let self, let event else {
+                    stop.pointee = true
+                    return
+                }
+                if event.type == .leftMouseUp {
+                    self.finishDrag()
+                    stop.pointee = true
+                } else {
+                    self.updateDrag()
+                }
+            }
         }
 
-        override func mouseDragged(with event: NSEvent) {
-            guard let window,
-                  let initialMouseLocation,
-                  let initialWindowOrigin else { return }
+        private func updateDrag() {
+            guard let window, let lastMouseLocation, var dragOrigin else { return }
             let current = NSEvent.mouseLocation
-            let proposedOrigin = NSPoint(
-                x: initialWindowOrigin.x + current.x - initialMouseLocation.x,
-                y: initialWindowOrigin.y + current.y - initialMouseLocation.y
-            )
-            let previousOrigin = lastProposedOrigin ?? proposedOrigin
-            let deltaX = proposedOrigin.x - previousOrigin.x
-            let deltaY = proposedOrigin.y - previousOrigin.y
-            lastProposedOrigin = proposedOrigin
+            let deltaX = current.x - lastMouseLocation.x
+            let deltaY = current.y - lastMouseLocation.y
+            self.lastMouseLocation = current
 
-            var origin = proposedOrigin
-            if let snapContext {
-                let result = snapContext.snap(proposedOrigin: proposedOrigin,
-                                              size: window.frame.size,
-                                              activeX: snappedX,
-                                              activeY: snappedY,
-                                              deltaX: deltaX,
-                                              deltaY: deltaY)
-                origin = result.origin
-                snappedX = result.activeX
-                snappedY = result.activeY
-            }
+            // Accumulate in a fractional origin. NSWindow may quantize its frame
+            // to whole screen points; reading that quantized origin back on the
+            // next event drops the fractional remainder and makes the window
+            // lag and stutter behind the pointer.
+            dragOrigin.x += deltaX
+            dragOrigin.y += deltaY
+            let origin = dragConstraint?.resolve(proposedOrigin: dragOrigin,
+                                                 size: window.frame.size,
+                                                 previousFrame: window.frame) ?? dragOrigin
+            self.dragOrigin = origin
             window.setFrameOrigin(origin)
         }
 
+        private func finishDrag() {
+            lastMouseLocation = nil
+            dragOrigin = nil
+            dragConstraint = nil
+        }
+
         override func mouseUp(with event: NSEvent) {
-            initialMouseLocation = nil
-            initialWindowOrigin = nil
-            lastProposedOrigin = nil
-            snapContext = nil
-            snappedX = nil
-            snappedY = nil
+            finishDrag()
         }
     }
 }
@@ -275,10 +279,6 @@ private struct QueuePopover: View {
                             .foregroundColor(Theme.highlight)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 4)
-                            .background(
-                                RoundedRectangle(cornerRadius: 5)
-                                    .fill(Theme.controlBackground)
-                            )
                             .overlay(
                                 RoundedRectangle(cornerRadius: 5)
                                     .strokeBorder(Theme.controlBorder, lineWidth: 1)

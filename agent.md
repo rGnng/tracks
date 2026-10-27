@@ -129,7 +129,7 @@ Sources/Audia/
   AudioDevices.swift         Core Audio output device enumeration and selection
   SystemVolume.swift         macOS output-volume get/set for system-volume outputs
   WindowMode.swift           Library/MiniPlayer window modes and metrics
-  WindowSnapping.swift       Magnetic snapping for custom-dragged main window
+  WindowDragConstraint.swift  Collision limits for custom-dragged main window
   MiniPlayerView.swift       Compact player UI and Liquid Glass mini traffic lights
   Components.swift           WindowConfigurator, titlebar layout, shared controls
   ContentView.swift          Root layout, sidebar/player/content composition
@@ -286,12 +286,14 @@ Important schema decisions:
     adjustable height (`140...500`, screen permitting). Height is
     `width + 72` (`+ queueHeight` while the queue is open). Window shortcuts are
     Command-1 / Command-2.
-  - Custom dragging (`WindowDragArea`) uses `WindowSnapContext`: it captures
-    either axis independently within an 8pt approach distance against screen
-    visible edges or visible normal windows. Snapping is direction-aware: when
-    the pointer starts moving away, the active edge releases immediately and
-    does not re-capture until the pointer moves toward it again. There is no
-    magnetic hold on detach. The window snapshot is captured on mouse-down.
+  - Custom dragging (`WindowDragArea`) uses `WindowDragConstraint`. There is no
+    magnetic snapping: the window stops at contact with the visible screen frame
+    or another visible normal window and cannot overlap it. Windows already
+    overlapping at drag start are ignored for that drag to avoid teleporting.
+    Drag events are captured in an `eventTracking` loop, and the window origin is
+    accumulated as a fractional point rather than read back from `NSWindow`,
+    because AppKit quantizes window frames and repeatedly reading them back
+    caused cumulative lag/stutter. Moving away from an edge resumes immediately.
   - MiniPlayer uses custom Liquid Glass-style traffic lights inside the cover;
     they stay hidden until the pointer enters the window, matching the old
     compact-player behavior without adding a title-bar strip. The lights use
