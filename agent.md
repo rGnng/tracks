@@ -374,17 +374,18 @@ Important schema decisions:
 - Every shortcut row has a **System-wide** checkbox. Unchecked means in-app
   (only while Tracks is focused); checked uses Carbon hot keys
   (`SystemWideShortcuts.swift`) and works in other apps without Accessibility
-  permission. Defaults: mute `m`, volume down `-`, volume up `=` are unchecked;
-  show/hide Tracks `F17` and add/remove the current song from Stared playlist
-  `F18` are checked. Moving a shortcut between scopes saves the scope and
-  re-registers the Carbon hot keys. The star action always targets the current
-  playing song, not row selection.
+  permission. Defaults: mute `m`, volume down `-`, volume up `=`, and go to
+  current album `j` are unchecked; show/hide Tracks `F17` and add/remove the
+  current song from Stared playlist `F18` are checked. Moving a shortcut between
+  scopes saves the scope and re-registers the Carbon hot keys. The star action
+  always targets the current playing song, not row selection.
 - Settings > Shortcuts uses standard AppKit shortcut recorders
   (`KeyboardShortcut.swift`): click a field, press a key combination, Escape
   cancels, and bare Delete clears the shortcut. Modifiers and shifted symbols
   are supported. Each shortcut is stored as JSON under its own UserDefaults key
   (`shortcut.showHideWindow.v1`, `shortcut.starCurrent.systemWide.v1`,
-  `shortcut.mute.v1`, `shortcut.volumeDown.v1`, `shortcut.volumeUp.v1`), with a
+  `shortcut.goToCurrentAlbum.v1`, `shortcut.mute.v1`,
+  `shortcut.volumeDown.v1`, `shortcut.volumeUp.v1`), with a
   matching `shortcut.<action>.scope.v1` value. Reset restores that row's
   shortcut default, not its scope. The local handler skips text editing and returns
   events untouched while a recorder is active. Command-[ posts

@@ -157,11 +157,13 @@ struct SettingsView: View {
     @AppStorage(TrayController.DefaultsKey.popupDurationMs)
     private var trayPopupDurationMs = 1500
     @State private var starShortcut: KeyboardShortcut? = KeyboardShortcutStore.loadStar()
+    @State private var goToAlbumShortcut: KeyboardShortcut? = KeyboardShortcutStore.loadGoToAlbum()
     @State private var showHideShortcut: KeyboardShortcut? = KeyboardShortcutStore.loadShowHide()
     @State private var muteShortcut: KeyboardShortcut? = KeyboardShortcutStore.loadMute()
     @State private var volumeDownShortcut: KeyboardShortcut? = KeyboardShortcutStore.loadVolumeDown()
     @State private var volumeUpShortcut: KeyboardShortcut? = KeyboardShortcutStore.loadVolumeUp()
     @State private var starScope = KeyboardShortcutStore.scope(for: .starCurrent)
+    @State private var goToAlbumScope = KeyboardShortcutStore.scope(for: .goToCurrentAlbum)
     @State private var showHideScope = KeyboardShortcutStore.scope(for: .showHide)
     @State private var muteScope = KeyboardShortcutStore.scope(for: .mute)
     @State private var volumeDownScope = KeyboardShortcutStore.scope(for: .volumeDown)
@@ -211,11 +213,13 @@ struct SettingsView: View {
         .onAppear {
             artworkQualityText = "\(artworkQualityPercent)"
             starShortcut = KeyboardShortcutStore.loadStar()
+            goToAlbumShortcut = KeyboardShortcutStore.loadGoToAlbum()
             showHideShortcut = KeyboardShortcutStore.loadShowHide()
             muteShortcut = KeyboardShortcutStore.loadMute()
             volumeDownShortcut = KeyboardShortcutStore.loadVolumeDown()
             volumeUpShortcut = KeyboardShortcutStore.loadVolumeUp()
             starScope = KeyboardShortcutStore.scope(for: .starCurrent)
+            goToAlbumScope = KeyboardShortcutStore.scope(for: .goToCurrentAlbum)
             showHideScope = KeyboardShortcutStore.scope(for: .showHide)
             muteScope = KeyboardShortcutStore.scope(for: .mute)
             volumeDownScope = KeyboardShortcutStore.scope(for: .volumeDown)
@@ -479,9 +483,17 @@ struct SettingsView: View {
                         enabled: enabledBinding(for: .starCurrent),
                         shortcut: $starShortcut,
                         scope: $starScope)
+            shortcutRow(.goToCurrentAlbum,
+                        enabled: enabledBinding(for: .goToCurrentAlbum),
+                        shortcut: $goToAlbumShortcut,
+                        scope: $goToAlbumScope)
         }
         .onChange(of: starShortcut) { _, value in
             KeyboardShortcutStore.save(value, for: .starCurrent)
+            SystemWideShortcutCenter.shared.reload()
+        }
+        .onChange(of: goToAlbumShortcut) { _, value in
+            KeyboardShortcutStore.save(value, for: .goToCurrentAlbum)
             SystemWideShortcutCenter.shared.reload()
         }
         .onChange(of: showHideShortcut) { _, value in
@@ -501,6 +513,7 @@ struct SettingsView: View {
             SystemWideShortcutCenter.shared.reload()
         }
         .onChange(of: starScope) { _, value in saveScope(value, for: .starCurrent) }
+        .onChange(of: goToAlbumScope) { _, value in saveScope(value, for: .goToCurrentAlbum) }
         .onChange(of: showHideScope) { _, value in saveScope(value, for: .showHide) }
         .onChange(of: muteScope) { _, value in saveScope(value, for: .mute) }
         .onChange(of: volumeDownScope) { _, value in saveScope(value, for: .volumeDown) }

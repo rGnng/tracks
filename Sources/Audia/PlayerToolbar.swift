@@ -889,11 +889,9 @@ private struct NowPlayingMenu: View {
         Menu {
             AddToPlaylistMenu(songs: [song])
 
-            Button("Go to Current Song") {
-                if let album = library.albums.first(where: { album in
-                    album.songs.contains { $0.id == song.id }
-                }) {
-                    NavigationCenter.shared.albumToOpen = album.id
+            Button("Go to Album") {
+                if let albumID = library.song(withID: song.id)?.album.id {
+                    NavigationCenter.shared.openAlbum(albumID)
                 }
             }
 

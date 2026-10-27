@@ -21,6 +21,10 @@ struct KeyboardShortcut: Codable, Equatable {
                                                      modifiers: [],
                                                      display: "F18",
                                                      keyCode: 79)
+    static let defaultGoToCurrentAlbum = KeyboardShortcut(key: "j",
+                                                          modifiers: [],
+                                                          display: "J",
+                                                          keyCode: 38)
     static let defaultMute = KeyboardShortcut(key: "m", modifiers: [], display: "M", keyCode: 46)
     static let defaultVolumeDown = KeyboardShortcut(key: "-", modifiers: [], display: "-", keyCode: 27)
     static let defaultVolumeUp = KeyboardShortcut(key: "=", modifiers: [], display: "=", keyCode: 24)
@@ -142,6 +146,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
     case volumeUp
     case showHide
     case starCurrent
+    case goToCurrentAlbum
 
     var id: String { rawValue }
 
@@ -152,6 +157,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
         case .volumeUp: return "Volume up"
         case .showHide: return "Show or hide Library Window"
         case .starCurrent: return "Star/Unstar current playing"
+        case .goToCurrentAlbum: return "Go to current album"
         }
     }
 
@@ -162,12 +168,13 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
         case .volumeUp: return .defaultVolumeUp
         case .showHide: return .defaultShowHide
         case .starCurrent: return .defaultStarCurrent
+        case .goToCurrentAlbum: return .defaultGoToCurrentAlbum
         }
     }
 
     var defaultScope: ShortcutScope {
         switch self {
-        case .mute, .volumeDown, .volumeUp: return .inApp
+        case .mute, .volumeDown, .volumeUp, .goToCurrentAlbum: return .inApp
         case .showHide, .starCurrent: return .systemWide
         }
     }
@@ -193,6 +200,8 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
         case .starCurrent:
             guard let song = PlayerState.shared.currentSong else { return }
             Library.shared.toggleStar(song.id)
+        case .goToCurrentAlbum:
+            NavigationCenter.shared.openCurrentAlbum()
         }
     }
 }
@@ -201,6 +210,7 @@ enum KeyboardShortcutStore {
     private static let showHideKey = "shortcut.showHideWindow.v1"
     private static let starKey = "shortcut.starCurrent.systemWide.v1"
     private static let legacyStarKey = "shortcut.starCurrent.global.v1"
+    private static let goToAlbumKey = "shortcut.goToCurrentAlbum.v1"
     private static let muteKey = "shortcut.mute.v1"
     private static let volumeDownKey = "shortcut.volumeDown.v1"
     private static let volumeUpKey = "shortcut.volumeUp.v1"
@@ -232,6 +242,14 @@ enum KeyboardShortcutStore {
         UserDefaults.standard.removeObject(forKey: legacyStarKey)
     }
 
+    static func loadGoToAlbum() -> KeyboardShortcut? {
+        load(key: goToAlbumKey, fallback: .defaultGoToCurrentAlbum)
+    }
+
+    static func saveGoToAlbum(_ shortcut: KeyboardShortcut?) {
+        save(shortcut, key: goToAlbumKey)
+    }
+
     static func load(_ action: ShortcutAction) -> KeyboardShortcut? {
         switch action {
         case .mute: return loadMute()
@@ -239,6 +257,7 @@ enum KeyboardShortcutStore {
         case .volumeUp: return loadVolumeUp()
         case .showHide: return loadShowHide()
         case .starCurrent: return loadStar()
+        case .goToCurrentAlbum: return loadGoToAlbum()
         }
     }
 
@@ -249,6 +268,7 @@ enum KeyboardShortcutStore {
         case .volumeUp: saveVolumeUp(shortcut)
         case .showHide: saveShowHide(shortcut)
         case .starCurrent: saveStar(shortcut)
+        case .goToCurrentAlbum: saveGoToAlbum(shortcut)
         }
     }
 
