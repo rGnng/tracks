@@ -51,7 +51,11 @@ SQLite, and includes a built-in MPD server.
   Returning to a view therefore keeps an already-visible focus item in place
   instead of pulling it to the top.
 - Internal Library (writable) and External Libraries (read-only), with an
-  organizer for imports and tag editing.
+  organizer for imports and tag editing. Quick Scan adds new files; Full Scan
+  refreshes changed metadata and presents missing tracks for per-song review
+  instead of silently deleting them. External libraries can be disabled and
+  later restored; deleting their Tracks index creates a timestamped database
+  backup and never removes their audio files.
 - Output menu offers plain System Default, System Default with Volume Control,
   and all real Core Audio devices. The volume-control option locks player
   attenuation and routes volume to the macOS output.

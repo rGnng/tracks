@@ -189,9 +189,19 @@ struct MusicLibrary: Identifiable, Hashable {
     var path: String
     var name: String
     var kind: Kind
+    var isEnabled: Bool
+
+    init(id: UUID, path: String, name: String, kind: Kind, isEnabled: Bool = true) {
+        self.id = id
+        self.path = path
+        self.name = name
+        self.kind = kind
+        self.isEnabled = isEnabled
+    }
 
     var isReadOnly: Bool { kind == .external }
     var isInternal: Bool { kind == .internalLibrary }
+    var isExternal: Bool { kind == .external }
 
     /// The folder that is actually scanned: `Music` for the internal library,
     /// the root itself for external libraries.

@@ -104,13 +104,17 @@ struct AudiaApp: App {
 private enum SettingsAlert: Identifiable {
     case error(String)
     case confirmOpen(String)
-    case confirmRemoval(MusicLibrary)
+    case confirmDisable(MusicLibrary)
+    case confirmDelete(MusicLibrary)
+    case notice(title: String, message: String)
 
     var id: String {
         switch self {
         case .error(let message): return "error:\(message)"
         case .confirmOpen(let path): return "open:\(path)"
-        case .confirmRemoval(let library): return "remove:\(library.id)"
+        case .confirmDisable(let library): return "disable:\(library.id)"
+        case .confirmDelete(let library): return "delete:\(library.id)"
+        case .notice(let title, let message): return "notice:\(title):\(message)"
         }
     }
 }
@@ -182,6 +186,7 @@ struct SettingsView: View {
     @State private var mpdApplyTask: Task<Void, Never>?
     @State private var artworkQualityText = "80"
     @State private var selectedSection: SettingsSection? = .general
+    @State private var missingFileReport: LibraryMissingReport?
     @FocusState private var artworkQualityFocused: Bool
 
     var body: some View {
@@ -253,16 +258,68 @@ struct SettingsView: View {
                     },
                     secondaryButton: .cancel()
                 )
-            case .confirmRemoval(let externalLibrary):
+            case .confirmDisable(let externalLibrary):
                 return Alert(
-                    title: Text("Remove External Library?"),
-                    message: Text("Songs from “\(externalLibrary.name)” will be removed from Tracks. The files on disk are not deleted."),
-                    primaryButton: .destructive(Text("Remove")) {
-                        library.removeExternalLibrary(externalLibrary.id)
+                    title: Text("Disable External Library?"),
+                    message: Text("Disabling “\(externalLibrary.name)” stops playback and clears the playback queue and History. Its songs will be hidden throughout Tracks. Library and playlist data remain stored and can be restored by enabling it again."),
+                    primaryButton: .destructive(Text("Disable")) {
+                        do {
+                            try library.setExternalLibrary(externalLibrary.id, enabled: false)
+                        } catch {
+                            self.alert = .error(error.localizedDescription)
+                        }
                     },
                     secondaryButton: .cancel()
                 )
+            case .confirmDelete(let externalLibrary):
+                return Alert(
+                    title: Text("Delete External Library Index?"),
+                    message: Text("This removes “\(externalLibrary.name)” and its indexed songs from Tracks, including their playlist entries, play counts, and stars. User-created playlists remain, even if empty. Audio files on the external drive are not deleted. A timestamped database backup will be created first."),
+                    primaryButton: .destructive(Text("Delete Index")) {
+                        do {
+                            let backup = try library.deleteDisabledExternalLibrary(externalLibrary.id)
+                            self.alert = .notice(title: "External Library Deleted",
+                                                 message: "The library index was deleted. Backup saved at:\n\(backup.path)")
+                        } catch {
+                            self.alert = .error(error.localizedDescription)
+                        }
+                    },
+                    secondaryButton: .cancel()
+                )
+            case .notice(let title, let message):
+                return Alert(
+                    title: Text(title),
+                    message: Text(message),
+                    dismissButton: .default(Text("OK"))
+                )
             }
+        }
+        .sheet(item: $missingFileReport) { report in
+            MissingFilesReviewView(
+                report: report,
+                onKeep: { missingFileReport = nil },
+                onDelete: { ids in
+                    do {
+                        try library.removeMissingSongs(libraryID: report.libraryID, songIDs: ids)
+                        missingFileReport = nil
+                    } catch {
+                        alert = .error(error.localizedDescription)
+                    }
+                },
+                onRelocate: { ids in
+                    Task { @MainActor in
+                        do {
+                            let backup = try await library.applyRelocation(report, removingMissingIDs: ids)
+                            missingFileReport = nil
+                            alert = .notice(title: "Library Relocated",
+                                            message: "The library was relocated. Backup saved at:\n\(backup.path)")
+                        } catch {
+                            alert = .error(error.localizedDescription)
+                        }
+                    }
+                }
+            )
+            .frame(width: 720, height: 620)
         }
         .onChange(of: mpdEnabled) { _, _ in
             mpd.notifyOutputConfigurationChanged()
@@ -272,6 +329,9 @@ struct SettingsView: View {
         .onChange(of: mpdAddresses) { _, _ in scheduleMPDApply() }
         .onChange(of: mpdPort) { _, _ in scheduleMPDApply() }
         .onChange(of: mpdPassword) { _, _ in scheduleMPDApply() }
+        .onChange(of: library.scanError) { _, message in
+            if let message, !message.isEmpty { alert = .error(message) }
+        }
     }
 
     private func settingsPageHeader(_ section: SettingsSection) -> some View {
@@ -798,16 +858,20 @@ struct SettingsView: View {
                         .truncationMode(.middle)
                         .textSelection(.enabled)
                     Spacer(minLength: 0)
-                    Button("Rescan") {
+                    Button("Quick Scan") {
                         library.rescan(internalLibrary)
                     }
-                    .disabled(library.isScanning)
+                    .disabled(library.isScanning || !internalLibrary.isEnabled)
                 }
 
                 HStack(spacing: 10) {
                     Button("Open Music Folder") {
                         openMusicFolder(internalLibrary)
                     }
+                    Button("Full Scan") {
+                        runFullScan(internalLibrary)
+                    }
+                    .disabled(library.isScanning || !internalLibrary.isEnabled)
                     Button("Open Another Library…") {
                         chooseOpenLibrary()
                     }
@@ -893,37 +957,68 @@ struct SettingsView: View {
             } else {
                 VStack(spacing: 0) {
                     ForEach(Array(library.externalLibraries.enumerated()), id: \.offset) { index, externalLibrary in
-                        HStack(spacing: 8) {
-                            Image(systemName: "folder")
-                                .font(.system(size: 11))
-                                .foregroundColor(.secondary)
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text(externalLibrary.name)
-                                    .font(SettingsTypography.body)
-                                    .foregroundColor(Theme.primaryText)
-                                    .lineLimit(1)
-                                Text(externalLibrary.path)
-                                    .font(SettingsTypography.caption)
-                                    .foregroundColor(Theme.secondaryText)
-                                    .lineLimit(1)
-                                    .truncationMode(.middle)
-                            }
-                            Spacer(minLength: 0)
-                            Button("Rescan") {
-                                library.rescan(externalLibrary)
-                            }
-                            .disabled(library.isScanning)
-                            Button {
-                                alert = .confirmRemoval(externalLibrary)
-                            } label: {
-                                Image(systemName: "minus.circle.fill")
-                                    .font(.system(size: 11))
+                        VStack(alignment: .leading, spacing: 7) {
+                            HStack(spacing: 8) {
+                                Image(systemName: "folder")
+                                    .font(.system(size: 12))
                                     .foregroundColor(.secondary)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    HStack(spacing: 8) {
+                                        Text(externalLibrary.name)
+                                            .font(SettingsTypography.body)
+                                            .foregroundColor(Theme.primaryText)
+                                            .lineLimit(1)
+                                        Text(externalLibrary.isEnabled ? "Enabled" : "Disabled")
+                                            .font(SettingsTypography.caption)
+                                            .foregroundColor(externalLibrary.isEnabled ? Theme.secondaryText : .orange)
+                                    }
+                                    Text(externalLibrary.path)
+                                        .font(SettingsTypography.caption)
+                                        .foregroundColor(Theme.secondaryText)
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                }
+                                Spacer(minLength: 0)
                             }
-                            .buttonStyle(.borderless)
-                            .help("Remove library")
+
+                            HStack(spacing: 8) {
+                                Button("Quick Scan") {
+                                    library.rescan(externalLibrary)
+                                }
+                                .disabled(library.isScanning || !externalLibrary.isEnabled)
+                                Button("Full Scan") {
+                                    runFullScan(externalLibrary)
+                                }
+                                .disabled(library.isScanning || !externalLibrary.isEnabled)
+                                Button("Change Location…") {
+                                    chooseRelocation(for: externalLibrary)
+                                }
+                                .disabled(library.isScanning || !externalLibrary.isEnabled)
+                                Spacer(minLength: 0)
+                                if externalLibrary.isEnabled {
+                                    Button("Disable") {
+                                        alert = .confirmDisable(externalLibrary)
+                                    }
+                                    .disabled(library.isScanning)
+                                } else {
+                                    Button("Enable") {
+                                        do {
+                                            try library.setExternalLibrary(externalLibrary.id, enabled: true)
+                                        } catch {
+                                            alert = .error(error.localizedDescription)
+                                        }
+                                    }
+                                    .disabled(library.isScanning)
+                                }
+                                Button(role: .destructive) {
+                                    alert = .confirmDelete(externalLibrary)
+                                } label: {
+                                    Label("Delete", systemImage: "trash")
+                                }
+                                .disabled(externalLibrary.isEnabled || library.isScanning)
+                            }
                         }
-                        .padding(.vertical, 9)
+                        .padding(.vertical, 12)
                         if index < library.externalLibraries.count - 1 {
                             Divider()
                         }
@@ -954,6 +1049,209 @@ struct SettingsView: View {
         if !errors.isEmpty {
             alert = .error(errors.joined(separator: "\n"))
         }
+    }
+
+    private func runFullScan(_ mediaLibrary: MusicLibrary) {
+        Task { @MainActor in
+            if let report = await library.fullScan(mediaLibrary) {
+                missingFileReport = report
+            }
+        }
+    }
+
+    private func chooseRelocation(for mediaLibrary: MusicLibrary) {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Choose New Location"
+        panel.message = "Choose the new root folder for this media library. Tracks will match files by their relative paths."
+        panel.directoryURL = URL(fileURLWithPath: mediaLibrary.path)
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        Task { @MainActor in
+            if let report = await library.previewRelocation(of: mediaLibrary, to: url.path) {
+                missingFileReport = report
+            }
+        }
+    }
+}
+
+private struct MissingFilesReviewView: View {
+    let report: LibraryMissingReport
+    let onKeep: () -> Void
+    let onDelete: (Set<UUID>) -> Void
+    let onRelocate: (Set<UUID>) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var searchText = ""
+    @State private var selectedIDs: Set<UUID> = []
+    @State private var confirmingDelete = false
+    @State private var confirmingRelocation = false
+
+    private var visibleSongs: [Song] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return report.songs }
+        return report.songs.filter { song in
+            [song.title, song.artist, song.album, song.fileURL?.path ?? ""]
+                .contains { $0.localizedCaseInsensitiveContains(query) }
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(reviewTitle)
+                    .font(.system(size: 18, weight: .semibold))
+                Text(reviewSubtitle)
+                    .font(SettingsTypography.help)
+                    .foregroundColor(Theme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            TextField("Search title, artist, album, or path", text: $searchText)
+                .textFieldStyle(.roundedBorder)
+
+            HStack(spacing: 10) {
+                Text("Remove")
+                    .frame(width: 54, alignment: .center)
+                Text("Track / Path")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Text("Artist")
+                    .frame(width: 115, alignment: .leading)
+                Text("Album")
+                    .frame(width: 115, alignment: .leading)
+            }
+            .font(SettingsTypography.caption.weight(.semibold))
+            .foregroundColor(Theme.secondaryText)
+
+            if visibleSongs.isEmpty {
+                ContentUnavailableView(
+                    report.relocation == nil ? "No Missing Tracks" : "No Unmatched Tracks",
+                    systemImage: "checkmark.circle",
+                    description: Text(searchText.isEmpty
+                                       ? (report.relocation == nil
+                                          ? "Full Scan found no missing tracks."
+                                          : "All existing tracks matched by relative path.")
+                                       : "No tracks match this search.")
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(visibleSongs) { song in
+                            HStack(spacing: 10) {
+                                Toggle("", isOn: selectionBinding(for: song.id))
+                                    .labelsHidden()
+                                    .toggleStyle(.checkbox)
+                                    .frame(width: 54)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(song.title)
+                                        .font(SettingsTypography.body)
+                                        .lineLimit(1)
+                                    Text(song.fileURL?.path ?? "")
+                                        .font(.system(size: 10).monospaced())
+                                        .foregroundColor(Theme.secondaryText)
+                                        .lineLimit(1)
+                                        .textSelection(.enabled)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                Text(song.artist)
+                                    .font(SettingsTypography.caption)
+                                    .foregroundColor(Theme.secondaryText)
+                                    .lineLimit(1)
+                                    .frame(width: 115, alignment: .leading)
+                                Text(song.album)
+                                    .font(SettingsTypography.caption)
+                                    .foregroundColor(Theme.secondaryText)
+                                    .lineLimit(1)
+                                    .frame(width: 115, alignment: .leading)
+                            }
+                            .padding(.vertical, 7)
+                            Divider()
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+
+            HStack {
+                Text("\(selectedIDs.count) selected")
+                    .font(SettingsTypography.caption)
+                    .foregroundColor(Theme.secondaryText)
+                Spacer()
+                Button("Keep") {
+                    onKeep()
+                    dismiss()
+                }
+                if report.relocation != nil {
+                    Button("Relocate Library…") { confirmingRelocation = true }
+                        .keyboardShortcut(.defaultAction)
+                } else {
+                    Button("Delete Selected…", role: .destructive) {
+                        confirmingDelete = true
+                    }
+                    .disabled(selectedIDs.isEmpty)
+                    .keyboardShortcut(.defaultAction)
+                }
+            }
+        }
+        .padding(20)
+        .confirmationDialog("Delete selected missing tracks from Tracks?",
+                            isPresented: $confirmingDelete,
+                            titleVisibility: .visible) {
+            Button("Delete Selected Indexes", role: .destructive) {
+                onDelete(selectedIDs)
+                dismiss()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Only Tracks database entries and playlist references will be removed. Audio files are not touched.")
+        }
+        .confirmationDialog("Apply this library relocation?",
+                            isPresented: $confirmingRelocation,
+                            titleVisibility: .visible) {
+            Button("Relocate Library", role: selectedIDs.isEmpty ? nil : .destructive) {
+                onRelocate(selectedIDs)
+                dismiss()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(relocationConfirmation)
+        }
+    }
+
+    private var relocationSummary: String {
+        guard let plan = report.relocation else { return "" }
+        return "\(report.libraryName): \(plan.matchedCount) tracks match by relative path, \(report.songs.count) are unmatched, and \(plan.additionalFileCount) new files were found."
+    }
+
+    private var reviewTitle: String {
+        if report.relocation != nil { return "Review Library Relocation" }
+        return report.songs.isEmpty ? "Full Scan Complete" : "Missing Files"
+    }
+
+    private var reviewSubtitle: String {
+        if report.relocation != nil { return relocationSummary }
+        if report.songs.isEmpty { return "\(report.libraryName) was scanned successfully." }
+        return "\(report.libraryName) — \(report.songs.count) files were not found. Select entries to remove from Tracks."
+    }
+
+    private var relocationConfirmation: String {
+        if selectedIDs.isEmpty {
+            return "Matched song paths will be updated. Unmatched entries will remain in the database and be marked missing. No audio files are moved or deleted."
+        }
+        return "Matched song paths will be updated. The \(selectedIDs.count) selected unmatched index entries and playlist references will be removed; audio files are not touched."
+    }
+
+    private func selectionBinding(for id: UUID) -> Binding<Bool> {
+        Binding(
+            get: { selectedIDs.contains(id) },
+            set: { selected in
+                if selected { selectedIDs.insert(id) }
+                else { selectedIDs.remove(id) }
+            }
+        )
     }
 }
 

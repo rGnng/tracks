@@ -46,6 +46,25 @@ struct LibraryDeletionResult {
     let failures: [String]
 }
 
+struct LibraryMissingReport: Identifiable {
+    let id = UUID()
+    let libraryID: UUID
+    let libraryName: String
+    let rootPath: String
+    let songs: [Song]
+    let relocation: LibraryRelocationPlan?
+}
+
+struct LibraryRelocationPlan {
+    let libraryID: UUID
+    let newRoot: String
+    let matchedSongPaths: [UUID: String]
+    let discoveredPaths: Set<String>
+    let scannedTracks: [ScannedTrack]
+    let matchedCount: Int
+    let additionalFileCount: Int
+}
+
 enum ScanPhase {
     case scan
     case parsing
@@ -85,6 +104,7 @@ final class Library: ObservableObject {
     @Published private(set) var scanProgress: Double = 0
     @Published private(set) var scanPhase: ScanPhase = .scan
     @Published var openWarning: String?
+    @Published private(set) var scanError: String?
 
     private let db: LibraryDatabase
     private var scanTask: Task<Void, Never>?
@@ -148,6 +168,7 @@ final class Library: ObservableObject {
         }
 
         externalLibraries = db.loadLibraries().filter { $0.kind == .external }
+        db.assignUnownedSongs(to: [internalLibrary].compactMap { $0 } + externalLibraries)
     }
 
     // MARK: Setup state
@@ -221,13 +242,13 @@ final class Library: ObservableObject {
 
     private var scanRoots: [String] {
         var roots: [String] = []
-        if let internalLibrary { roots.append(internalLibrary.scanPath) }
-        roots.append(contentsOf: externalLibraries.map(\.path))
+        if let internalLibrary, internalLibrary.isEnabled { roots.append(internalLibrary.scanPath) }
+        roots.append(contentsOf: externalLibraries.filter(\.isEnabled).map(\.path))
         return roots
     }
 
     private var hasLibraries: Bool {
-        internalLibrary != nil || !externalLibraries.isEmpty
+        (internalLibrary?.isEnabled ?? false) || externalLibraries.contains(where: \.isEnabled)
     }
 
     var internalMusicPath: String? { internalLibrary?.musicPath }
@@ -254,6 +275,7 @@ final class Library: ObservableObject {
 
         if added {
             externalLibraries = db.loadLibraries().filter { $0.kind == .external }
+            db.assignUnownedSongs(to: [internalLibrary].compactMap { $0 } + externalLibraries)
             rescanAll()
         }
         return errors
@@ -276,19 +298,37 @@ final class Library: ObservableObject {
         }
     }
 
-    func removeExternalLibrary(_ id: UUID) {
-        guard externalLibraries.contains(where: { $0.id == id }) else { return }
+    func setExternalLibrary(_ id: UUID, enabled: Bool) throws {
+        guard let library = externalLibraries.first(where: { $0.id == id }),
+              library.isEnabled != enabled else { return }
         scanTask?.cancel()
         isScanning = false
-        db.removeLibrary(id: id)
+        try db.setLibraryEnabled(id, enabled: enabled)
         externalLibraries = db.loadLibraries().filter { $0.kind == .external }
-
-        let roots = scanRoots
-        if !roots.isEmpty {
-            db.prune(roots: roots)
+        if !enabled {
+            PlayerState.shared.stopAndClear()
+            PlayerState.shared.clearHistory()
         }
         reload()
-        PlayerState.shared.applyUpdatedSongs(allSongs)
+        if enabled, let updated = externalLibraries.first(where: { $0.id == id }) {
+            rescan(updated)
+        }
+    }
+
+    @discardableResult
+    func deleteDisabledExternalLibrary(_ id: UUID) throws -> URL {
+        guard let library = externalLibraries.first(where: { $0.id == id }),
+              !library.isEnabled else {
+            throw LibraryDatabaseError.transactionFailed("Disable the external library before deleting it.")
+        }
+        scanTask?.cancel()
+        isScanning = false
+        let backupURL = try db.backup()
+        try db.deleteLibraryAndSongs(id: id)
+        externalLibraries = db.loadLibraries().filter { $0.kind == .external }
+        db.assignUnownedSongs(to: [internalLibrary].compactMap { $0 } + externalLibraries)
+        reload()
+        return backupURL
     }
 
     func createInternalLibrary(atPath rawPath: String) throws {
@@ -326,6 +366,7 @@ final class Library: ObservableObject {
         let library = db.ensureLibrary(path: path, kind: .internalLibrary, name: displayName(for: path))
         internalLibrary = library
         externalLibraries = db.loadLibraries().filter { $0.kind == .external }
+        db.assignUnownedSongs(to: [library] + externalLibraries)
         reload()
         rescanAll()
     }
@@ -398,6 +439,7 @@ final class Library: ObservableObject {
             UserDefaults.standard.removeObject(forKey: Self.setupDismissedKey)
             internalLibrary = opened
             externalLibraries = db.loadLibraries().filter { $0.kind == .external }
+            db.assignUnownedSongs(to: [opened] + externalLibraries)
 
             if switchingDatabase {
                 PlayerState.shared.stopAndClear()
@@ -472,11 +514,12 @@ final class Library: ObservableObject {
 
     // MARK: Scanning
 
-    /// Scans every configured library and drops entries that no longer exist.
+    /// Safely discovers new files in every enabled library. It never deletes
+    /// database rows; metadata changes and missing files are handled by Full Scan.
     func rescanAll(force: Bool = false) {
         scanTask?.cancel()
-        let roots = scanRoots
-        guard !roots.isEmpty else {
+        let libraries = enabledLibraries
+        guard !libraries.isEmpty else {
             albums = []
             playlists = []
             isScanning = false
@@ -486,8 +529,10 @@ final class Library: ObservableObject {
             return
         }
 
+        let roots = libraries.map(\.scanPath)
         let known = force ? [:] : db.knownFiles()
         isScanning = true
+        scanError = nil
         scanPhase = .scan
         scanCompleted = 0
         scanTotal = 0
@@ -503,32 +548,43 @@ final class Library: ObservableObject {
         }
 
         scanTask = Task { [weak self] in
-            let changed = await Task.detached(priority: .userInitiated) {
-                await LibraryScanner.scan(folders: roots, known: known, progress: progress)
+            let result = await Task.detached(priority: .userInitiated) {
+                await LibraryScanner.scan(folders: roots,
+                                          known: known,
+                                          mode: force ? .full : .quick,
+                                          progress: progress)
             }.value
 
             guard let self, !Task.isCancelled else { return }
-            let artwork = self.db.sync(tracks: changed, internalMusicRoot: self.internalLibrary?.musicPath)
+            guard result.isComplete else {
+                self.scanError = result.errors.joined(separator: "\n")
+                self.isScanning = false
+                return
+            }
+            let artwork = self.db.sync(tracks: result.tracks,
+                                       internalMusicRoot: self.internalLibrary?.musicPath,
+                                       libraries: libraries)
             await ArtworkCache.shared.importArtwork(artwork)
-            self.db.prune(roots: roots)
+            PlayerState.shared.clearMissingFiles(foundPaths: Set(result.discoveredFiles.keys))
             self.reload()
             self.scanProgress = 1
             self.isScanning = false
-            PlayerState.shared.applyUpdatedSongs(self.allSongs)
         }
     }
 
-    /// Scans a single library from Settings, leaving other libraries untouched.
+    /// Quick-scans one enabled library. Modified files and missing files require
+    /// an explicit Full Scan.
     func rescan(_ location: MusicLibrary) {
         let stillConfigured = location.isInternal
             ? internalLibrary?.id == location.id
-            : externalLibraries.contains { $0.id == location.id }
-        guard stillConfigured else { return }
+            : externalLibraries.contains { $0.id == location.id && $0.isEnabled }
+        guard stillConfigured, location.isEnabled else { return }
 
         scanTask?.cancel()
         let root = location.scanPath
         let known = db.knownFiles()
         isScanning = true
+        scanError = nil
         scanPhase = .scan
         scanCompleted = 0
         scanTotal = 0
@@ -544,18 +600,205 @@ final class Library: ObservableObject {
         }
 
         scanTask = Task { [weak self] in
-            let changed = await Task.detached(priority: .userInitiated) {
-                await LibraryScanner.scan(folders: [root], known: known, progress: progress)
+            let result = await Task.detached(priority: .userInitiated) {
+                await LibraryScanner.scan(folders: [root],
+                                          known: known,
+                                          mode: .quick,
+                                          progress: progress)
             }.value
 
             guard let self, !Task.isCancelled else { return }
-            let artwork = self.db.sync(tracks: changed, internalMusicRoot: self.internalLibrary?.musicPath)
+            guard result.isComplete else {
+                self.scanError = result.errors.joined(separator: "\n")
+                self.isScanning = false
+                return
+            }
+            let artwork = self.db.sync(tracks: result.tracks,
+                                       internalMusicRoot: self.internalLibrary?.musicPath,
+                                       libraries: self.enabledLibraries)
             await ArtworkCache.shared.importArtwork(artwork)
-            self.db.pruneSongs(under: root)
+            PlayerState.shared.clearMissingFiles(foundPaths: Set(result.discoveredFiles.keys))
             self.reload()
             self.scanProgress = 1
             self.isScanning = false
-            PlayerState.shared.applyUpdatedSongs(self.allSongs)
+        }
+    }
+
+    /// Full-scans one enabled library, updates changed metadata, and reports
+    /// missing tracks without deleting them.
+    func fullScan(_ location: MusicLibrary) async -> LibraryMissingReport? {
+        guard enabledLibraries.contains(where: { $0.id == location.id }) else { return nil }
+        scanTask?.cancel()
+        let known = db.knownFiles()
+        isScanning = true
+        scanError = nil
+        scanPhase = .scan
+        scanCompleted = 0
+        scanTotal = 0
+        scanProgress = 0
+        let progress = makeProgressHandler()
+        let result = await Task.detached(priority: .userInitiated) {
+            await LibraryScanner.scan(folders: [location.scanPath],
+                                      known: known,
+                                      mode: .full,
+                                      progress: progress)
+        }.value
+        guard !Task.isCancelled else {
+            isScanning = false
+            return nil
+        }
+        guard result.isComplete else {
+            scanError = result.errors.joined(separator: "\n")
+            isScanning = false
+            return nil
+        }
+
+        let artwork = db.sync(tracks: result.tracks,
+                              internalMusicRoot: internalLibrary?.musicPath,
+                              libraries: enabledLibraries)
+        await ArtworkCache.shared.importArtwork(artwork)
+        let discovered = Set(result.discoveredFiles.keys)
+        let missingIDs = db.missingSongIDs(libraryID: location.id, discoveredPaths: discovered)
+        PlayerState.shared.clearMissingFiles(foundPaths: discovered)
+        PlayerState.shared.markFilesMissing(missingIDs)
+        reload()
+        scanProgress = 1
+        isScanning = false
+
+        let missingSet = Set(missingIDs)
+        let missingSongs = allSongs.filter { missingSet.contains($0.id) }
+        return LibraryMissingReport(libraryID: location.id,
+                                    libraryName: location.name,
+                                    rootPath: location.scanPath,
+                                    songs: missingSongs,
+                                    relocation: nil)
+    }
+
+    func previewRelocation(of location: MusicLibrary, to rawRoot: String) async -> LibraryMissingReport? {
+        guard location.isExternal,
+              enabledLibraries.contains(where: { $0.id == location.id }) else { return nil }
+        scanError = nil
+        let newRoot = canonicalPath(NSString(string: rawRoot).expandingTildeInPath)
+        do {
+            try validateExternalLibrary(newRoot,
+                                        existing: externalLibraries.filter { $0.id != location.id })
+        } catch {
+            scanError = error.localizedDescription
+            return nil
+        }
+
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: newRoot, isDirectory: &isDirectory),
+              isDirectory.boolValue,
+              FileManager.default.isReadableFile(atPath: newRoot) else {
+            scanError = "The selected media directory does not exist or cannot be read."
+            return nil
+        }
+
+        scanTask?.cancel()
+        let known = db.knownFiles()
+        isScanning = true
+        scanError = nil
+        scanPhase = .scan
+        scanCompleted = 0
+        scanTotal = 0
+        scanProgress = 0
+        let result = await Task.detached(priority: .userInitiated) {
+            await LibraryScanner.scan(folders: [newRoot],
+                                      known: known,
+                                      mode: .full,
+                                      progress: self.makeProgressHandler())
+        }.value
+        guard !Task.isCancelled else {
+            isScanning = false
+            return nil
+        }
+        guard result.isComplete else {
+            scanError = result.errors.joined(separator: "\n")
+            isScanning = false
+            return nil
+        }
+
+        let paths = db.songPaths(forLibrary: location.id)
+        let foundPaths = Set(result.discoveredFiles.keys.map(canonicalPath))
+        let matching = LibraryRelocationMatcher.match(
+            oldRoot: location.scanPath,
+            newRoot: newRoot,
+            songs: paths.map { LibrarySongPath(id: $0.id, path: $0.path) },
+            discoveredPaths: foundPaths
+        )
+        let matches = matching.songPaths
+        let missingIDs = matching.unmatchedIDs
+        let songByID = Dictionary(uniqueKeysWithValues: allSongs.map { ($0.id, $0) })
+        let missingSongs = missingIDs.compactMap { songByID[$0] }
+        let matchedPaths = Set(matches.values)
+        let additionalCount = max(0, foundPaths.subtracting(matchedPaths).count)
+        let plan = LibraryRelocationPlan(libraryID: location.id,
+                                         newRoot: newRoot,
+                                         matchedSongPaths: matches,
+                                         discoveredPaths: foundPaths,
+                                         scannedTracks: result.tracks,
+                                         matchedCount: matches.count,
+                                         additionalFileCount: additionalCount)
+        isScanning = false
+        scanProgress = 1
+        return LibraryMissingReport(libraryID: location.id,
+                                    libraryName: location.name,
+                                    rootPath: newRoot,
+                                    songs: missingSongs,
+                                    relocation: plan)
+    }
+
+    func applyRelocation(_ report: LibraryMissingReport, removingMissingIDs: Set<UUID>) async throws -> URL {
+        guard let plan = report.relocation,
+              externalLibraries.contains(where: { $0.id == plan.libraryID }) else {
+            throw LibraryDatabaseError.transactionFailed("The relocation preview is no longer valid.")
+        }
+        isScanning = true
+        defer { isScanning = false }
+        let backupURL = try db.backup()
+        let validMissingIDs = Set(report.songs.map(\.id)).intersection(removingMissingIDs)
+        try db.relocateLibrary(id: plan.libraryID,
+                               to: plan.newRoot,
+                               songPaths: plan.matchedSongPaths,
+                               removingSongIDs: validMissingIDs)
+        externalLibraries = db.loadLibraries().filter { $0.kind == .external }
+        db.assignUnownedSongs(to: [internalLibrary].compactMap { $0 } + externalLibraries)
+        let artwork = db.sync(tracks: plan.scannedTracks,
+                              internalMusicRoot: internalLibrary?.musicPath,
+                              libraries: enabledLibraries)
+        await ArtworkCache.shared.importArtwork(artwork)
+        PlayerState.shared.removeSongs(withIDs: validMissingIDs)
+        reload()
+        PlayerState.shared.clearMissingFiles(foundPaths: plan.discoveredPaths)
+        let remainingMissing = report.songs.map(\.id).filter { !validMissingIDs.contains($0) }
+        PlayerState.shared.markFilesMissing(remainingMissing)
+        return backupURL
+    }
+
+    func removeMissingSongs(libraryID: UUID, songIDs: Set<UUID>) throws {
+        guard !songIDs.isEmpty else { return }
+        let validIDs = Set(db.songPaths(forLibrary: libraryID).map(\.id)).intersection(songIDs)
+        guard !validIDs.isEmpty else { return }
+        try db.removeSongsFromLibrary(validIDs, libraryID: libraryID)
+        PlayerState.shared.removeSongs(withIDs: validIDs)
+        PlayerState.shared.clearMissingFileIDs(validIDs)
+        reload()
+    }
+
+    private var enabledLibraries: [MusicLibrary] {
+        ([internalLibrary].compactMap { $0 } + externalLibraries).filter(\.isEnabled)
+    }
+
+    private func makeProgressHandler() -> @Sendable (Int, Int) -> Void {
+        { [weak self] completed, total in
+            Task { @MainActor in
+                guard let self else { return }
+                if total > 0 { self.scanPhase = .parsing }
+                self.scanCompleted = completed
+                self.scanTotal = total
+                self.scanProgress = total > 0 ? Double(completed) / Double(total) : 0
+            }
         }
     }
 

@@ -6,6 +6,8 @@ private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.sel
 enum LibraryDatabaseError: LocalizedError {
     case destinationExists(String)
     case openFailed(String)
+    case backupFailed(String)
+    case transactionFailed(String)
 
     var errorDescription: String? {
         switch self {
@@ -13,6 +15,10 @@ enum LibraryDatabaseError: LocalizedError {
             return "A library database already exists at \(path)."
         case .openFailed(let path):
             return "Could not open the library database at \(path)."
+        case .backupFailed(let message):
+            return "Could not back up the library database: \(message)"
+        case .transactionFailed(let message):
+            return "Could not update the library database: \(message)"
         }
     }
 }
@@ -251,6 +257,7 @@ final class LibraryDatabase {
         CREATE TABLE IF NOT EXISTS songs (
             id TEXT PRIMARY KEY,
             path TEXT NOT NULL UNIQUE,
+            library_id TEXT,
             title TEXT NOT NULL,
             artist_id TEXT NOT NULL,
             album_id TEXT NOT NULL,
@@ -276,7 +283,8 @@ final class LibraryDatabase {
             path TEXT NOT NULL UNIQUE,
             kind TEXT NOT NULL,
             name TEXT NOT NULL,
-            date_added REAL NOT NULL
+            date_added REAL NOT NULL,
+            enabled INTEGER NOT NULL DEFAULT 1
         );
         CREATE TABLE IF NOT EXISTS playlists (
             id TEXT PRIMARY KEY,
@@ -301,9 +309,33 @@ final class LibraryDatabase {
         );
         CREATE INDEX IF NOT EXISTS idx_songs_album ON songs(album_id);
         CREATE INDEX IF NOT EXISTS idx_songs_artist ON songs(artist_id);
+        CREATE INDEX IF NOT EXISTS idx_songs_library ON songs(library_id);
         CREATE INDEX IF NOT EXISTS idx_playlist_items ON playlist_items(playlist_id, position);
         """)
+        migrateLibraryColumns()
         migratePlaylistItemAddTimes()
+    }
+
+    private func migrateLibraryColumns() {
+        if !tableHasColumn("libraries", column: "enabled") {
+            exec("ALTER TABLE libraries ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1;")
+        }
+        if !tableHasColumn("songs", column: "library_id") {
+            exec("ALTER TABLE songs ADD COLUMN library_id TEXT;")
+        }
+        exec("CREATE INDEX IF NOT EXISTS idx_songs_library ON songs(library_id);")
+        exec("CREATE INDEX IF NOT EXISTS idx_songs_album ON songs(album_id);")
+        exec("CREATE INDEX IF NOT EXISTS idx_songs_artist ON songs(artist_id);")
+        exec("CREATE INDEX IF NOT EXISTS idx_playlist_items ON playlist_items(playlist_id, position);")
+    }
+
+    private func tableHasColumn(_ table: String, column: String) -> Bool {
+        guard let stmt = prepare("PRAGMA table_info(\(table))") else { return false }
+        defer { sqlite3_finalize(stmt) }
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if text(stmt, 1) == column { return true }
+        }
+        return false
     }
 
     /// Adds the per-playlist-item add timestamp to existing databases. Older
@@ -354,7 +386,9 @@ final class LibraryDatabase {
     }
 
     @discardableResult
-    func sync(tracks: [ScannedTrack], internalMusicRoot: String?) -> [String: Data] {
+    func sync(tracks: [ScannedTrack],
+              internalMusicRoot: String?,
+              libraries: [MusicLibrary]) -> [String: Data] {
         guard !tracks.isEmpty else { return [:] }
         let internalRoot = internalMusicRoot.map { canonicalPath($0) }
         let importedAt = Date().timeIntervalSince1970
@@ -405,58 +439,20 @@ final class LibraryDatabase {
             let added = isInternal
                 ? importedAt
                 : (track.mtime > 0 ? track.mtime : importedAt)
-            upsertSong(track, artistID: trackArtistID, albumID: albumID, dateAdded: added)
+            let path = canonicalPath(track.path)
+            let owner = libraries
+                .filter { $0.isEnabled }
+                .map { (library: $0, root: canonicalPath($0.scanPath)) }
+                .filter { isUnder(path, root: $0.root) }
+                .max { $0.root.count < $1.root.count }
+            upsertSong(track,
+                       libraryID: owner?.library.id.uuidString,
+                       artistID: trackArtistID,
+                       albumID: albumID,
+                       dateAdded: added)
         }
         exec("COMMIT;")
         return artworkByAlbumID
-    }
-
-    /// Keeps songs inside one of the configured scan roots, removing entries
-    /// whose library was removed and files that no longer exist.
-    func prune(roots: [String]) {
-        // With no configured libraries the database is kept intact; the app
-        // simply hides it until a library is added again.
-        guard !roots.isEmpty else { return }
-        let canonicalRoots = roots.map { canonicalPath($0) }
-        var doomed: [String] = []
-
-        guard let stmt = prepare("SELECT id, path FROM songs") else { return }
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            guard let id = text(stmt, 0), let path = text(stmt, 1) else { continue }
-            let canonical = canonicalPath(path)
-            guard let root = canonicalRoots.first(where: { isUnder(canonical, root: $0) }) else {
-                // The song no longer belongs to any configured library.
-                doomed.append(id)
-                continue
-            }
-            // If the root itself is unavailable (for example an unmounted
-            // drive), keep its entries instead of destroying them.
-            if FileManager.default.fileExists(atPath: root),
-               !FileManager.default.fileExists(atPath: path) {
-                doomed.append(id)
-            }
-        }
-        sqlite3_finalize(stmt)
-        deleteSongs(doomed)
-    }
-
-    /// Prunes missing files below a single library root, leaving songs from
-    /// other libraries untouched.
-    func pruneSongs(under root: String) {
-        let canonicalRoot = canonicalPath(root)
-        guard FileManager.default.fileExists(atPath: canonicalRoot) else { return }
-        var doomed: [String] = []
-
-        guard let stmt = prepare("SELECT id, path FROM songs") else { return }
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            guard let id = text(stmt, 0), let path = text(stmt, 1) else { continue }
-            guard isUnder(canonicalPath(path), root: canonicalRoot) else { continue }
-            if !FileManager.default.fileExists(atPath: path) {
-                doomed.append(id)
-            }
-        }
-        sqlite3_finalize(stmt)
-        deleteSongs(doomed)
     }
 
     func deleteSongs(withIDs ids: [UUID]) {
@@ -495,7 +491,7 @@ final class LibraryDatabase {
     func loadLibraries() -> [MusicLibrary] {
         var result: [MusicLibrary] = []
         guard let stmt = prepare("""
-            SELECT id, path, kind, name FROM libraries
+            SELECT id, path, kind, name, enabled FROM libraries
             ORDER BY CASE kind WHEN 'internal' THEN 0 ELSE 1 END, name COLLATE NOCASE
             """) else { return result }
         while sqlite3_step(stmt) == SQLITE_ROW {
@@ -505,7 +501,11 @@ final class LibraryDatabase {
                   let name = text(stmt, 3) else { continue }
             let kind = MusicLibrary.Kind(rawValue: kindString) ?? .external
             let id = UUID(uuidString: idString) ?? LibraryScanner.stableUUID("library|" + path)
-            result.append(MusicLibrary(id: id, path: path, name: name, kind: kind))
+            result.append(MusicLibrary(id: id,
+                                       path: path,
+                                       name: name,
+                                       kind: kind,
+                                       isEnabled: int(stmt, 4) != 0))
         }
         sqlite3_finalize(stmt)
         return result
@@ -535,7 +535,7 @@ final class LibraryDatabase {
             sqlite3_step(stmt)
             sqlite3_finalize(stmt)
         }
-        if let stmt = prepare("SELECT id, path, kind, name FROM libraries WHERE path = ?") {
+        if let stmt = prepare("SELECT id, path, kind, name, enabled FROM libraries WHERE path = ?") {
             bind(stmt, 1, path)
             if sqlite3_step(stmt) == SQLITE_ROW,
                let idString = text(stmt, 0),
@@ -544,20 +544,268 @@ final class LibraryDatabase {
                let storedName = text(stmt, 3) {
                 let storedKind = MusicLibrary.Kind(rawValue: kindString) ?? kind
                 let id = UUID(uuidString: idString) ?? LibraryScanner.stableUUID("library|" + storedPath)
+                let isEnabled = int(stmt, 4) != 0
                 sqlite3_finalize(stmt)
-                return MusicLibrary(id: id, path: storedPath, name: storedName, kind: storedKind)
+                return MusicLibrary(id: id,
+                                    path: storedPath,
+                                    name: storedName,
+                                    kind: storedKind,
+                                    isEnabled: isEnabled)
             }
             sqlite3_finalize(stmt)
         }
         return MusicLibrary(id: UUID(uuidString: libraryID) ?? UUID(),
-                            path: path, name: name, kind: kind)
+                            path: path, name: name, kind: kind, isEnabled: true)
     }
 
-    func removeLibrary(id: UUID) {
-        guard let stmt = prepare("DELETE FROM libraries WHERE id = ?") else { return }
-        bind(stmt, 1, id.uuidString)
-        sqlite3_step(stmt)
+    func setLibraryEnabled(_ id: UUID, enabled: Bool) throws {
+        guard let stmt = prepare("UPDATE libraries SET enabled = ? WHERE id = ?") else {
+            throw LibraryDatabaseError.transactionFailed("Could not prepare library status update")
+        }
+        bind(stmt, 1, enabled ? 1 : 0)
+        bind(stmt, 2, id.uuidString)
+        let result = sqlite3_step(stmt)
         sqlite3_finalize(stmt)
+        guard result == SQLITE_DONE else {
+            throw LibraryDatabaseError.transactionFailed(databaseErrorMessage)
+        }
+    }
+
+    /// Backfills ownership for pre-library_id databases using each library's scan root.
+    func assignUnownedSongs(to libraries: [MusicLibrary]) {
+        guard !libraries.isEmpty,
+              let stmt = prepare("SELECT id, path, library_id FROM songs") else { return }
+        var updates: [(songID: String, libraryID: String)] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            guard let songID = text(stmt, 0), let storedPath = text(stmt, 1) else { continue }
+            let currentLibraryID = text(stmt, 2)
+            let songPath = canonicalPath(storedPath)
+            let owner = libraries
+                .map { (library: $0, root: canonicalPath($0.scanPath)) }
+                .filter { isUnder(songPath, root: $0.root) }
+                .max { $0.root.count < $1.root.count }
+            if let owner, currentLibraryID != owner.library.id.uuidString {
+                updates.append((songID, owner.library.id.uuidString))
+            }
+        }
+        sqlite3_finalize(stmt)
+        guard !updates.isEmpty else { return }
+        exec("BEGIN;")
+        for update in updates {
+            guard let updateStmt = prepare("UPDATE songs SET library_id = ? WHERE id = ?") else { continue }
+            bind(updateStmt, 1, update.libraryID)
+            bind(updateStmt, 2, update.songID)
+            sqlite3_step(updateStmt)
+            sqlite3_finalize(updateStmt)
+        }
+        exec("COMMIT;")
+    }
+
+    func songPaths(forLibrary id: UUID) -> [(id: UUID, path: String)] {
+        var result: [(id: UUID, path: String)] = []
+        guard let stmt = prepare("SELECT id, path FROM songs WHERE library_id = ?") else { return result }
+        bind(stmt, 1, id.uuidString)
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            guard let rawID = text(stmt, 0), let songID = UUID(uuidString: rawID),
+                  let path = text(stmt, 1) else { continue }
+            result.append((songID, path))
+        }
+        sqlite3_finalize(stmt)
+        return result
+    }
+
+    func missingSongIDs(libraryID: UUID, discoveredPaths: Set<String>) -> [UUID] {
+        songPaths(forLibrary: libraryID).compactMap { entry in
+            discoveredPaths.contains(canonicalPath(entry.path)) ? nil : entry.id
+        }
+    }
+
+    func relocateLibrary(id: UUID,
+                         to newPath: String,
+                         songPaths: [UUID: String],
+                         removingSongIDs: Set<UUID> = []) throws {
+        try executeThrowing("BEGIN IMMEDIATE;")
+        do {
+            guard let check = prepare("SELECT kind, enabled FROM libraries WHERE id = ?") else {
+                throw LibraryDatabaseError.transactionFailed("Could not validate media library")
+            }
+            bind(check, 1, id.uuidString)
+            let exists = sqlite3_step(check) == SQLITE_ROW
+            let kind = text(check, 0)
+            let enabled = int(check, 1) != 0
+            sqlite3_finalize(check)
+            guard exists, kind == MusicLibrary.Kind.external.rawValue, enabled else {
+                throw LibraryDatabaseError.transactionFailed("Only enabled external libraries can be relocated.")
+            }
+
+            guard let libraryStmt = prepare("UPDATE libraries SET path = ?, name = ? WHERE id = ?") else {
+                throw LibraryDatabaseError.transactionFailed("Could not prepare library path update")
+            }
+            bind(libraryStmt, 1, newPath)
+            bind(libraryStmt, 2, URL(fileURLWithPath: newPath).lastPathComponent)
+            bind(libraryStmt, 3, id.uuidString)
+            let libraryResult = sqlite3_step(libraryStmt)
+            sqlite3_finalize(libraryStmt)
+            guard libraryResult == SQLITE_DONE else {
+                throw LibraryDatabaseError.transactionFailed(databaseErrorMessage)
+            }
+
+            for (songID, path) in songPaths {
+                guard let stmt = prepare("UPDATE songs SET path = ? WHERE id = ? AND library_id = ?") else {
+                    throw LibraryDatabaseError.transactionFailed("Could not prepare song path update")
+                }
+                bind(stmt, 1, path)
+                bind(stmt, 2, songID.uuidString)
+                bind(stmt, 3, id.uuidString)
+                let result = sqlite3_step(stmt)
+                sqlite3_finalize(stmt)
+                guard result == SQLITE_DONE else {
+                    throw LibraryDatabaseError.transactionFailed(databaseErrorMessage)
+                }
+            }
+            try deleteSongRows(removingSongIDs.map(\.uuidString))
+            try executeThrowing("COMMIT;")
+        } catch {
+            exec("ROLLBACK;")
+            throw error
+        }
+    }
+
+    func removeSongsFromLibrary(_ songIDs: Set<UUID>, libraryID: UUID) throws {
+        guard !songIDs.isEmpty else { return }
+        try executeThrowing("BEGIN IMMEDIATE;")
+        do {
+            let validIDs = Set(songPaths(forLibrary: libraryID).map(\.id)).intersection(songIDs)
+            try deleteSongRows(validIDs.map(\.uuidString))
+            try executeThrowing("COMMIT;")
+        } catch {
+            exec("ROLLBACK;")
+            throw error
+        }
+    }
+
+    private func deleteSongRows(_ ids: [String]) throws {
+        for id in ids {
+            guard let modifiedStmt = prepare("""
+                UPDATE playlists SET date_modified = ?
+                WHERE id IN (SELECT playlist_id FROM playlist_items WHERE song_id = ?)
+                """) else {
+                throw LibraryDatabaseError.transactionFailed("Could not prepare playlist timestamp update")
+            }
+            bind(modifiedStmt, 1, Date().timeIntervalSince1970)
+            bind(modifiedStmt, 2, id)
+            let modifiedResult = sqlite3_step(modifiedStmt)
+            sqlite3_finalize(modifiedStmt)
+            guard modifiedResult == SQLITE_DONE else {
+                throw LibraryDatabaseError.transactionFailed(databaseErrorMessage)
+            }
+
+            guard let playlistStmt = prepare("DELETE FROM playlist_items WHERE song_id = ?") else {
+                throw LibraryDatabaseError.transactionFailed("Could not prepare playlist cleanup")
+            }
+            bind(playlistStmt, 1, id)
+            let playlistResult = sqlite3_step(playlistStmt)
+            sqlite3_finalize(playlistStmt)
+            guard playlistResult == SQLITE_DONE else {
+                throw LibraryDatabaseError.transactionFailed(databaseErrorMessage)
+            }
+
+            guard let songStmt = prepare("DELETE FROM songs WHERE id = ?") else {
+                throw LibraryDatabaseError.transactionFailed("Could not prepare song cleanup")
+            }
+            bind(songStmt, 1, id)
+            let songResult = sqlite3_step(songStmt)
+            sqlite3_finalize(songStmt)
+            guard songResult == SQLITE_DONE else {
+                throw LibraryDatabaseError.transactionFailed(databaseErrorMessage)
+            }
+        }
+        cleanupOrphans()
+    }
+
+    func deleteLibraryAndSongs(id: UUID) throws {
+        try executeThrowing("BEGIN IMMEDIATE;")
+        do {
+            guard let libraryCheck = prepare("SELECT kind, enabled FROM libraries WHERE id = ?") else {
+                throw LibraryDatabaseError.transactionFailed("Could not validate external library")
+            }
+            bind(libraryCheck, 1, id.uuidString)
+            let exists = sqlite3_step(libraryCheck) == SQLITE_ROW
+            let kind = text(libraryCheck, 0)
+            let isEnabled = int(libraryCheck, 1) != 0
+            sqlite3_finalize(libraryCheck)
+            guard exists, kind == MusicLibrary.Kind.external.rawValue, !isEnabled else {
+                throw LibraryDatabaseError.transactionFailed("Only disabled external libraries can be deleted.")
+            }
+
+            guard let songStmt = prepare("SELECT id FROM songs WHERE library_id = ?") else {
+                throw LibraryDatabaseError.transactionFailed("Could not read library songs")
+            }
+            bind(songStmt, 1, id.uuidString)
+            var songIDs: [String] = []
+            while sqlite3_step(songStmt) == SQLITE_ROW {
+                if let songID = text(songStmt, 0) { songIDs.append(songID) }
+            }
+            sqlite3_finalize(songStmt)
+
+            try deleteSongRows(songIDs)
+
+            guard let libraryStmt = prepare("DELETE FROM libraries WHERE id = ?") else {
+                throw LibraryDatabaseError.transactionFailed("Could not prepare library cleanup")
+            }
+            bind(libraryStmt, 1, id.uuidString)
+            let libraryResult = sqlite3_step(libraryStmt)
+            sqlite3_finalize(libraryStmt)
+            guard libraryResult == SQLITE_DONE else {
+                throw LibraryDatabaseError.transactionFailed(databaseErrorMessage)
+            }
+            try executeThrowing("COMMIT;")
+        } catch {
+            exec("ROLLBACK;")
+            throw error
+        }
+    }
+
+    func backup() throws -> URL {
+        guard let source = db else {
+            throw LibraryDatabaseError.backupFailed("The library database is not open")
+        }
+        let sourceURL = URL(fileURLWithPath: path)
+        let parent = sourceURL.deletingLastPathComponent()
+        let stampFormatter = ISO8601DateFormatter()
+        stampFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let stamp = stampFormatter.string(from: Date())
+            .replacingOccurrences(of: ":", with: "")
+            .replacingOccurrences(of: "-", with: "")
+        let base = "\(sourceURL.lastPathComponent).backup-\(stamp)"
+        var targetURL = parent.appendingPathComponent(base)
+        var suffix = 1
+        while FileManager.default.fileExists(atPath: targetURL.path) {
+            targetURL = parent.appendingPathComponent("\(base)-\(suffix)")
+            suffix += 1
+        }
+
+        var destination: OpaquePointer?
+        let openResult = sqlite3_open_v2(targetURL.path, &destination,
+                                         SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, nil)
+        guard openResult == SQLITE_OK, let destination else {
+            if let destination { sqlite3_close(destination) }
+            throw LibraryDatabaseError.backupFailed("Could not create \(targetURL.path)")
+        }
+        guard let backup = sqlite3_backup_init(destination, "main", source, "main") else {
+            let message = String(cString: sqlite3_errmsg(destination))
+            sqlite3_close(destination)
+            try? FileManager.default.removeItem(at: targetURL)
+            throw LibraryDatabaseError.backupFailed(message)
+        }
+        let stepResult = sqlite3_backup_step(backup, -1)
+        let finishResult = sqlite3_backup_finish(backup)
+        let closeResult = sqlite3_close(destination)
+        guard stepResult == SQLITE_DONE, finishResult == SQLITE_OK, closeResult == SQLITE_OK else {
+            try? FileManager.default.removeItem(at: targetURL)
+            throw LibraryDatabaseError.backupFailed("SQLite backup failed (\(stepResult)/\(finishResult)/\(closeResult))")
+        }
+        return targetURL
     }
 
     /// Removes rows that are no longer referenced by anything. Album artists
@@ -619,16 +867,18 @@ final class LibraryDatabase {
     }
 
     private func upsertSong(_ track: ScannedTrack,
+                            libraryID: String?,
                             artistID: String,
                             albumID: String,
                             dateAdded: TimeInterval) {
         let songID = LibraryScanner.stableUUID(track.path).uuidString
         guard let stmt = prepare("""
-            INSERT INTO songs(id, path, title, artist_id, album_id, genre, year, track,
+            INSERT INTO songs(id, path, library_id, title, artist_id, album_id, genre, year, track,
                               track_total, disc, disc_total, comments,
                               duration, date_added, mtime, file_size)
-            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(path) DO UPDATE SET
+                library_id = excluded.library_id,
                 title = excluded.title,
                 artist_id = excluded.artist_id,
                 album_id = excluded.album_id,
@@ -645,22 +895,23 @@ final class LibraryDatabase {
             """) else { return }
         bind(stmt, 1, songID)
         bind(stmt, 2, track.path)
-        bind(stmt, 3, track.title)
-        bind(stmt, 4, artistID)
-        bind(stmt, 5, albumID)
-        bind(stmt, 6, track.genre)
-        bind(stmt, 7, track.year)
-        bind(stmt, 8, track.track)
-        bind(stmt, 9, track.trackTotal)
-        bind(stmt, 10, track.discNumber)
-        bind(stmt, 11, track.discTotal)
-        bind(stmt, 12, track.comments)
-        bind(stmt, 13, track.duration)
+        bind(stmt, 3, libraryID)
+        bind(stmt, 4, track.title)
+        bind(stmt, 5, artistID)
+        bind(stmt, 6, albumID)
+        bind(stmt, 7, track.genre)
+        bind(stmt, 8, track.year)
+        bind(stmt, 9, track.track)
+        bind(stmt, 10, track.trackTotal)
+        bind(stmt, 11, track.discNumber)
+        bind(stmt, 12, track.discTotal)
+        bind(stmt, 13, track.comments)
+        bind(stmt, 14, track.duration)
         // Recently Added is anchored at first discovery. ON CONFLICT above
         // deliberately leaves date_added untouched for existing tracks.
-        bind(stmt, 14, dateAdded)
-        bind(stmt, 15, track.mtime)
-        bind(stmt, 16, Int(track.fileSize))
+        bind(stmt, 15, dateAdded)
+        bind(stmt, 16, track.mtime)
+        bind(stmt, 17, Int(track.fileSize))
         sqlite3_step(stmt)
         sqlite3_finalize(stmt)
     }
@@ -680,6 +931,8 @@ final class LibraryDatabase {
             JOIN albums a ON a.id = s.album_id
             JOIN artists ar ON ar.id = a.artist_id
             JOIN artists sar ON sar.id = s.artist_id
+            LEFT JOIN libraries l ON l.id = s.library_id
+            WHERE s.library_id IS NULL OR COALESCE(l.enabled, 1) = 1
             ORDER BY a.title COLLATE NOCASE, s.track, s.title
             """) {
             while sqlite3_step(stmt) == SQLITE_ROW {
@@ -1170,6 +1423,23 @@ final class LibraryDatabase {
         sqlite3_exec(db, sql, nil, nil, nil)
     }
 
+    private var databaseErrorMessage: String {
+        guard let db, let message = sqlite3_errmsg(db) else { return "Unknown SQLite error" }
+        return String(cString: message)
+    }
+
+    private func executeThrowing(_ sql: String) throws {
+        guard let db else { throw LibraryDatabaseError.transactionFailed("Database is closed") }
+        var errorPointer: UnsafeMutablePointer<CChar>?
+        let result = sqlite3_exec(db, sql, nil, nil, &errorPointer)
+        guard result == SQLITE_OK else {
+            let message = errorPointer.map { String(cString: $0) } ?? databaseErrorMessage
+            if let errorPointer { sqlite3_free(errorPointer) }
+            throw LibraryDatabaseError.transactionFailed(message)
+        }
+        if let errorPointer { sqlite3_free(errorPointer) }
+    }
+
     private func prepare(_ sql: String) -> OpaquePointer? {
         guard let db else { return nil }
         var stmt: OpaquePointer?
@@ -1179,6 +1449,14 @@ final class LibraryDatabase {
 
     private func bind(_ stmt: OpaquePointer?, _ index: Int32, _ value: String) {
         _ = value.withCString { sqlite3_bind_text(stmt, index, $0, -1, SQLITE_TRANSIENT) }
+    }
+
+    private func bind(_ stmt: OpaquePointer?, _ index: Int32, _ value: String?) {
+        guard let value else {
+            sqlite3_bind_null(stmt, index)
+            return
+        }
+        bind(stmt, index, value)
     }
 
     private func bind(_ stmt: OpaquePointer?, _ index: Int32, _ value: Int) {

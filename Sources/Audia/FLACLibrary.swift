@@ -7,6 +7,25 @@ struct KnownFile: Sendable {
     let size: Int64
 }
 
+enum LibraryScanMode: Sendable {
+    /// Finds and imports previously unseen paths only.
+    case quick
+    /// Finds new paths and reparses paths whose mtime or size changed.
+    case full
+}
+
+struct LibraryScanResult: Sendable {
+    let tracks: [ScannedTrack]
+    let discoveredFiles: [String: KnownFile]
+    let isComplete: Bool
+    let errors: [String]
+}
+
+struct LibraryScanRoot: Sendable {
+    let libraryID: UUID
+    let path: String
+}
+
 struct ScannedTrack: Sendable {
     let path: String
     let title: String
@@ -480,19 +499,28 @@ enum LibraryScanner {
 
     static func scan(folders: [String],
                      known: [String: KnownFile] = [:],
-                     progress: (@Sendable (Int, Int) -> Void)? = nil) async -> [ScannedTrack] {
-        let pending = pendingFiles(folders: folders, known: known)
-        progress?(0, pending.count)
+                     mode: LibraryScanMode = .full,
+                     progress: (@Sendable (Int, Int) -> Void)? = nil) async -> LibraryScanResult {
+        let enumeration = enumerateFiles(folders: folders, known: known, mode: mode)
+        progress?(0, enumeration.pending.count)
 
         // AVAsset metadata loading is asynchronous. Process a small batch at a
         // time so a large MP3/M4A library does not create hundreds of parallel
         // AVURLAsset loaders. FLAC keeps its fast synchronous tag reader.
         var tracks: [ScannedTrack] = []
+        var errors = enumeration.errors
+        var isComplete = enumeration.isComplete
         let batchSize = 8
         var index = 0
-        while index < pending.count {
-            let end = Swift.min(index + batchSize, pending.count)
-            let batch = Array(pending[index..<end])
+        while index < enumeration.pending.count {
+            if Task.isCancelled {
+                isComplete = false
+                errors.append("Scan was cancelled.")
+                break
+            }
+            let end = Swift.min(index + batchSize, enumeration.pending.count)
+            let batch = Array(enumeration.pending[index..<end])
+            var parsed: [ScannedTrack?] = []
             await withTaskGroup(of: ScannedTrack?.self) { group in
                 for url in batch {
                     group.addTask {
@@ -503,31 +531,66 @@ enum LibraryScanner {
                     }
                 }
                 for await track in group {
-                    if let track { tracks.append(track) }
+                    parsed.append(track)
                 }
             }
             index = end
-            progress?(index, pending.count)
+            for (offset, track) in parsed.enumerated() {
+                if let track {
+                    tracks.append(track)
+                } else {
+                    errors.append("Could not read media metadata: \(batch[offset].path)")
+                }
+            }
+            progress?(index, enumeration.pending.count)
         }
-        return tracks
+        return LibraryScanResult(tracks: tracks,
+                                 discoveredFiles: enumeration.discoveredFiles,
+                                 isComplete: isComplete,
+                                 errors: errors)
     }
 
     /// DirectoryEnumerator's iterator must stay in a synchronous function; the
     /// Swift 6 concurrency checker rejects it in an async context.
-    private static func pendingFiles(folders: [String],
-                                     known: [String: KnownFile]) -> [URL] {
+    private static func enumerateFiles(folders: [String],
+                                       known: [String: KnownFile],
+                                       mode: LibraryScanMode) -> (pending: [URL],
+                                                                    discoveredFiles: [String: KnownFile],
+                                                                    isComplete: Bool,
+                                                                    errors: [String]) {
         let fileManager = FileManager.default
         var pending: [URL] = []
+        var discovered: [String: KnownFile] = [:]
+        var errors: [String] = []
+        var isComplete = true
 
         for folder in folders {
             // Resolve symlinked library roots; FileManager's enumerator does
             // not descend into a symlink passed as its starting point.
             let folderURL = URL(fileURLWithPath: folder).resolvingSymlinksInPath()
-            guard let enumerator = fileManager.enumerator(at: folderURL,
-                                                          includingPropertiesForKeys: [.isRegularFileKey,
-                                                                                       .contentModificationDateKey,
-                                                                                       .fileSizeKey],
-                                                          options: [.skipsHiddenFiles]) else { continue }
+            var isDirectory: ObjCBool = false
+            guard fileManager.fileExists(atPath: folderURL.path, isDirectory: &isDirectory),
+                  isDirectory.boolValue,
+                  fileManager.isReadableFile(atPath: folderURL.path) else {
+                isComplete = false
+                errors.append("Media directory is missing or unreadable: \(folderURL.path)")
+                continue
+            }
+            let enumerator = fileManager.enumerator(
+                at: folderURL,
+                includingPropertiesForKeys: [.isRegularFileKey, .contentModificationDateKey, .fileSizeKey],
+                options: [.skipsHiddenFiles],
+                errorHandler: { url, error in
+                    isComplete = false
+                    errors.append("Could not enumerate \(url.path): \(error.localizedDescription)")
+                    return false
+                }
+            )
+            guard let enumerator else {
+                isComplete = false
+                errors.append("Could not enumerate media directory: \(folderURL.path)")
+                continue
+            }
             for case let fileURL as URL in enumerator {
                 guard supportedExtensions.contains(fileURL.pathExtension.lowercased()) else { continue }
                 // Normalize the file URL as well: enumerating /tmp yields
@@ -539,15 +602,23 @@ enum LibraryScanner {
                 let values = try? normalizedURL.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
                 let mtime = values?.contentModificationDate?.timeIntervalSince1970 ?? 0
                 let size = Int64(values?.fileSize ?? 0)
-                if let existing = known[storedPath] ?? known[fileURL.path],
-                   abs(existing.mtime - mtime) < 1,
-                   existing.size == size {
+                discovered[storedPath] = KnownFile(mtime: mtime, size: size)
+
+                guard let existing = known[storedPath] ?? known[fileURL.path] else {
+                    pending.append(normalizedURL)
                     continue
                 }
-                pending.append(normalizedURL)
+                switch mode {
+                case .quick:
+                    continue
+                case .full:
+                    if abs(existing.mtime - mtime) >= 1 || existing.size != size {
+                        pending.append(normalizedURL)
+                    }
+                }
             }
         }
-        return pending
+        return (pending, discovered, isComplete, errors)
     }
 
     static func stableUUID(_ string: String) -> UUID {

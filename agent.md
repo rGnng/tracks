@@ -161,6 +161,12 @@ Sources/Audia/
   - `<root>/Music/`
 - External Libraries are read-only indexes of folders managed by other apps.
   Tracks never writes their audio files.
+- External Libraries have a persisted enabled state. Disabling one hides its
+  songs from all content views, stops playback, and clears the global queue and
+  History. Song and playlist rows remain in SQLite for re-enable.
+- Deleting an External Library is available only while disabled, requires a
+  second destructive confirmation, creates a millisecond-timestamped SQLite
+  Online Backup first, and deletes only Tracks index data.
 - Read-only rules:
   - `Library.isReadOnly(song:)`: true unless the file is under the Internal
     Library's `Music/` directory.
@@ -187,11 +193,12 @@ Never recompute song IDs during normal open/move/rebase operations.
 artists(id TEXT PK, name TEXT UNIQUE)
 albums(id TEXT PK, title, artist_id, genre, year TEXT, artwork BLOB,
        UNIQUE(title, artist_id))
-songs(id TEXT PK, path TEXT UNIQUE, title, artist_id, album_id,
+songs(id TEXT PK, path TEXT UNIQUE, library_id, title, artist_id, album_id,
       genre, year TEXT, track, track_total, disc, disc_total, comments,
       duration, date_added, play_count, rating, loved, last_played,
       skip_count, mtime, file_size)
-libraries(id TEXT PK, path TEXT UNIQUE, kind TEXT, name TEXT, date_added)
+libraries(id TEXT PK, path TEXT UNIQUE, kind TEXT, name TEXT, date_added,
+          enabled INTEGER NOT NULL DEFAULT 1)
 playlists(id TEXT PK, name TEXT, date_created REAL, date_modified REAL)
 playlist_items(playlist_id, song_id, position,
                PRIMARY KEY(playlist_id, song_id))
@@ -202,6 +209,11 @@ Important schema decisions:
 - Artwork BLOBs were removed from the database. Album rows keep metadata and the
   artwork cache key; the 500x500 JPEG lives on disk.
 - `songs.loved` is the star flag and backs the built-in Stared playlist.
+- `songs.library_id` identifies the owning source; `libraries.enabled` controls
+  whether its songs appear in the normal library and playlists. Disabling does
+  not delete or rewrite songs or playlist items.
+- Existing databases migrate `libraries.enabled` and `songs.library_id`; legacy
+  song ownership is backfilled from the configured scan roots.
 - `playlists.date_modified` is maintained for MPD `Last-Modified`.
 - `playlist_items` has a primary key on `(playlist_id, song_id)`, so a stored
   playlist cannot contain duplicate copies of the same song.
@@ -223,8 +235,18 @@ Important schema decisions:
 ### Scanning and import
 
 - Supported files: FLAC, MP3, M4A, WAV, AIFF, OGG/Opus.
-- `LibraryScanner` skips unchanged files by `mtime + file_size`, resolves symlinks
-  for each file, and reads metadata concurrently.
+- Startup Quick Scan and Settings Quick Scan share one policy: discover and import
+  new paths only; do not reparse known paths or remove missing rows.
+- Full Scan refreshes files when `mtime` or `file_size` changes. File contents are
+  never hashed. Missing rows are reviewed per track in a searchable table; only
+  explicitly selected rows are removed from the Tracks index.
+- Scan deletion candidates are available only if the root exists, is readable,
+  and enumeration completed. A readable empty root still produces a missing-file
+  report; no volume UUID/label is checked or stored.
+- Relocate matches the full relative path beneath the old and new library roots,
+  preserving song IDs and playlist/play-count/star metadata. Unmatched tracks use
+  the same searchable missing-file review as Full Scan.
+- `LibraryScanner` resolves symlinks and reads metadata concurrently.
 - Internal imports use `LibraryOrganizer`:
   - Canonical path: `<Album Artist>/<Album>/[disc-]track.title-artist.ext`
   - Track digits: at least 2, expand automatically for 3+ digit track numbers.
@@ -260,6 +282,12 @@ Important schema decisions:
   five seconds and on pause/termination. On launch the queue and saved elapsed
   position are restored paused. Pressing Play resumes from that position instead
   of restarting the track. Empty/finished/cleared queues delete the row.
+- Runtime missing-file markers are held in memory only. Confirmed missing tracks
+  show a warning icon and are skipped; permission/decoder errors are not marked
+  missing. One hundred consecutive missing tracks pauses playback with a warning.
+- Playback History lives in UserDefaults (`player.historyIDs`), currently capped
+  at 50. Disabling any External Library stops playback and clears the global queue
+  and History; the UI uses the existing “History” label.
 - `SystemNowPlaying` publishes title, artist, album, duration, elapsed time,
   queue count/index, and cached album artwork to `MPNowPlayingInfoCenter`, and
   registers play/pause/toggle, next/previous, and position handlers on
@@ -634,6 +662,12 @@ Rules and behavior:
   deleted album. That is intentional for now.
 - There is no undo beyond the macOS Trash.
 
+External Library removal is separate from Internal file deletion: disabling
+requires confirmation and clears the global queue/History; the disabled source
+can then be deleted through a second confirmation. Tracks creates a SQLite Online
+Backup before deleting that source's songs and playlist-item associations. Empty
+user-created playlists are retained; external audio files are never touched.
+
 ## 10. Titlebar and traffic lights
 
 The main window uses a hidden/full-size content view and a custom 45pt title bar.
@@ -889,7 +923,9 @@ traffic lights are custom SwiftUI controls, not standard window buttons.
 - Deleting songs leaves empty folders and cached artwork behind.
 - The artwork cache is not automatically rebuilt when quality changes; use Rebuild
   Cache.
-- External Libraries are read-only and cannot be edited or deleted through Tracks.
+- External Libraries are read-only for audio-file edits. Their Tracks index can
+  be disabled/re-enabled or deleted after confirmation; deleting the index does
+  not delete the external audio files.
 - No security-scoped bookmarks; relevant only if the app is sandboxed later.
 - No per-library album isolation.
 - No undo for file deletion beyond the macOS Trash.

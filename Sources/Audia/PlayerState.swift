@@ -8,6 +8,19 @@ enum RepeatMode: String, CaseIterable {
     case one
 }
 
+struct MissingFileStreak {
+    private(set) var count = 0
+
+    mutating func recordMissing() -> Bool {
+        count += 1
+        return count >= 100
+    }
+
+    mutating func reset() {
+        count = 0
+    }
+}
+
 /// Shared playback state and audio engine.
 ///
 /// Tracks that come from the file-based library carry a `fileURL` and are played
@@ -17,6 +30,12 @@ enum RepeatMode: String, CaseIterable {
 /// still works.
 @MainActor
 final class PlayerState: ObservableObject {
+    private enum MediaPathAvailability {
+        case present
+        case missing
+        case inaccessible(String)
+    }
+
     static let shared = PlayerState()
 
     @Published private(set) var queue: [Song] = []
@@ -33,6 +52,9 @@ final class PlayerState: ObservableObject {
     @Published private(set) var repeatMode: RepeatMode = .off
     /// Most-recent-first play history, independent of the active queue.
     @Published private(set) var history: [Song] = []
+    /// Transient file-missing markers. These are deliberately not persisted.
+    @Published private(set) var missingFileIDs: Set<UUID> = []
+    @Published private(set) var missingFilePauseMessage: String?
 
     /// The queue in the order the user started it. Toggling shuffle off restores
     /// this order while keeping the current track at its original position.
@@ -62,6 +84,9 @@ final class PlayerState: ObservableObject {
     /// While the seek bar is being dragged, don't let the timer overwrite the
     /// dragged position with AVPlayer's still-old current time.
     private var seekGraceUntil: Date?
+    private var missingFileStreak = MissingFileStreak()
+    private var pendingPlayCountSongID: UUID?
+    private var didRecordPendingPlay = false
 
     private init() {
         isShuffleOn = UserDefaults.standard.bool(forKey: Self.shuffleDefaultsKey)
@@ -141,7 +166,66 @@ final class PlayerState: ObservableObject {
         currentIndex = nil
         isPlaying = false
         elapsed = 0
+        missingFileStreak.reset()
+        missingFilePauseMessage = nil
         persistQueue()
+    }
+
+    func clearHistory() {
+        historyIDs.removeAll()
+        history.removeAll()
+        persistHistory()
+    }
+
+    func markFilesMissing(_ ids: [UUID]) {
+        guard !ids.isEmpty else { return }
+        missingFileIDs.formUnion(ids)
+    }
+
+    func clearMissingFileIDs(_ ids: Set<UUID>) {
+        missingFileIDs.subtract(ids)
+    }
+
+    func clearMissingFiles(foundPaths: Set<String>) {
+        guard !foundPaths.isEmpty else { return }
+        missingFileStreak.reset()
+        missingFilePauseMessage = nil
+        let canonicalPaths = Set(foundPaths.map(canonicalFilePath))
+        let restored = Library.shared.allSongs.compactMap { song -> UUID? in
+            guard let url = song.fileURL,
+                  canonicalPaths.contains(canonicalFilePath(url.path)) else { return nil }
+            return song.id
+        }
+        missingFileIDs.subtract(restored)
+    }
+
+    private func canonicalFilePath(_ path: String) -> String {
+        URL(fileURLWithPath: path).resolvingSymlinksInPath().path
+    }
+
+    private func mediaPathAvailability(_ url: URL) -> MediaPathAvailability {
+        let fileManager = FileManager.default
+        let parentPath = url.deletingLastPathComponent().path
+        guard fileManager.isReadableFile(atPath: parentPath) else {
+            return .inaccessible("The containing media directory is unavailable or unreadable.")
+        }
+        guard fileManager.fileExists(atPath: url.path) else { return .missing }
+        guard fileManager.isReadableFile(atPath: url.path) else {
+            return .inaccessible("Permission denied")
+        }
+        return .present
+    }
+
+    private func reportMissingFilesPaused() {
+        missingFilePauseMessage = "Playback paused after 100 consecutive missing files. Check whether the external drive is available."
+        releasePlayer()
+        stopTimer()
+        isPlaying = false
+        persistQueuePosition()
+    }
+
+    func dismissMissingFilePauseNotice() {
+        missingFilePauseMessage = nil
     }
 
     var duration: TimeInterval {
@@ -840,20 +924,29 @@ final class PlayerState: ObservableObject {
         elapsed = 0
         isPlaying = false
         seekGraceUntil = nil
+        pendingPlayCountSongID = nil
+        didRecordPendingPlay = false
 
         guard let song = currentSong else { return }
-        if countPlay {
-            Library.shared.recordPlay(song.id)
-            recordHistory(song)
-        }
 
         if let url = song.fileURL {
+            switch mediaPathAvailability(url) {
+            case .present:
+                break
+            case .missing:
+                handleMissingFile(song)
+                return
+            case .inaccessible(let reason):
+                pauseForUnavailableFile(song, reason: reason)
+                return
+            }
             let item = AVPlayerItem(url: url)
             let player = AVPlayer(playerItem: item)
             player.volume = Float(volume)
             player.isMuted = isVolumeLocked && isSystemMuted
             player.audioOutputDeviceUniqueID = AudioDevices.shared.effectiveUID
             avPlayer = player
+            pendingPlayCountSongID = countPlay ? song.id : nil
 
             endObserver = NotificationCenter.default.addObserver(
                 forName: .AVPlayerItemDidPlayToEndTime,
@@ -879,6 +972,11 @@ final class PlayerState: ObservableObject {
         }
 
         // Fallback for entries without a decodable file: simulate transport.
+        missingFileStreak.reset()
+        if countPlay {
+            Library.shared.recordPlay(song.id)
+            recordHistory(song)
+        }
         if startAt > 0 {
             elapsed = song.duration > 0 ? min(startAt, song.duration) : startAt
         }
@@ -925,21 +1023,42 @@ final class PlayerState: ObservableObject {
         guard isPlaying, let song = currentSong else { return }
 
         if let player = avPlayer {
-            if let item = player.currentItem, item.status == .failed {
-                // The file could not be decoded; fall through to the simulated
-                // transport so the UI remains usable.
-                releasePlayer()
-            } else {
-                if let until = seekGraceUntil, Date() < until {
+            if let item = player.currentItem {
+                if item.status == .failed {
+                    if let url = song.fileURL {
+                        switch mediaPathAvailability(url) {
+                        case .missing:
+                            handleMissingFile(song)
+                            return
+                        case .inaccessible(let reason):
+                            pauseForUnavailableFile(song, reason: reason)
+                            return
+                        case .present:
+                            missingFileStreak.reset()
+                            break
+                        }
+                    }
+                    // Preserve simulated transport for present files AVPlayer cannot decode.
+                    releasePlayer()
+                    recordPendingPlayIfNeeded(song)
+                } else {
+                    if item.status == .readyToPlay {
+                        missingFileStreak.reset()
+                        missingFilePauseMessage = nil
+                        missingFileIDs.remove(song.id)
+                        recordPendingPlayIfNeeded(song)
+                    }
+                    if let until = seekGraceUntil, Date() < until {
+                        return
+                    }
+                    seekGraceUntil = nil
+                    let time = player.currentTime().seconds
+                    if time.isFinite {
+                        elapsed = time
+                    }
+                    persistQueueIfNeeded()
                     return
                 }
-                seekGraceUntil = nil
-                let time = player.currentTime().seconds
-                if time.isFinite {
-                    elapsed = time
-                }
-                persistQueueIfNeeded()
-                return
             }
         }
 
@@ -948,6 +1067,53 @@ final class PlayerState: ObservableObject {
         if song.duration > 0, elapsed >= song.duration {
             advanceAfterTrackEnds()
         }
+    }
+
+    private func recordPendingPlayIfNeeded(_ song: Song) {
+        guard !didRecordPendingPlay,
+              pendingPlayCountSongID == song.id else { return }
+        didRecordPendingPlay = true
+        pendingPlayCountSongID = nil
+        Library.shared.recordPlay(song.id)
+        recordHistory(song)
+    }
+
+    private func handleMissingFile(_ song: Song) {
+        missingFileIDs.insert(song.id)
+        let shouldPause = missingFileStreak.recordMissing()
+        pendingPlayCountSongID = nil
+        didRecordPendingPlay = false
+        releasePlayer()
+        stopTimer()
+        elapsed = 0
+        isPlaying = false
+
+        if shouldPause {
+            reportMissingFilesPaused()
+            return
+        }
+        guard let index = currentIndex, !queue.isEmpty else { return }
+        if index + 1 < queue.count {
+            currentIndex = index + 1
+            beginCurrentTrack()
+        } else if repeatMode == .all {
+            currentIndex = 0
+            beginCurrentTrack()
+        } else {
+            finishQueue()
+        }
+    }
+
+    private func pauseForUnavailableFile(_ song: Song, reason: String) {
+        missingFileStreak.reset()
+        pendingPlayCountSongID = nil
+        didRecordPendingPlay = false
+        releasePlayer()
+        stopTimer()
+        elapsed = 0
+        isPlaying = false
+        missingFilePauseMessage = "Could not access \(song.title): \(reason)"
+        persistQueuePosition()
     }
 
     /// Called when a track reaches its natural end. Repeat One replays the

@@ -81,15 +81,23 @@ struct ContentView: View {
             openWindow(id: "setup")
         }
         .alert(
-            "Library Opened",
+            player.missingFilePauseMessage == nil ? "Library Opened" : "Playback Paused",
             isPresented: Binding(
-                get: { library.openWarning != nil },
-                set: { if !$0 { library.clearOpenWarning() } }
+                get: { library.openWarning != nil || player.missingFilePauseMessage != nil },
+                set: {
+                    if !$0 {
+                        library.clearOpenWarning()
+                        player.dismissMissingFilePauseNotice()
+                    }
+                }
             )
         ) {
-            Button("OK") { library.clearOpenWarning() }
+            Button("OK") {
+                library.clearOpenWarning()
+                player.dismissMissingFilePauseNotice()
+            }
         } message: {
-            Text(library.openWarning ?? "")
+            Text(player.missingFilePauseMessage ?? library.openWarning ?? "")
         }
     }
 

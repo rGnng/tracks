@@ -537,6 +537,7 @@ private struct AlbumDetailView: View {
                                     albumArtist: album.artist,
                                     isSelected: selected,
                                     isCurrent: player.currentSong?.id == song.id,
+                                    isMissing: player.missingFileIDs.contains(song.id),
                                     isPlaying: player.isPlaying,
                                     previousSelected: previousSelected,
                                     nextSelected: nextSelected
@@ -724,6 +725,7 @@ private struct AlbumTrackRow: View {
     let albumArtist: String
     let isSelected: Bool
     let isCurrent: Bool
+    let isMissing: Bool
     let isPlaying: Bool
     let previousSelected: Bool
     let nextSelected: Bool
@@ -733,7 +735,11 @@ private struct AlbumTrackRow: View {
     var body: some View {
         HStack(spacing: 0) {
             Group {
-                if isCurrent {
+                if isMissing {
+                    Image(systemName: "exclamationmark.circle.fill")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(isSelected ? Theme.highlightForeground : .orange)
+                } else if isCurrent {
                     Image(systemName: isPlaying ? "play.fill" : "pause.fill")
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundColor(isSelected ? Theme.highlightForeground : Theme.highlight)
@@ -1788,7 +1794,12 @@ struct SongTable: View {
     @ViewBuilder
     private func statusCell(_ song: Song, selected: Bool) -> some View {
         Group {
-            if player.currentSong?.id == song.id {
+            if player.missingFileIDs.contains(song.id) {
+                Image(systemName: "exclamationmark.circle.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(selected ? Theme.highlightForeground : .orange)
+                    .help("File is currently missing; it was not removed from the library")
+            } else if player.currentSong?.id == song.id {
                 Image(systemName: player.isPlaying ? "play.fill" : "pause.fill")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundColor(selected ? Theme.highlightForeground : Theme.highlight)

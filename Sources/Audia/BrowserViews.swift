@@ -426,6 +426,7 @@ private struct BrowserAlbumSection: View {
                     song: song,
                     isSelected: selected,
                     isCurrent: player.currentSong?.id == song.id,
+                    isMissing: player.missingFileIDs.contains(song.id),
                     isPlaying: player.isPlaying,
                     previousSelected: previousSelected,
                     nextSelected: nextSelected
@@ -524,6 +525,7 @@ private struct BrowserSongRow: View {
     let song: Song
     let isSelected: Bool
     let isCurrent: Bool
+    let isMissing: Bool
     let isPlaying: Bool
     let previousSelected: Bool
     let nextSelected: Bool
@@ -533,7 +535,11 @@ private struct BrowserSongRow: View {
     var body: some View {
         HStack(spacing: 0) {
             Group {
-                if isCurrent {
+                if isMissing {
+                    Image(systemName: "exclamationmark.circle.fill")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(isSelected ? Theme.highlightForeground : .orange)
+                } else if isCurrent {
                     Image(systemName: isPlaying ? "play.fill" : "pause.fill")
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundColor(isSelected ? Theme.highlightForeground : Theme.highlight)
