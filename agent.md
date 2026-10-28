@@ -441,6 +441,9 @@ Important schema decisions:
   by **View > Hide/Show Sidebar**, Command-Shift-L, or the left toolbar button
   shown only in full screen. These menu/global keys are intentionally not in the
   editable shortcut table.
+- The bottom status bar uses `showStatusBar` for windowed mode and
+  `showStatusBarFullScreen` for full screen (default true). The View menu and
+  Command-/ toggle the state for the current mode.
 - While the Library window is the key window, unmodified `1`–`5` select Recently
   Added, Albums, Artists, Songs, and Genres; `8` selects Stared. They are ignored
   while editing text and for every other window.

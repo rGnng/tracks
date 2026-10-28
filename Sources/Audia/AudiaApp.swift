@@ -7,7 +7,13 @@ struct AudiaApp: App {
     @AppStorage("appearanceMode") private var appearanceMode = "auto"
     @AppStorage("highlightColor") private var highlightColorRaw = HighlightColor.graphite.rawValue
     @AppStorage("showStatusBar") private var showStatusBar = true
+    @AppStorage("showStatusBarFullScreen") private var showStatusBarFullScreen = true
     @ObservedObject private var sidebar = SidebarVisibilityStore.shared
+    @ObservedObject private var windowMode = WindowModeCenter.shared
+
+    private var statusBarVisible: Bool {
+        windowMode.isFullScreen ? showStatusBarFullScreen : showStatusBar
+    }
 
     private var highlightColor: Color {
         (HighlightColor(rawValue: highlightColorRaw) ?? .system).color
@@ -74,8 +80,12 @@ struct AudiaApp: App {
 
                 Divider()
 
-                Button(showStatusBar ? "Hide Status Bar" : "Show Status Bar") {
-                    showStatusBar.toggle()
+                Button(statusBarVisible ? "Hide Status Bar" : "Show Status Bar") {
+                    if windowMode.isFullScreen {
+                        showStatusBarFullScreen.toggle()
+                    } else {
+                        showStatusBar.toggle()
+                    }
                 }
                 .keyboardShortcut("/", modifiers: .command)
 

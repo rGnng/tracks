@@ -5,6 +5,7 @@ struct ContentView: View {
     @EnvironmentObject private var player: PlayerState
     @Environment(\.openWindow) private var openWindow
     @AppStorage("showStatusBar") private var showStatusBar = true
+    @AppStorage("showStatusBarFullScreen") private var showStatusBarFullScreen = true
     @ObservedObject private var sidebar = SidebarVisibilityStore.shared
     @ObservedObject private var navigation = NavigationCenter.shared
     @ObservedObject private var library = Library.shared
@@ -116,6 +117,10 @@ struct ContentView: View {
         }
     }
 
+    private var statusBarVisible: Bool {
+        windowMode.isFullScreen ? showStatusBarFullScreen : showStatusBar
+    }
+
     private var libraryView: some View {
         VStack(spacing: 0) {
             PlayerToolbar(searchText: $searchText)
@@ -130,7 +135,7 @@ struct ContentView: View {
                     .frame(maxWidth: .infinity)
                     .clipped()
             }
-            if showStatusBar {
+            if statusBarVisible {
                 Hairline()
                 StatusBarView()
             }

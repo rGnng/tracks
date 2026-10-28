@@ -86,6 +86,37 @@ final class LibraryWorkflowTests: XCTestCase {
     }
 
     @MainActor
+    func testPlaylistsSurviveDatabaseReopen() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        let mediaRoot = fixture.appendingPathComponent("media", isDirectory: true)
+        try FileManager.default.createDirectory(at: mediaRoot, withIntermediateDirectories: true)
+        let audioURL = mediaRoot.appendingPathComponent("song.wav")
+        try makeWaveFile().write(to: audioURL)
+        let databasePath = fixture.appendingPathComponent("library.sqlite").path
+
+        let database = LibraryDatabase(path: databasePath)
+        let library = database.ensureLibrary(path: mediaRoot.path,
+                                             kind: .external,
+                                             name: "Playlist Test")
+        let track = makeTrack(path: audioURL.path, title: "Persisted Song")
+        _ = database.sync(tracks: [track],
+                          internalMusicRoot: nil,
+                          libraries: [library])
+        let song = try XCTUnwrap(database.loadLibrary().albums.first?.songs.first)
+        let playlist = database.createPlaylist(name: "Persist Me")
+        database.addSongsToPlaylist(playlist.id, songIDs: [song.id])
+        database.closeForTermination()
+
+        let reopened = LibraryDatabase(path: databasePath)
+        defer { reopened.closeForTermination() }
+        let loaded = reopened.loadLibrary()
+        let restored = try XCTUnwrap(loaded.playlists.first { $0.name == "Persist Me" })
+        XCTAssertEqual(restored.id, playlist.id)
+        XCTAssertEqual(restored.songs.map(\.id), [song.id])
+    }
+
+    @MainActor
     func testDisablePreservesStoredPlaylistAndReenableRestoresTrack() throws {
         let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture) }
