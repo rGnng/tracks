@@ -127,7 +127,7 @@ final class TrayController: NSObject {
                 DispatchQueue.main.async { self?.currentSongChanged() }
             }
             .store(in: &cancellables)
-        player.$queue
+        player.$queueEntries
             .dropFirst()
             .sink { [weak self] _ in
                 DispatchQueue.main.async { self?.currentSongChanged() }

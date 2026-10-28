@@ -403,8 +403,12 @@ private struct MiniQueuePanel: View {
     @EnvironmentObject private var player: PlayerState
     @State private var tab: MiniQueueTab = .upNext
 
-    private var songs: [Song] {
-        tab == .upNext ? player.upNext : player.history
+    private var upNextEntries: [QueueEntry] {
+        player.upNextEntries
+    }
+
+    private var historySongs: [Song] {
+        player.history
     }
 
     var body: some View {
@@ -421,15 +425,26 @@ private struct MiniQueuePanel: View {
 
             Divider()
 
-            if songs.isEmpty {
-                Text(tab == .upNext ? "Nothing Up Next" : "No History")
-                    .font(.system(size: 11))
-                    .foregroundColor(Theme.secondaryText)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            if tab == .upNext {
+                if upNextEntries.isEmpty {
+                    emptyLabel("Nothing Up Next")
+                } else {
+                    ScrollView {
+                        LazyVStack(spacing: 0) {
+                            ForEach(upNextEntries) { entry in
+                                MiniQueueRow(song: entry.song, queueEntryID: entry.id) {
+                                    player.playQueueEntry(id: entry.id)
+                                }
+                            }
+                        }
+                    }
+                }
+            } else if historySongs.isEmpty {
+                emptyLabel("No History")
             } else {
                 ScrollView {
                     LazyVStack(spacing: 0) {
-                        ForEach(songs) { song in
+                        ForEach(historySongs) { song in
                             MiniQueueRow(song: song) {
                                 player.playFromQueue(song)
                             }
@@ -440,10 +455,18 @@ private struct MiniQueuePanel: View {
         }
         .background(Theme.contentBackground)
     }
+
+    private func emptyLabel(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 11))
+            .foregroundColor(Theme.secondaryText)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
 }
 
 private struct MiniQueueRow: View {
     let song: Song
+    var queueEntryID: UInt32? = nil
     let action: () -> Void
 
     @ObservedObject private var library = Library.shared
@@ -489,7 +512,7 @@ private struct MiniQueueRow: View {
         .onTapGesture(perform: action)
         .onHover { hover = $0 }
         .contextMenu {
-            QueueSongContextMenu(song: song)
+            QueueSongContextMenu(song: song, queueEntryID: queueEntryID)
         }
     }
 }

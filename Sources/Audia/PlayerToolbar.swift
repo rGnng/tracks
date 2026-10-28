@@ -94,12 +94,16 @@ private struct QueuePopover: View {
     @AppStorage("queue.listHeight") private var storedListHeight = 260.0
     @State private var listResizeStart: CGFloat?
     @State private var widthResizeStart: CGFloat?
-    @State private var draggingID: UUID?
+    @State private var draggingEntryID: UInt32?
     @State private var dropTargetIndex: Int?
     @State private var dropAtEnd = false
 
-    private var songs: [Song] {
-        tab == .upNext ? player.upNext : player.history
+    private var upNextEntries: [QueueEntry] {
+        player.upNextEntries
+    }
+
+    private var historySongs: [Song] {
+        player.history
     }
 
     private var queueWidth: CGFloat {
@@ -124,20 +128,28 @@ private struct QueuePopover: View {
 
             Divider()
 
-            if songs.isEmpty {
-                Text(tab == .upNext ? "Nothing Up Next" : "No History")
-                    .font(.system(size: 12))
-                    .foregroundColor(Theme.secondaryText)
-                    .frame(maxWidth: .infinity)
+            if tab == .upNext {
+                if upNextEntries.isEmpty {
+                    queueEmptyLabel("Nothing Up Next")
+                } else {
+                    ScrollView {
+                        LazyVStack(spacing: 0) {
+                            ForEach(Array(upNextEntries.enumerated()), id: \.element.id) { index, entry in
+                                queueRow(entry, at: index)
+                            }
+                            endDropZone
+                        }
+                        .padding(.vertical, 2)
+                    }
                     .frame(height: listHeight)
+                }
+            } else if historySongs.isEmpty {
+                queueEmptyLabel("No History")
             } else {
                 ScrollView {
                     LazyVStack(spacing: 0) {
-                        ForEach(Array(songs.enumerated()), id: \.element.id) { index, song in
-                            queueRow(song, at: index)
-                        }
-                        if tab == .upNext {
-                            endDropZone
+                        ForEach(Array(historySongs.enumerated()), id: \.element.id) { index, song in
+                            historyRow(song, at: index)
                         }
                     }
                     .padding(.vertical, 2)
@@ -163,8 +175,8 @@ private struct QueuePopover: View {
                             .contentShape(RoundedRectangle(cornerRadius: 5))
                     }
                     .buttonStyle(.plain)
-                    .disabled(songs.isEmpty)
-                    .opacity(songs.isEmpty ? 0.4 : 1)
+                    .disabled(upNextEntries.isEmpty)
+                    .opacity(upNextEntries.isEmpty ? 0.4 : 1)
                 }
                 Spacer(minLength: 0)
             }
@@ -240,45 +252,55 @@ private struct QueuePopover: View {
         .onDisappear { NSCursor.arrow.set() }
     }
 
-    @ViewBuilder
-    private func queueRow(_ song: Song, at index: Int) -> some View {
-        let row = QueueRow(song: song) {
+    private func queueEmptyLabel(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 12))
+            .foregroundColor(Theme.secondaryText)
+            .frame(maxWidth: .infinity)
+            .frame(height: listHeight)
+    }
+
+    private func queueRow(_ entry: QueueEntry, at index: Int) -> some View {
+        QueueRow(song: entry.song) {
+            player.playQueueEntry(id: entry.id)
+        }
+        .contextMenu {
+            QueueSongContextMenu(song: entry.song, queueEntryID: entry.id)
+        }
+        .overlay(alignment: .top) {
+            if dropTargetIndex == index {
+                Rectangle()
+                    .fill(Theme.highlight)
+                    .frame(height: 2)
+            }
+        }
+        .onDrag {
+            draggingEntryID = entry.id
+            dropTargetIndex = nil
+            dropAtEnd = false
+            return NSItemProvider(object: String(entry.id) as NSString)
+        }
+        .onDrop(of: [.plainText],
+                isTargeted: Binding(
+                    get: { dropTargetIndex == index },
+                    set: { targeted in
+                        if targeted {
+                            dropTargetIndex = index
+                        } else if dropTargetIndex == index {
+                            dropTargetIndex = nil
+                        }
+                    }
+                )) { _ in
+            performDrop(before: index)
+        }
+    }
+
+    private func historyRow(_ song: Song, at index: Int) -> some View {
+        QueueRow(song: song) {
             player.playFromQueue(song)
         }
         .contextMenu {
             QueueSongContextMenu(song: song)
-        }
-
-        if tab == .upNext {
-            row
-                .overlay(alignment: .top) {
-                    if dropTargetIndex == index {
-                        Rectangle()
-                            .fill(Theme.highlight)
-                            .frame(height: 2)
-                    }
-                }
-                .onDrag {
-                    draggingID = song.id
-                    dropTargetIndex = nil
-                    dropAtEnd = false
-                    return NSItemProvider(object: song.id.uuidString as NSString)
-                }
-                .onDrop(of: [.plainText],
-                        isTargeted: Binding(
-                            get: { dropTargetIndex == index },
-                            set: { targeted in
-                                if targeted {
-                                    dropTargetIndex = index
-                                } else if dropTargetIndex == index {
-                                    dropTargetIndex = nil
-                                }
-                            }
-                        )) { _ in
-                    performDrop(before: index)
-                }
-        } else {
-            row
         }
     }
 
@@ -300,8 +322,8 @@ private struct QueuePopover: View {
 
     private func performDrop(before index: Int) -> Bool {
         guard tab == .upNext,
-              let draggingID,
-              let from = songs.firstIndex(where: { $0.id == draggingID }) else {
+              let draggingEntryID,
+              let from = upNextEntries.firstIndex(where: { $0.id == draggingEntryID }) else {
             return false
         }
         defer { resetDragState() }
@@ -313,19 +335,19 @@ private struct QueuePopover: View {
 
     private func performDropAtEnd() -> Bool {
         guard tab == .upNext,
-              let draggingID,
-              let from = songs.firstIndex(where: { $0.id == draggingID }) else {
+              let draggingEntryID,
+              let from = upNextEntries.firstIndex(where: { $0.id == draggingEntryID }) else {
             return false
         }
         defer { resetDragState() }
-        let destination = max(songs.count - 1, 0)
+        let destination = max(upNextEntries.count - 1, 0)
         guard from != destination else { return true }
         player.moveUpNext(from: from, to: destination)
         return true
     }
 
     private func resetDragState() {
-        draggingID = nil
+        draggingEntryID = nil
         dropTargetIndex = nil
         dropAtEnd = false
     }
@@ -385,6 +407,7 @@ private struct QueueRow: View {
 /// Shared right-click menu for songs shown in the queue panel.
 struct QueueSongContextMenu: View {
     let song: Song
+    var queueEntryID: UInt32? = nil
     @EnvironmentObject private var player: PlayerState
 
     private var albumID: UUID? {
@@ -398,14 +421,28 @@ struct QueueSongContextMenu: View {
     }
 
     private var isInQueue: Bool {
-        player.queue.contains { $0.id == song.id }
+        if let queueEntryID {
+            return player.queueEntries.contains { $0.id == queueEntryID }
+        }
+        return player.queue.contains { $0.id == song.id }
+    }
+
+    private var isCurrentEntry: Bool {
+        if let queueEntryID {
+            return player.isCurrentQueueEntry(queueEntryID)
+        }
+        return player.currentSong?.id == song.id
     }
 
     var body: some View {
         Button("Play Next") {
-            player.playNextFromQueue(song)
+            if let queueEntryID {
+                player.playNextQueueEntry(id: queueEntryID)
+            } else {
+                player.playNextFromQueue(song)
+            }
         }
-        .disabled(player.currentSong?.id == song.id)
+        .disabled(isCurrentEntry)
 
         Button("Go to Album") {
             guard let albumID else { return }
@@ -422,7 +459,11 @@ struct QueueSongContextMenu: View {
         Divider()
 
         Button("Delete from Queue") {
-            player.removeFromQueue(song)
+            if let queueEntryID {
+                player.removeQueueEntry(id: queueEntryID)
+            } else {
+                player.removeFromQueue(song)
+            }
         }
         .disabled(!isInQueue)
     }

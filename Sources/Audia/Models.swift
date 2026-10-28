@@ -89,6 +89,13 @@ struct Song: Identifiable, Hashable {
     }
 }
 
+/// One position in the active play queue. `id` is the stable queue-entry
+/// identity exposed as MPD's `Id`; it is not the library `Song.id`.
+struct QueueEntry: Identifiable, Equatable {
+    let id: UInt32
+    var song: Song
+}
+
 struct Album: Identifiable, Hashable {
     let id: UUID
     let title: String
@@ -168,9 +175,15 @@ struct Playlist: Identifiable, Hashable {
     }
 }
 
+struct PersistedQueueEntry: Codable, Equatable {
+    let id: UInt32
+    let songID: UUID
+}
+
 struct PersistedPlayerQueue {
-    let songIDs: [UUID]
-    let baseQueueIDs: [UUID]
+    let entries: [PersistedQueueEntry]
+    let baseEntries: [PersistedQueueEntry]
+    let nextQueueID: UInt32
     let currentIndex: Int?
     let elapsed: TimeInterval
 }

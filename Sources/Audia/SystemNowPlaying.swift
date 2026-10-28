@@ -41,7 +41,7 @@ final class SystemNowPlaying {
             }
             .store(in: &cancellables)
 
-        player.$queue
+        player.$queueEntries
             .sink { [weak self] _ in
                 Task { @MainActor in self?.refreshTrack() }
             }

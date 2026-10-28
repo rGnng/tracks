@@ -38,7 +38,7 @@ final class PlayerState: ObservableObject {
 
     static let shared = PlayerState()
 
-    @Published private(set) var queue: [Song] = []
+    @Published private(set) var queueEntries: [QueueEntry] = []
     @Published private(set) var currentIndex: Int?
     @Published var isPlaying = false
     @Published var elapsed: TimeInterval = 0
@@ -57,8 +57,9 @@ final class PlayerState: ObservableObject {
     @Published private(set) var missingFilePauseMessage: String?
 
     /// The queue in the order the user started it. Toggling shuffle off restores
-    /// this order while keeping the current track at its original position.
-    private var baseQueue: [Song] = []
+    /// this order while keeping the current entry at its original position.
+    private var baseQueueEntries: [QueueEntry] = []
+    private var nextQueueID: UInt32 = 1
     private var historyIDs: [UUID] = []
 
     private var didAttemptQueueRestore = false
@@ -117,7 +118,7 @@ final class PlayerState: ObservableObject {
         if isVolumeLocked { startSystemVolumeTimer() }
 
         queueChangeCancellables.removeAll()
-        $queue
+        $queueEntries
             .dropFirst()
             .debounce(for: .milliseconds(150), scheduler: RunLoop.main)
             .sink { [weak self] _ in
@@ -135,34 +136,86 @@ final class PlayerState: ObservableObject {
         SystemNowPlaying.shared.attach(to: self)
     }
 
+    /// Song projection for UI and integrations that do not need queue-entry
+    /// identity. Queue mutation must always go through `queueEntries`.
+    var queue: [Song] {
+        queueEntries.map(\.song)
+    }
+
+    var currentEntry: QueueEntry? {
+        guard let i = currentIndex, queueEntries.indices.contains(i) else { return nil }
+        return queueEntries[i]
+    }
+
     var currentSong: Song? {
-        guard let i = currentIndex, queue.indices.contains(i) else { return nil }
-        return queue[i]
+        currentEntry?.song
     }
 
-    /// Songs still queued after the current track.
+    /// Entries still queued after the current track.
+    var upNextEntries: [QueueEntry] {
+        guard let i = currentIndex, queueEntries.indices.contains(i) else { return [] }
+        return Array(queueEntries.dropFirst(i + 1))
+    }
+
+    /// Song projection of `upNextEntries`.
     var upNext: [Song] {
-        guard let i = currentIndex, queue.indices.contains(i) else { return [] }
-        return Array(queue.dropFirst(i + 1))
+        upNextEntries.map(\.song)
     }
 
+    func index(ofQueueEntry id: UInt32) -> Int? {
+        queueEntries.firstIndex(where: { $0.id == id })
+    }
+
+    func isCurrentQueueEntry(_ id: UInt32) -> Bool {
+        currentEntry?.id == id
+    }
+
+    private func advanceQueueID() {
+        nextQueueID &+= 1
+        if nextQueueID == 0 { nextQueueID = 1 }
+    }
+
+    private func allocateQueueID() -> UInt32 {
+        let occupied = Set(queueEntries.map(\.id)).union(baseQueueEntries.map(\.id))
+        while occupied.contains(nextQueueID) {
+            advanceQueueID()
+        }
+        let id = nextQueueID
+        advanceQueueID()
+        return id
+    }
+
+    private func makeQueueEntry(_ song: Song) -> QueueEntry {
+        QueueEntry(id: allocateQueueID(), song: song)
+    }
+
+    private func makeQueueEntries(_ songs: [Song]) -> [QueueEntry] {
+        songs.map(makeQueueEntry)
+    }
+
+    private func raiseNextQueueID(above entries: [QueueEntry]) {
+        guard let maxID = entries.map(\.id).max() else { return }
+        if nextQueueID <= maxID {
+            nextQueueID = maxID == UInt32.max ? 1 : maxID + 1
+        }
+    }
 
     /// Drops everything after the current track, keeping the current song.
     func clearUpNext() {
-        guard let i = currentIndex, queue.indices.contains(i) else { return }
-        let keptIDs = Set(queue.prefix(i + 1).map(\.id))
-        queue = Array(queue.prefix(i + 1))
+        guard let i = currentIndex, queueEntries.indices.contains(i) else { return }
+        let keptIDs = Set(queueEntries.prefix(i + 1).map(\.id))
+        queueEntries = Array(queueEntries.prefix(i + 1))
         // Keep the normal-order copy in sync so disabling shuffle later does
         // not resurrect tracks the user just cleared.
-        baseQueue = baseQueue.filter { keptIDs.contains($0.id) }
+        baseQueueEntries.removeAll { !keptIDs.contains($0.id) }
     }
 
     /// Stops playback and forgets the queue. Used when switching libraries.
     func stopAndClear() {
         releasePlayer()
         stopTimer()
-        queue = []
-        baseQueue = []
+        queueEntries = []
+        baseQueueEntries = []
         currentIndex = nil
         isPlaying = false
         elapsed = 0
@@ -304,9 +357,10 @@ final class PlayerState: ObservableObject {
             repeatMode = .off
             UserDefaults.standard.set(RepeatMode.off.rawValue, forKey: Self.repeatDefaultsKey)
         }
-        baseQueue = songs
-        queue = songs
-        currentIndex = min(max(index, 0), songs.count - 1)
+        let entries = makeQueueEntries(songs)
+        baseQueueEntries = entries
+        queueEntries = entries
+        currentIndex = min(max(index, 0), entries.count - 1)
         beginCurrentTrack()
     }
 
@@ -318,13 +372,14 @@ final class PlayerState: ObservableObject {
     /// Appends tracks to the end of the current queue without starting playback.
     func appendToQueue(_ songs: [Song]) {
         guard !songs.isEmpty else { return }
-        if queue.isEmpty {
-            baseQueue = songs
-            queue = isShuffleOn ? songs.shuffled() : songs
+        let entries = makeQueueEntries(songs)
+        if queueEntries.isEmpty {
+            baseQueueEntries = entries
+            queueEntries = isShuffleOn ? entries.shuffled() : entries
             currentIndex = nil
         } else {
-            queue.append(contentsOf: songs)
-            baseQueue.append(contentsOf: songs)
+            queueEntries.append(contentsOf: entries)
+            baseQueueEntries.append(contentsOf: entries)
             if isShuffleOn {
                 shuffleUnplayedQueue()
             }
@@ -332,31 +387,33 @@ final class PlayerState: ObservableObject {
     }
 
     /// Re-shuffles the part of the queue that has not been played yet while
-    /// keeping the current track in place. Used when random/shuffle is enabled
+    /// keeping the current entry in place. Used when random/shuffle is enabled
     /// after tracks were already queued, or when tracks are appended.
     private func shuffleUnplayedQueue() {
-        guard isShuffleOn, queue.count > 1 else { return }
-        if let i = currentIndex, queue.indices.contains(i) {
-            let head = Array(queue.prefix(i + 1))
-            queue = head + Array(queue.dropFirst(i + 1)).shuffled()
+        guard isShuffleOn, queueEntries.count > 1 else { return }
+        if let i = currentIndex, queueEntries.indices.contains(i) {
+            let head = Array(queueEntries.prefix(i + 1))
+            queueEntries = head + Array(queueEntries.dropFirst(i + 1)).shuffled()
         } else {
-            queue.shuffle()
+            queueEntries.shuffle()
         }
     }
 
     func insertIntoQueue(_ songs: [Song], at index: Int) {
         guard !songs.isEmpty else { return }
-        if queue.isEmpty {
-            queue = songs
-            baseQueue = songs
+        let entries = makeQueueEntries(songs)
+        if queueEntries.isEmpty {
+            queueEntries = entries
+            baseQueueEntries = entries
             currentIndex = nil
             return
         }
-        let insertion = min(max(index, 0), queue.count)
-        queue.insert(contentsOf: songs, at: insertion)
-        baseQueue.insert(contentsOf: songs, at: min(insertion, baseQueue.count))
+        let insertion = min(max(index, 0), queueEntries.count)
+        queueEntries.insert(contentsOf: entries, at: insertion)
+        baseQueueEntries.insert(contentsOf: entries,
+                                at: min(insertion, baseQueueEntries.count))
         if let currentIndex, insertion <= currentIndex {
-            self.currentIndex = currentIndex + songs.count
+            self.currentIndex = currentIndex + entries.count
         }
     }
 
@@ -368,8 +425,8 @@ final class PlayerState: ObservableObject {
     func clearQueue() {
         releasePlayer()
         stopTimer()
-        queue = []
-        baseQueue = []
+        queueEntries = []
+        baseQueueEntries = []
         currentIndex = nil
         isPlaying = false
         elapsed = 0
@@ -381,26 +438,45 @@ final class PlayerState: ObservableObject {
     func restorePersistedQueueIfNeeded() {
         guard !didAttemptQueueRestore else { return }
         didAttemptQueueRestore = true
-        guard queue.isEmpty, let saved = Library.shared.loadPlayerQueue() else { return }
+        guard queueEntries.isEmpty, let saved = Library.shared.loadPlayerQueue() else { return }
 
         let songsByID = Dictionary(uniqueKeysWithValues: Library.shared.allSongs.map { ($0.id, $0) })
-        let restoredQueue = saved.songIDs.compactMap { songsByID[$0] }
-        guard !restoredQueue.isEmpty else {
-            Library.shared.savePlayerQueue(PersistedPlayerQueue(songIDs: [],
-                                                                baseQueueIDs: [],
+        var restoredEntries: [QueueEntry] = []
+        var restoredCurrentIndex: Int?
+        for (offset, persisted) in saved.entries.enumerated() {
+            guard let song = songsByID[persisted.songID] else { continue }
+            if saved.currentIndex == offset {
+                restoredCurrentIndex = restoredEntries.count
+            }
+            restoredEntries.append(QueueEntry(id: persisted.id, song: song))
+        }
+        guard !restoredEntries.isEmpty else {
+            Library.shared.savePlayerQueue(PersistedPlayerQueue(entries: [],
+                                                                baseEntries: [],
+                                                                nextQueueID: saved.nextQueueID,
                                                                 currentIndex: nil,
                                                                 elapsed: 0))
             return
         }
 
-        let restoredBase = saved.baseQueueIDs.compactMap { songsByID[$0] }
-        queue = restoredQueue
-        baseQueue = restoredBase.isEmpty ? restoredQueue : restoredBase
+        let entriesByID = Dictionary(uniqueKeysWithValues: restoredEntries.map { ($0.id, $0) })
+        var restoredBase: [QueueEntry] = saved.baseEntries.compactMap { persisted in
+            if let entry = entriesByID[persisted.id] {
+                return entry
+            }
+            guard let song = songsByID[persisted.songID] else { return nil }
+            return QueueEntry(id: persisted.id, song: song)
+        }
+        if restoredBase.isEmpty { restoredBase = restoredEntries }
 
-        if let savedIndex = saved.currentIndex {
-            let index = min(max(savedIndex, 0), restoredQueue.count - 1)
-            currentIndex = index
-            let duration = restoredQueue[index].duration
+        queueEntries = restoredEntries
+        baseQueueEntries = restoredBase
+        nextQueueID = saved.nextQueueID
+        raiseNextQueueID(above: restoredEntries + restoredBase)
+
+        if let restoredCurrentIndex {
+            currentIndex = restoredCurrentIndex
+            let duration = restoredEntries[restoredCurrentIndex].song.duration
             elapsed = duration > 0 ? min(max(saved.elapsed, 0), duration) : max(saved.elapsed, 0)
         } else {
             currentIndex = nil
@@ -411,6 +487,7 @@ final class PlayerState: ObservableObject {
         avPlayer = nil
         seekGraceUntil = nil
         lastPersistedElapsed = elapsed
+        persistQueue()
     }
 
     /// Called before the database closes during app termination.
@@ -423,8 +500,15 @@ final class PlayerState: ObservableObject {
     }
 
     private func persistQueue() {
-        Library.shared.savePlayerQueue(PersistedPlayerQueue(songIDs: queue.map(\.id),
-                                                            baseQueueIDs: baseQueue.map(\.id),
+        let entries = queueEntries.map {
+            PersistedQueueEntry(id: $0.id, songID: $0.song.id)
+        }
+        let baseEntries = baseQueueEntries.map {
+            PersistedQueueEntry(id: $0.id, songID: $0.song.id)
+        }
+        Library.shared.savePlayerQueue(PersistedPlayerQueue(entries: entries,
+                                                            baseEntries: baseEntries,
+                                                            nextQueueID: nextQueueID,
                                                             currentIndex: currentIndex,
                                                             elapsed: elapsed))
         lastPersistedElapsed = elapsed
@@ -441,9 +525,14 @@ final class PlayerState: ObservableObject {
     }
 
     func playQueue(at index: Int) {
-        guard queue.indices.contains(index) else { return }
+        guard queueEntries.indices.contains(index) else { return }
         currentIndex = index
         beginCurrentTrack()
+    }
+
+    func playQueueEntry(id: UInt32) {
+        guard let index = index(ofQueueEntry: id) else { return }
+        playQueue(at: index)
     }
 
     func stopPlayback() {
@@ -464,32 +553,39 @@ final class PlayerState: ObservableObject {
         guard !offsets.isEmpty else { return }
         let current = currentIndex
         let removedCurrent = current.map { offsets.contains($0) } ?? false
-        let removedIDs = offsets.compactMap { queue.indices.contains($0) ? queue[$0].id : nil }
-        queue.remove(atOffsets: offsets)
-        baseQueue.removeAll { song in removedIDs.contains(song.id) }
+        let removedEntryIDs = offsets.compactMap {
+            queueEntries.indices.contains($0) ? queueEntries[$0].id : nil
+        }
+        queueEntries.remove(atOffsets: offsets)
+        baseQueueEntries.removeAll { removedEntryIDs.contains($0.id) }
 
         if removedCurrent {
             releasePlayer()
             stopTimer()
             isPlaying = false
             elapsed = 0
-            currentIndex = queue.isEmpty ? nil : min(offsets.min() ?? 0, queue.count - 1)
+            currentIndex = queueEntries.isEmpty ? nil : min(offsets.min() ?? 0, queueEntries.count - 1)
         } else if let current {
             let removedBefore = offsets.filter { $0 < current }.count
-            currentIndex = min(max(current - removedBefore, 0), max(queue.count - 1, 0))
-            if queue.isEmpty { currentIndex = nil }
+            currentIndex = min(max(current - removedBefore, 0), max(queueEntries.count - 1, 0))
+            if queueEntries.isEmpty { currentIndex = nil }
         }
+    }
+
+    func removeQueueEntry(id: UInt32) {
+        guard let index = index(ofQueueEntry: id) else { return }
+        removeQueue(at: IndexSet(integer: index))
     }
 
     /// Removes songs that were deleted from the library from the queue and
     /// history, stopping playback if the current track was removed.
     func removeSongs(withIDs ids: Set<UUID>) {
         guard !ids.isEmpty else { return }
-        let currentID = currentSong?.id
-        let removedCurrent = currentID.map { ids.contains($0) } ?? false
+        let currentEntryID = currentEntry?.id
+        let removedCurrent = currentEntry.map { ids.contains($0.song.id) } ?? false
 
-        queue.removeAll { ids.contains($0.id) }
-        baseQueue.removeAll { ids.contains($0.id) }
+        queueEntries.removeAll { ids.contains($0.song.id) }
+        baseQueueEntries.removeAll { ids.contains($0.song.id) }
 
         if removedCurrent {
             releasePlayer()
@@ -497,12 +593,12 @@ final class PlayerState: ObservableObject {
             isPlaying = false
             elapsed = 0
         }
-        if let currentID, let index = queue.firstIndex(where: { $0.id == currentID }) {
+        if let currentEntryID, let index = index(ofQueueEntry: currentEntryID) {
             currentIndex = index
-        } else if queue.isEmpty {
+        } else if queueEntries.isEmpty {
             currentIndex = nil
         } else if removedCurrent {
-            currentIndex = min(currentIndex ?? 0, queue.count - 1)
+            currentIndex = min(currentIndex ?? 0, queueEntries.count - 1)
         }
 
         historyIDs.removeAll { ids.contains($0) }
@@ -511,73 +607,79 @@ final class PlayerState: ObservableObject {
     }
 
     func moveQueue(from: Int, to: Int) {
-        guard queue.indices.contains(from), to >= 0, to <= queue.count else { return }
-        let currentID = currentSong?.id
-        var updated = queue
+        guard queueEntries.indices.contains(from),
+              to >= 0, to <= queueEntries.count else { return }
+        let currentEntryID = currentEntry?.id
+        var updated = queueEntries
         let item = updated.remove(at: from)
         let insertion = min(max(to, 0), updated.count)
         updated.insert(item, at: insertion)
-        queue = updated
-        baseQueue = updated
-        if let currentID, let index = queue.firstIndex(where: { $0.id == currentID }) {
+        queueEntries = updated
+        baseQueueEntries = updated
+        if let currentEntryID, let index = index(ofQueueEntry: currentEntryID) {
             currentIndex = index
         }
     }
 
     /// Reorders the portion of the queue shown as Up Next without moving the
-    /// currently playing track or touching the already-played prefix.
+    /// currently playing entry or touching the already-played prefix.
     func moveUpNext(from: Int, to: Int) {
-        guard let current = currentIndex, queue.indices.contains(current) else { return }
+        guard let current = currentIndex, queueEntries.indices.contains(current) else { return }
         let start = current + 1
-        guard start < queue.count else { return }
-        var tail = Array(queue[start...])
+        guard start < queueEntries.count else { return }
+        var tail = Array(queueEntries[start...])
         guard tail.indices.contains(from) else { return }
         let item = tail.remove(at: from)
         tail.insert(item, at: min(max(to, 0), tail.count))
-        queue.replaceSubrange(start..., with: tail)
-        baseQueue = queue
+        queueEntries.replaceSubrange(start..., with: tail)
+        baseQueueEntries = queueEntries
     }
 
-    /// Moves an existing queue entry (or a history-only entry) directly after
-    /// the current track so it plays next.
+    /// Moves an existing queue entry directly after the current entry.
+    func playNextQueueEntry(id: UInt32) {
+        guard let current = currentIndex, queueEntries.indices.contains(current) else { return }
+        guard let existing = index(ofQueueEntry: id) else { return }
+        guard existing != current, existing != current + 1 else { return }
+        let currentEntryID = queueEntries[current].id
+        var updated = queueEntries
+        let moved = updated.remove(at: existing)
+        guard let newCurrent = updated.firstIndex(where: { $0.id == currentEntryID }) else { return }
+        updated.insert(moved, at: min(newCurrent + 1, updated.count))
+        queueEntries = updated
+        baseQueueEntries = updated
+        currentIndex = updated.firstIndex(where: { $0.id == currentEntryID })
+    }
+
+    /// Adds a new occurrence of a song directly after the current track. Used
+    /// by history rows, which do not carry a queue-entry ID.
     func playNextFromQueue(_ song: Song) {
-        guard let current = currentIndex, queue.indices.contains(current) else {
+        guard let current = currentIndex, queueEntries.indices.contains(current) else {
             play([song])
             return
         }
-        let currentID = queue[current].id
-        if let existing = queue.firstIndex(where: { $0.id == song.id }) {
-            guard existing != current, existing != current + 1 else { return }
-            var updated = queue
-            let moved = updated.remove(at: existing)
-            guard let newCurrent = updated.firstIndex(where: { $0.id == currentID }) else { return }
-            updated.insert(moved, at: min(newCurrent + 1, updated.count))
-            queue = updated
-            baseQueue = updated
-            currentIndex = updated.firstIndex(where: { $0.id == currentID })
+        let currentEntryID = queueEntries[current].id
+        let entry = makeQueueEntry(song)
+        queueEntries.insert(entry, at: current + 1)
+        if let baseCurrent = baseQueueEntries.firstIndex(where: { $0.id == currentEntryID }) {
+            baseQueueEntries.insert(entry, at: min(baseCurrent + 1, baseQueueEntries.count))
         } else {
-            queue.insert(song, at: current + 1)
-            if let baseCurrent = baseQueue.firstIndex(where: { $0.id == currentID }) {
-                baseQueue.insert(song, at: min(baseCurrent + 1, baseQueue.count))
-            } else {
-                baseQueue.append(song)
-            }
+            baseQueueEntries.append(entry)
         }
     }
 
-    /// Removes one song from the active queue. This does not delete the file or
-    /// remove the song from play history.
+    /// Removes the first matching occurrence of a song from the active queue.
+    /// Queue UI uses `removeQueueEntry(id:)` to distinguish duplicates.
     func removeFromQueue(_ song: Song) {
-        guard let index = queue.firstIndex(where: { $0.id == song.id }) else { return }
+        guard let index = queueEntries.firstIndex(where: { $0.song.id == song.id }) else { return }
         removeQueue(at: IndexSet(integer: index))
     }
 
     func shuffleQueue() {
-        guard queue.count > 1 else { return }
-        let currentID = currentSong?.id
-        queue.shuffle()
-        baseQueue = queue
-        if let currentID, let index = queue.firstIndex(where: { $0.id == currentID }) {
+        guard queueEntries.count > 1 else { return }
+        let currentEntryID = currentEntry?.id
+        queueEntries.shuffle()
+        baseQueueEntries = queueEntries
+        if let currentEntryID, let index = index(ofQueueEntry: currentEntryID) {
             currentIndex = index
         }
     }
@@ -588,10 +690,11 @@ final class PlayerState: ObservableObject {
 
     /// Jumps to a track inside the current queue without rebuilding it. This
     /// preserves the normal-order base queue when shuffle is enabled.
+    /// Song-level fallback used by history rows, where no queue-entry ID is
+    /// available. Queue rows use `playQueueEntry(id:)`.
     func playFromQueue(_ song: Song) {
-        if let idx = queue.firstIndex(where: { $0.id == song.id }) {
-            currentIndex = idx
-            beginCurrentTrack()
+        if let idx = queueEntries.firstIndex(where: { $0.song.id == song.id }) {
+            playQueue(at: idx)
         } else {
             play([song])
         }
@@ -601,12 +704,13 @@ final class PlayerState: ObservableObject {
     /// a random order. Turning shuffle off later restores the original order.
     func playShuffled(_ songs: [Song]) {
         guard !songs.isEmpty else { return }
-        baseQueue = songs
+        let entries = makeQueueEntries(songs)
+        baseQueueEntries = entries
         if !isShuffleOn {
             isShuffleOn = true
             persistShuffle()
         }
-        queue = songs.shuffled()
+        queueEntries = entries.shuffled()
         currentIndex = 0
         beginCurrentTrack()
     }
@@ -619,28 +723,28 @@ final class PlayerState: ObservableObject {
         guard enabled != isShuffleOn else { return }
         isShuffleOn = enabled
         persistShuffle()
-        guard !queue.isEmpty else { return }
+        guard !queueEntries.isEmpty else { return }
 
         if enabled {
             shuffleUnplayedQueue()
         } else {
-            let restored = baseQueue.isEmpty ? queue : baseQueue
-            if let current = currentSong {
-                if let idx = restored.firstIndex(where: { $0.id == current.id }) {
-                    queue = restored
+            let restored = baseQueueEntries.isEmpty ? queueEntries : baseQueueEntries
+            if let currentEntry {
+                if let idx = restored.firstIndex(where: { $0.id == currentEntry.id }) {
+                    queueEntries = restored
                     currentIndex = idx
                 } else {
-                    // Defensive: keep the audible track in the queue even if
+                    // Defensive: keep the audible entry in the queue even if
                     // the normal-order copy somehow lost it.
                     var repaired = restored
                     let insert = min(currentIndex ?? 0, repaired.count)
-                    repaired.insert(current, at: insert)
-                    baseQueue = repaired
-                    queue = repaired
+                    repaired.insert(currentEntry, at: insert)
+                    baseQueueEntries = repaired
+                    queueEntries = repaired
                     currentIndex = insert
                 }
             } else {
-                queue = restored
+                queueEntries = restored
                 currentIndex = nil
             }
         }
@@ -674,13 +778,15 @@ final class PlayerState: ObservableObject {
     /// Inserts songs directly after the current track.
     func playNext(_ songs: [Song]) {
         guard !songs.isEmpty else { return }
-        if let index = currentIndex, queue.indices.contains(index) {
-            let current = queue[index]
-            queue.insert(contentsOf: songs, at: index + 1)
-            if let baseIndex = baseQueue.firstIndex(where: { $0.id == current.id }) {
-                baseQueue.insert(contentsOf: songs, at: baseIndex + 1)
+        if let index = currentIndex, queueEntries.indices.contains(index) {
+            let currentEntryID = queueEntries[index].id
+            let entries = makeQueueEntries(songs)
+            queueEntries.insert(contentsOf: entries, at: index + 1)
+            if let baseIndex = baseQueueEntries.firstIndex(where: { $0.id == currentEntryID }) {
+                baseQueueEntries.insert(contentsOf: entries,
+                                        at: min(baseIndex + 1, baseQueueEntries.count))
             } else {
-                baseQueue.append(contentsOf: songs)
+                baseQueueEntries.append(contentsOf: entries)
             }
         } else {
             play(songs)
@@ -691,9 +797,17 @@ final class PlayerState: ObservableObject {
     func applyUpdatedSongs(_ songs: [Song]) {
         guard !songs.isEmpty else { return }
         let byID = Dictionary(uniqueKeysWithValues: songs.map { ($0.id, $0) })
-        if !queue.isEmpty || !baseQueue.isEmpty {
-            queue = queue.map { byID[$0.id] ?? $0 }
-            baseQueue = baseQueue.map { byID[$0.id] ?? $0 }
+        if !queueEntries.isEmpty || !baseQueueEntries.isEmpty {
+            queueEntries = queueEntries.map { entry in
+                var updated = entry
+                if let song = byID[entry.song.id] { updated.song = song }
+                return updated
+            }
+            baseQueueEntries = baseQueueEntries.map { entry in
+                var updated = entry
+                if let song = byID[entry.song.id] { updated.song = song }
+                return updated
+            }
         }
 
         // Resolve persisted history IDs against the current library. Prune
@@ -756,8 +870,8 @@ final class PlayerState: ObservableObject {
     }
 
     func next() {
-        guard let i = currentIndex, !queue.isEmpty else { return }
-        if i + 1 < queue.count {
+        guard let i = currentIndex, !queueEntries.isEmpty else { return }
+        if i + 1 < queueEntries.count {
             currentIndex = i + 1
             beginCurrentTrack()
         } else if repeatMode != .off {
@@ -769,11 +883,11 @@ final class PlayerState: ObservableObject {
     }
 
     func previous() {
-        guard let i = currentIndex, !queue.isEmpty else { return }
+        guard let i = currentIndex, !queueEntries.isEmpty else { return }
         if elapsed > 3 || i == 0 {
             beginCurrentTrack(countPlay: false)
         } else {
-            currentIndex = (i - 1 + queue.count) % queue.count
+            currentIndex = (i - 1 + queueEntries.count) % queueEntries.count
             beginCurrentTrack()
         }
     }
@@ -1092,8 +1206,8 @@ final class PlayerState: ObservableObject {
             reportMissingFilesPaused()
             return
         }
-        guard let index = currentIndex, !queue.isEmpty else { return }
-        if index + 1 < queue.count {
+        guard let index = currentIndex, !queueEntries.isEmpty else { return }
+        if index + 1 < queueEntries.count {
             currentIndex = index + 1
             beginCurrentTrack()
         } else if repeatMode == .all {
@@ -1119,12 +1233,12 @@ final class PlayerState: ObservableObject {
     /// Called when a track reaches its natural end. Repeat One replays the
     /// current item; Repeat All wraps; Repeat Off stops at the last item.
     private func advanceAfterTrackEnds() {
-        guard let i = currentIndex, !queue.isEmpty else { return }
+        guard let i = currentIndex, !queueEntries.isEmpty else { return }
         if repeatMode == .one {
             beginCurrentTrack()
             return
         }
-        if i + 1 < queue.count {
+        if i + 1 < queueEntries.count {
             currentIndex = i + 1
             beginCurrentTrack()
         } else if repeatMode == .all {
@@ -1141,8 +1255,8 @@ final class PlayerState: ObservableObject {
         // last track.
         releasePlayer()
         stopTimer()
-        queue = []
-        baseQueue = []
+        queueEntries = []
+        baseQueueEntries = []
         currentIndex = nil
         isPlaying = false
         elapsed = 0

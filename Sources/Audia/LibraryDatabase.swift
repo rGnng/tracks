@@ -303,6 +303,9 @@ final class LibraryDatabase {
             id INTEGER PRIMARY KEY CHECK (id = 1),
             queue_ids TEXT NOT NULL,
             base_queue_ids TEXT NOT NULL,
+            queue_entries TEXT NOT NULL DEFAULT '[]',
+            base_queue_entries TEXT NOT NULL DEFAULT '[]',
+            next_queue_id INTEGER NOT NULL DEFAULT 1,
             current_index INTEGER NOT NULL DEFAULT -1,
             elapsed REAL NOT NULL DEFAULT 0,
             updated_at REAL NOT NULL
@@ -314,6 +317,19 @@ final class LibraryDatabase {
         """)
         migrateLibraryColumns()
         migratePlaylistItemAddTimes()
+        migratePlayerQueueColumns()
+    }
+
+    private func migratePlayerQueueColumns() {
+        if !tableHasColumn("player_queue", column: "queue_entries") {
+            exec("ALTER TABLE player_queue ADD COLUMN queue_entries TEXT NOT NULL DEFAULT '[]';")
+        }
+        if !tableHasColumn("player_queue", column: "base_queue_entries") {
+            exec("ALTER TABLE player_queue ADD COLUMN base_queue_entries TEXT NOT NULL DEFAULT '[]';")
+        }
+        if !tableHasColumn("player_queue", column: "next_queue_id") {
+            exec("ALTER TABLE player_queue ADD COLUMN next_queue_id INTEGER NOT NULL DEFAULT 1;")
+        }
     }
 
     private func migrateLibraryColumns() {
@@ -1344,61 +1360,118 @@ final class LibraryDatabase {
 
     // MARK: Player queue
 
-    /// Stores the queue as song IDs so it can be resolved against the library
-    /// on the next launch. An empty queue removes the saved row; a cleared or
-    /// finished queue should not reappear.
+    /// Stores queue entries as stable IDs plus song IDs. An empty queue removes
+    /// the saved row; a cleared or finished queue should not reappear.
     func savePlayerQueue(_ state: PersistedPlayerQueue) {
-        guard !state.songIDs.isEmpty else {
+        guard !state.entries.isEmpty else {
             exec("DELETE FROM player_queue WHERE id = 1;")
             return
         }
 
         let encoder = JSONEncoder()
-        guard let queueData = try? encoder.encode(state.songIDs),
-              let baseData = try? encoder.encode(state.baseQueueIDs),
+        let songIDs = state.entries.map(\.songID)
+        let baseSongIDs = state.baseEntries.map(\.songID)
+        guard let queueData = try? encoder.encode(state.entries),
+              let baseData = try? encoder.encode(state.baseEntries),
+              let legacyQueueData = try? encoder.encode(songIDs),
+              let legacyBaseData = try? encoder.encode(baseSongIDs),
               let queueJSON = String(data: queueData, encoding: .utf8),
               let baseJSON = String(data: baseData, encoding: .utf8),
+              let legacyQueueJSON = String(data: legacyQueueData, encoding: .utf8),
+              let legacyBaseJSON = String(data: legacyBaseData, encoding: .utf8),
               let stmt = prepare("""
                   INSERT OR REPLACE INTO player_queue
-                      (id, queue_ids, base_queue_ids, current_index, elapsed, updated_at)
-                  VALUES (1, ?, ?, ?, ?, ?)
+                      (id, queue_ids, base_queue_ids, queue_entries,
+                       base_queue_entries, next_queue_id, current_index,
+                       elapsed, updated_at)
+                  VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)
                   """) else { return }
-        bind(stmt, 1, queueJSON)
-        bind(stmt, 2, baseJSON)
-        bind(stmt, 3, state.currentIndex ?? -1)
-        bind(stmt, 4, state.elapsed)
-        bind(stmt, 5, Date().timeIntervalSince1970)
+        bind(stmt, 1, legacyQueueJSON)
+        bind(stmt, 2, legacyBaseJSON)
+        bind(stmt, 3, queueJSON)
+        bind(stmt, 4, baseJSON)
+        bind(stmt, 5, Int(state.nextQueueID))
+        bind(stmt, 6, state.currentIndex ?? -1)
+        bind(stmt, 7, state.elapsed)
+        bind(stmt, 8, Date().timeIntervalSince1970)
         sqlite3_step(stmt)
         sqlite3_finalize(stmt)
     }
 
     func loadPlayerQueue() -> PersistedPlayerQueue? {
         guard let stmt = prepare("""
-            SELECT queue_ids, base_queue_ids, current_index, elapsed
+            SELECT queue_entries, base_queue_entries, next_queue_id,
+                   queue_ids, base_queue_ids, current_index, elapsed
             FROM player_queue WHERE id = 1
             """) else { return nil }
         guard sqlite3_step(stmt) == SQLITE_ROW else {
             sqlite3_finalize(stmt)
             return nil
         }
-        let queueJSON = text(stmt, 0) ?? ""
-        let baseJSON = text(stmt, 1) ?? ""
-        let index = int(stmt, 2)
-        let elapsed = double(stmt, 3)
+        let entriesJSON = text(stmt, 0) ?? ""
+        let baseEntriesJSON = text(stmt, 1) ?? ""
+        let nextID = int(stmt, 2)
+        let legacyQueueJSON = text(stmt, 3) ?? ""
+        let legacyBaseJSON = text(stmt, 4) ?? ""
+        let index = int(stmt, 5)
+        let elapsed = double(stmt, 6)
         sqlite3_finalize(stmt)
 
         let decoder = JSONDecoder()
-        guard let queueData = queueJSON.data(using: .utf8),
-              let baseData = baseJSON.data(using: .utf8),
-              let queueIDs = try? decoder.decode([UUID].self, from: queueData),
-              let baseIDs = try? decoder.decode([UUID].self, from: baseData),
-              !queueIDs.isEmpty else {
-            return nil
+        var entries: [PersistedQueueEntry] = []
+        if let data = entriesJSON.data(using: .utf8),
+           let decoded = try? decoder.decode([PersistedQueueEntry].self, from: data) {
+            entries = decoded
         }
-        return PersistedPlayerQueue(songIDs: queueIDs,
-                                    baseQueueIDs: baseIDs,
-                                    currentIndex: index >= 0 ? index : nil,
-                                    elapsed: max(elapsed, 0))
+
+        if entries.isEmpty,
+           let data = legacyQueueJSON.data(using: .utf8),
+           let songIDs = try? decoder.decode([UUID].self, from: data) {
+            entries = songIDs.enumerated().map {
+                PersistedQueueEntry(id: UInt32($0.offset + 1), songID: $0.element)
+            }
+        }
+        guard !entries.isEmpty else { return nil }
+
+        var baseEntries: [PersistedQueueEntry] = []
+        if let data = baseEntriesJSON.data(using: .utf8),
+           let decoded = try? decoder.decode([PersistedQueueEntry].self, from: data) {
+            baseEntries = decoded
+        }
+        if baseEntries.isEmpty,
+           let data = legacyBaseJSON.data(using: .utf8),
+           let baseIDs = try? decoder.decode([UUID].self, from: data) {
+            var remaining = entries
+            for songID in baseIDs {
+                guard let position = remaining.firstIndex(where: { $0.songID == songID }) else {
+                    continue
+                }
+                baseEntries.append(remaining.remove(at: position))
+            }
+        }
+        if baseEntries.isEmpty { baseEntries = entries }
+
+        return PersistedPlayerQueue(
+            entries: entries,
+            baseEntries: baseEntries,
+            nextQueueID: normalizedNextQueueID(nextID, entries: entries + baseEntries),
+            currentIndex: index >= 0 ? index : nil,
+            elapsed: max(elapsed, 0)
+        )
+    }
+
+    private func normalizedNextQueueID(_ raw: Int,
+                                       entries: [PersistedQueueEntry]) -> UInt32 {
+        let maxID = entries.map(\.id).max() ?? 0
+        let candidate: UInt32
+        if raw > 0, raw <= Int(UInt32.max) {
+            candidate = UInt32(raw)
+        } else {
+            candidate = 1
+        }
+        if candidate > maxID { return candidate }
+        if maxID == UInt32.max { return 1 }
+        return maxID + 1
     }
 
     /// Updates only the playback position. This avoids rewriting a potentially

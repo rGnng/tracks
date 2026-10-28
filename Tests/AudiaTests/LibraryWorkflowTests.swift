@@ -44,6 +44,74 @@ final class LibraryWorkflowTests: XCTestCase {
         XCTAssertEqual(restored, [inApp, systemWide])
     }
 
+    @MainActor
+    func testPlayerQueuePersistsEntryIDsAndDuplicates() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        let database = LibraryDatabase(path: fixture.appendingPathComponent("library.sqlite").path)
+        defer { database.closeForTermination() }
+
+        let first = UUID()
+        let second = UUID()
+        let entries = [
+            PersistedQueueEntry(id: 7, songID: first),
+            PersistedQueueEntry(id: 2, songID: second),
+            PersistedQueueEntry(id: 9, songID: first),
+        ]
+        let baseEntries = [
+            PersistedQueueEntry(id: 2, songID: second),
+            PersistedQueueEntry(id: 7, songID: first),
+            PersistedQueueEntry(id: 9, songID: first),
+        ]
+        database.savePlayerQueue(PersistedPlayerQueue(entries: entries,
+                                                       baseEntries: baseEntries,
+                                                       nextQueueID: 10,
+                                                       currentIndex: 2,
+                                                       elapsed: 42))
+
+        let loaded = try XCTUnwrap(database.loadPlayerQueue())
+        XCTAssertEqual(loaded.entries, entries)
+        XCTAssertEqual(loaded.baseEntries, baseEntries)
+        XCTAssertEqual(loaded.nextQueueID, 10)
+        XCTAssertEqual(loaded.currentIndex, 2)
+        XCTAssertEqual(loaded.elapsed, 42, accuracy: 0.001)
+    }
+
+    @MainActor
+    func testLegacyPlayerQueueSeedsStableEntryIDs() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        let path = fixture.appendingPathComponent("library.sqlite").path
+        LibraryDatabase(path: path).closeForTermination()
+
+        let first = UUID()
+        let second = UUID()
+        let queueJSON = "[\"\(first.uuidString)\",\"\(second.uuidString)\"]"
+        let baseJSON = "[\"\(second.uuidString)\",\"\(first.uuidString)\"]"
+        var handle: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(path, &handle), SQLITE_OK)
+        let sql = """
+        INSERT OR REPLACE INTO player_queue
+            (id, queue_ids, base_queue_ids, current_index, elapsed, updated_at)
+        VALUES (1, '\(queueJSON)', '\(baseJSON)', 0, 12, 0);
+        """
+        XCTAssertEqual(sqlite3_exec(handle, sql, nil, nil, nil), SQLITE_OK)
+        XCTAssertEqual(sqlite3_close(handle), SQLITE_OK)
+
+        let database = LibraryDatabase(path: path)
+        defer { database.closeForTermination() }
+        let loaded = try XCTUnwrap(database.loadPlayerQueue())
+        XCTAssertEqual(loaded.entries,
+                       [PersistedQueueEntry(id: 1, songID: first),
+                        PersistedQueueEntry(id: 2, songID: second)])
+        XCTAssertEqual(loaded.baseEntries,
+                       [PersistedQueueEntry(id: 2, songID: second),
+                        PersistedQueueEntry(id: 1, songID: first)])
+        XCTAssertEqual(loaded.nextQueueID, 3)
+        XCTAssertEqual(loaded.currentIndex, 0)
+        XCTAssertEqual(loaded.elapsed, 12, accuracy: 0.001)
+    }
+
     func testShortcutConflictUsesPhysicalKeyAndModifiers() {
         let plainN = KeyboardShortcut(key: "n", modifiers: [], display: "N", keyCode: 45)
         let alternateLayoutN = KeyboardShortcut(key: "ñ", modifiers: [], display: "Ñ", keyCode: 45)

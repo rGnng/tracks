@@ -12,7 +12,7 @@ struct MPDResponse: Sendable {
 }
 
 private struct PlayerIdleSnapshot: Equatable {
-    var queueIDs: [UUID]
+    var queueIDs: [UInt32]
     var currentSongID: UUID?
     var isPlaying: Bool
     var displayVolume: Int
@@ -67,7 +67,7 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
     private func observeIdleSources() {
         let player = PlayerState.shared
         let signals: [AnyPublisher<Void, Never>] = [
-            player.$queue.map { _ in () }.eraseToAnyPublisher(),
+            player.$queueEntries.map { _ in () }.eraseToAnyPublisher(),
             player.$currentIndex.map { _ in () }.eraseToAnyPublisher(),
             player.$isPlaying.map { _ in () }.eraseToAnyPublisher(),
             player.$volume.map { _ in () }.eraseToAnyPublisher(),
@@ -100,7 +100,7 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
     private func playerIdleSnapshot() -> PlayerIdleSnapshot {
         let player = PlayerState.shared
         return PlayerIdleSnapshot(
-            queueIDs: player.queue.map(\.id),
+            queueIDs: player.queueEntries.map(\.id),
             currentSongID: player.currentSong?.id,
             isPlaying: player.isPlaying,
             displayVolume: Int((player.displayVolume * 100).rounded()),
@@ -335,9 +335,14 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
         case "playlistinfo":
             return lines(playlistLines(range: parseRange(args.first)))
         case "playlistid":
-            let id = args.first.flatMap { Int($0) }
-            if let id, id > 0 {
-                return lines(playlistLines(ids: [id - 1]))
+            if let rawID = args.first.flatMap(Int.init) {
+                guard let id = queueEntryID(from: rawID) else {
+                    return ack(2, command, "wrong number of arguments")
+                }
+                guard let index = PlayerState.shared.index(ofQueueEntry: id) else {
+                    return ack(50, command, "No such song")
+                }
+                return lines(playlistLines(positions: [index]))
             }
             return lines(playlistLines(range: nil))
         case "plchanges", "plchangesposid":
@@ -358,13 +363,17 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
             let songs = librarySongs(forPath: path)
             guard !songs.isEmpty else { return ack(50, command, "No such directory") }
             let position = args.count > 1 ? Int(args[1]) : nil
-            let id: Int
+            let before = Set(PlayerState.shared.queueEntries.map(\.id))
             if let position, position >= 0 {
                 PlayerState.shared.insertIntoQueue(songs, at: position)
-                id = position + 1
             } else {
-                id = PlayerState.shared.queue.count + 1
                 PlayerState.shared.appendToQueue(songs)
+            }
+            let addedIDs = PlayerState.shared.queueEntries.map(\.id).filter {
+                !before.contains($0)
+            }
+            guard let id = addedIDs.first else {
+                return ack(50, command, "No such directory")
             }
             bumpPlaylist()
             return lines(["Id: \(id)"])
@@ -373,8 +382,15 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
             bumpPlaylist()
             return ok()
         case "delete", "deleteid":
-            if command == "deleteid", let id = args.first.flatMap(Int.init), id > 0 {
-                PlayerState.shared.removeQueue(at: IndexSet(integer: id - 1))
+            if command == "deleteid" {
+                guard let rawID = args.first.flatMap(Int.init),
+                      let id = queueEntryID(from: rawID) else {
+                    return ack(2, command, "wrong number of arguments")
+                }
+                guard let index = PlayerState.shared.index(ofQueueEntry: id) else {
+                    return ack(50, command, "No such song")
+                }
+                PlayerState.shared.removeQueue(at: IndexSet(integer: index))
             } else if let range = parseRange(args.first) {
                 PlayerState.shared.removeQueue(at: IndexSet(integersIn: range))
             } else {
@@ -386,7 +402,12 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
             var from: Int?
             var to: Int?
             if command == "moveid" {
-                if let id = args.first.flatMap(Int.init), id > 0 { from = id - 1 }
+                guard let rawID = args.first.flatMap(Int.init),
+                      let id = queueEntryID(from: rawID),
+                      let index = PlayerState.shared.index(ofQueueEntry: id) else {
+                    return ack(50, command, "No such song")
+                }
+                from = index
                 to = args.dropFirst().first.flatMap(Int.init)
             } else {
                 from = args.first.flatMap(Int.init)
@@ -402,14 +423,16 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
             return ok()
 
         case "play", "playid":
-            if command == "playid", let id = args.first.flatMap(Int.init) {
-                guard id > 0 else { return ack(2, command, "wrong number of arguments") }
-                let position = id - 1
-                let queue = PlayerState.shared.queue
-                guard queue.indices.contains(position) else { return ack(2, command, "Bad song index") }
+            if command == "playid", let rawID = args.first.flatMap(Int.init) {
+                guard let id = queueEntryID(from: rawID) else {
+                    return ack(2, command, "wrong number of arguments")
+                }
+                guard let position = PlayerState.shared.index(ofQueueEntry: id) else {
+                    return ack(50, command, "No such song")
+                }
                 PlayerState.shared.playQueue(at: position)
             } else if let raw = args.first, let position = Int(raw) {
-                let queue = PlayerState.shared.queue
+                let queue = PlayerState.shared.queueEntries
                 guard queue.indices.contains(position) else { return ack(2, command, "Bad song index") }
                 PlayerState.shared.playQueue(at: position)
             } else {
@@ -470,8 +493,15 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
             guard args.count >= 2, let time = parseTime(args[1]) else {
                 return ack(2, command, "wrong number of arguments")
             }
-            if command == "seekid", let id = Int(args[0]), id > 0 {
-                PlayerState.shared.playQueue(at: id - 1)
+            if command == "seekid" {
+                guard let rawID = Int(args[0]),
+                      let id = queueEntryID(from: rawID),
+                      let position = PlayerState.shared.index(ofQueueEntry: id) else {
+                    return ack(50, command, "No such song")
+                }
+                if PlayerState.shared.currentIndex != position {
+                    PlayerState.shared.playQueue(at: position)
+                }
             } else if let position = Int(args[0]) {
                 let player = PlayerState.shared
                 if player.currentIndex != position {
@@ -619,12 +649,11 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
             return lines(["songs: \(matches.count)", "playtime: \(playtime)"])
         case "playlistfind":
             let filters = pairs(args)
-            let matches = filteredSongs(filters: filters, substring: false)
+            let matchingIDs = Set(filteredSongs(filters: filters, substring: false).map(\.id))
             var output: [String] = []
-            for song in matches {
-                if let index = PlayerState.shared.queue.firstIndex(where: { $0.id == song.id }) {
-                    output.append(contentsOf: playlistSongLines(song, position: index))
-                }
+            for (index, entry) in PlayerState.shared.queueEntries.enumerated()
+                where matchingIDs.contains(entry.song.id) {
+                output.append(contentsOf: playlistSongLines(entry, position: index))
             }
             return lines(output)
         case "listplaylists":
@@ -943,44 +972,40 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
 
     private func currentSongLines() -> [String] {
         let player = PlayerState.shared
-        guard let song = player.currentSong, let index = player.currentIndex else { return [] }
-        return playlistSongLines(song, position: index)
+        guard let entry = player.currentEntry, let index = player.currentIndex else { return [] }
+        return playlistSongLines(entry, position: index)
     }
 
     private func playlistLines(range: ClosedRange<Int>?) -> [String] {
-        let queue = PlayerState.shared.queue
+        let queue = PlayerState.shared.queueEntries
         let indices: [Int]
         if let range {
             indices = range.filter { queue.indices.contains($0) }
         } else {
             indices = Array(queue.indices)
         }
-        var lines: [String] = []
-        for index in indices {
-            lines.append(contentsOf: playlistSongLines(queue[index], position: index))
-        }
-        return lines
+        return playlistLines(positions: indices)
     }
 
-    private func playlistLines(ids: [Int]) -> [String] {
-        let queue = PlayerState.shared.queue
+    private func playlistLines(positions: [Int]) -> [String] {
+        let queue = PlayerState.shared.queueEntries
         var lines: [String] = []
-        for position in ids where queue.indices.contains(position) {
+        for position in positions where queue.indices.contains(position) {
             lines.append(contentsOf: playlistSongLines(queue[position], position: position))
         }
         return lines
     }
 
     private func queueChangesPosIDLines() -> [String] {
-        PlayerState.shared.queue.indices.flatMap { index in
-            ["cpos: \(index)", "Id: \(index + 1)"]
+        PlayerState.shared.queueEntries.enumerated().flatMap { index, entry in
+            ["cpos: \(index)", "Id: \(entry.id)"]
         }
     }
 
-    private func playlistSongLines(_ song: Song, position: Int) -> [String] {
-        songInfoLines(song) + [
+    private func playlistSongLines(_ entry: QueueEntry, position: Int) -> [String] {
+        songInfoLines(entry.song) + [
             "Pos: \(position)",
-            "Id: \(position + 1)",
+            "Id: \(entry.id)",
         ]
     }
 
@@ -1163,6 +1188,11 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
             text: "size: \(total)\ntype: image/jpeg\nbinary: \(chunk.count)\n",
             binary: chunk
         )
+    }
+
+    private func queueEntryID(from raw: Int) -> UInt32? {
+        guard raw > 0, raw <= Int(UInt32.max) else { return nil }
+        return UInt32(raw)
     }
 
     private func parseRange(_ raw: String?) -> ClosedRange<Int>? {

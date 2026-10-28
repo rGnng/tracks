@@ -149,7 +149,8 @@ Artwork is cached as 500×500 JPEG files under:
 ```
 
 Stored playlists use `playlist_items.added_at` for per-item addition times.
-The active playback queue is stored in the singleton `player_queue` table.
+The active playback queue and its stable queue-entry IDs are stored in the
+singleton `player_queue` table.
 
 ## Media keys and Control Center
 

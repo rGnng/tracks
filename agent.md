@@ -91,8 +91,11 @@ If no Internal Library exists, the fallback database path is
 - `playlist_items.added_at` stores the per-playlist addition time as a UNIX
   timestamp (REAL seconds); Add Seq is derived from it. Existing rows were
   backfilled from `playlists.date_created + position`.
-- `player_queue` is a singleton table (`id = 1`) storing queue/base-queue song
-  IDs, current index, elapsed position, and update time.
+- `player_queue` is a singleton table (`id = 1`). `queue_entries` and
+  `base_queue_entries` store JSON arrays of `{id, songID}` queue-entry records;
+  `next_queue_id` persists the monotonic MPD-ID allocator. The legacy
+  `queue_ids` / `base_queue_ids` columns are still written for compatibility
+  and are used only to seed entries when the new columns are empty.
 - `PRAGMA user_version = 1` remains as an inert legacy value; no code reads it.
 - Do not clear playback history, play counts, stars, playlists, or user window
   preferences while testing.
@@ -282,12 +285,14 @@ Important schema decisions:
   left/right edge drags adjust its width; a 10pt vertical splitter below the
   Clear row adjusts only list height. Width and list height persist under
   `queue.popoverWidth` and `queue.listHeight`.
-- `baseQueue` preserves normal order when shuffle is toggled off.
-- The active queue and playback position are persisted in `player_queue`.
-  Structural queue changes save the full queue; position is checkpointed every
-  five seconds and on pause/termination. On launch the queue and saved elapsed
-  position are restored paused. Pressing Play resumes from that position instead
-  of restarting the track. Empty/finished/cleared queues delete the row.
+- `baseQueueEntries` preserves normal order and entry IDs when shuffle is
+  toggled off.
+- The active queue, queue-entry IDs, `nextQueueID`, and playback position are
+  persisted in `player_queue`. Structural queue changes save the full queue;
+  position is checkpointed every five seconds and on pause/termination. On launch
+  the queue and saved elapsed position are restored paused. Pressing Play resumes
+  from that position instead of restarting the track. Empty/finished/cleared
+  queues delete the row.
 - Runtime missing-file markers are held in memory only. Confirmed missing tracks
   show a warning icon and are skipped; permission/decoder errors are not marked
   missing. One hundred consecutive missing tracks pauses playback with a warning.
@@ -391,6 +396,15 @@ Important schema decisions:
 - **Go to Album** clears the current search before switching views, then the
   album grid retries a pending `openAlbumID` when the unfiltered list arrives.
   This handles songs whose album title does not match the search query.
+- The playback queue is an array of `QueueEntry` values. Each entry has a
+  monotonic `UInt32` ID that is exposed as MPD's `Id` and is independent of
+  `Song.id`; the same song can appear multiple times with different entry IDs.
+  `queue` and `upNext` are read-only song projections for views that do not need
+  entry identity. Queue UI, drag/drop, context menus, and MPD all use entry IDs;
+  `currentIndex` remains the `Pos`-style position.
+- Queue entry IDs and `nextQueueID` persist across relaunch in
+  `player_queue`. Removing an entry never reuses its ID; adding the same song
+  creates a new entry. Empty/finished/cleared queues delete the row.
 - Sidebar **Albums** and **Recently Added** have Play and Shuffle context menus.
   Albums uses the full library sorted by the current album sort; Recently Added
   uses the same order as its content view.
@@ -617,7 +631,8 @@ Supported areas:
 ### MPD limitations
 
 - Duplicate copies of the same song collapse in stored playlists because of the
-  database primary key. Queue duplicates are supported.
+  database primary key. Queue duplicates are supported and receive distinct
+  stable MPD `Id` values.
 - `listplaylist`/`listplaylistinfo` ranges are not implemented.
 - `playlistsearch` and `searchplaylist` are not implemented.
 - `added-since` filters, `lastloadedplaylist`, stickers, channels, mounts, and
@@ -774,7 +789,10 @@ by AppKit's title-bar layout pass.
 - `createSchema()` creates the current tables and columns for new libraries.
 - `migratePlaylistItemAddTimes()` adds `playlist_items.added_at` to older
   libraries and backfills missing values from playlist creation time + position.
-- `player_queue` is created with `CREATE TABLE IF NOT EXISTS`; no version bump.
+- `player_queue` is created with `CREATE TABLE IF NOT EXISTS`.
+  `migratePlayerQueueColumns()` adds `queue_entries`, `base_queue_entries`, and
+  `next_queue_id` to older queue tables. Existing `queue_ids` rows are converted
+  to sequential entry IDs on first load, then the new columns are written.
 - Only `shortcut.bindings.v2` is read; legacy per-action shortcut keys and
   shortcut formats are ignored.
 
@@ -793,9 +811,10 @@ by AppKit's title-bar layout pass.
    - WAL while running; checkpoint and switch to DELETE on normal quit.
    - Do not validate a copied WAL database with a read-only connection; existing
      `inspect()` uses read-write without CREATE.
-   - Queue persistence uses JSON arrays in `player_queue`. Save the full queue
-     only when its structure changes; use `updatePlayerQueuePosition` for
-     elapsed-time checkpoints to avoid rewriting large queues every few seconds.
+   - Queue persistence uses the `queue_entries` / `base_queue_entries` JSON
+     arrays and `next_queue_id` in `player_queue`. Save the full queue only when
+     its structure changes; use `updatePlayerQueuePosition` for elapsed-time
+     checkpoints to avoid rewriting large queues every few seconds.
 3. Media keys:
    - Use MediaPlayer (`MPNowPlayingInfoCenter` / `MPRemoteCommandCenter`), not
      global event taps.
@@ -863,7 +882,8 @@ sqlite3 ~/Music/Tracks/library.sqlite \
    select count(*) from playlists;
    select name from playlists order by name;
    select count(*) from songs where loved=1;
-   select current_index, elapsed, json_array_length(queue_ids) from player_queue;"
+   select current_index, elapsed, next_queue_id,
+          json_array_length(queue_entries) from player_queue;"
 ```
 
 Signature / Now Playing readiness:
