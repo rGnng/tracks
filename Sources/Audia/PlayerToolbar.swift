@@ -11,6 +11,8 @@ private enum ToolbarButtonMetrics {
 struct PlayerToolbar: View {
     @Binding var searchText: String
 
+    @ObservedObject private var windowMode = WindowModeCenter.shared
+    @ObservedObject private var sidebar = SidebarVisibilityStore.shared
     private let queueGap: CGFloat = 10
     private let queueButtonSize: CGFloat = ToolbarButtonMetrics.size
     private let searchTrailing: CGFloat = 14
@@ -35,6 +37,22 @@ struct PlayerToolbar: View {
                 Spacer()
                 SearchField(text: $searchText)
                     .padding(.trailing, searchTrailing)
+            }
+
+            if windowMode.isFullScreen {
+                Button {
+                    sidebar.toggle()
+                } label: {
+                    Image(systemName: "sidebar.left")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(Theme.secondaryText)
+                        .frame(width: 30, height: 30)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .padding(.leading, 12)
+                .help(sidebar.isVisible ? "Hide Sidebar" : "Show Sidebar")
+                .accessibilityLabel(sidebar.isVisible ? "Hide Sidebar" : "Show Sidebar")
             }
 
             // The play control is always centered relative to the window and grows

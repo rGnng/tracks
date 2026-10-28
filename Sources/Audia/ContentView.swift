@@ -5,6 +5,7 @@ struct ContentView: View {
     @EnvironmentObject private var player: PlayerState
     @Environment(\.openWindow) private var openWindow
     @AppStorage("showStatusBar") private var showStatusBar = true
+    @ObservedObject private var sidebar = SidebarVisibilityStore.shared
     @ObservedObject private var navigation = NavigationCenter.shared
     @ObservedObject private var library = Library.shared
     @ObservedObject private var windowMode = WindowModeCenter.shared
@@ -52,6 +53,13 @@ struct ContentView: View {
             selection = .library(.artists)
             searchText = ""
             pendingAlbumID = nil
+        }
+        .onChange(of: navigation.sidebarSelection) { _, requested in
+            guard let requested else { return }
+            selection = requested
+            searchText = ""
+            pendingAlbumID = nil
+            navigation.sidebarSelection = nil
         }
         .onChange(of: selection) { _, newValue in
             SidebarSelectionStore.save(newValue)
@@ -113,9 +121,11 @@ struct ContentView: View {
             PlayerToolbar(searchText: $searchText)
             Hairline()
             HStack(spacing: 0) {
-                SidebarView(selection: $selection, width: sidebarWidth)
-                    .fixedSize(horizontal: true, vertical: false)
-                SidebarDivider(width: $sidebarWidth, dragStartWidth: $dragStartWidth)
+                if sidebar.isVisible {
+                    SidebarView(selection: $selection, width: sidebarWidth)
+                        .fixedSize(horizontal: true, vertical: false)
+                    SidebarDivider(width: $sidebarWidth, dragStartWidth: $dragStartWidth)
+                }
                 ContentPane(selection: selection, searchText: searchText, openAlbumID: $pendingAlbumID)
                     .frame(maxWidth: .infinity)
                     .clipped()

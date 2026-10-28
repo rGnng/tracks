@@ -40,6 +40,15 @@ SQLite, and includes a built-in MPD server.
   and go to current album `j`; system-wide show/hide Tracks `F17` and
   add/remove the current song from Stared playlist `F18`. Command-1/2 reopen the
   main window when every window is closed.
+- The Library sidebar can be hidden from **View > Hide Sidebar** or with
+  Command-Shift-L; in full screen the left toolbar also shows a sidebar toggle.
+  Windowed and full-screen visibility are stored separately, and full-screen
+  defaults to hidden. While the Library window is focused, `1`–`5` select
+  Recently Added, Albums, Artists, Songs, and Genres; `8` selects Stared.
+  Command-F only focuses the Library search field and is ignored by Settings,
+  Get Info, and MiniPlayer.
+- The show/hide player shortcut uses app-level hide/show semantics: showing
+  activates Tracks, and hiding returns focus to the previous application.
 - Library and MiniPlayer are separate windows and are never shown together.
   Opening MiniPlayer hides Library; closing MiniPlayer restores Library. The
   MiniPlayer has no separate return-to-Library button.

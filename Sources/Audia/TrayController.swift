@@ -182,6 +182,9 @@ final class TrayController: NSObject {
 
     private func showPopup(starred: Bool? = nil) {
         guard enabled, let song = PlayerState.shared.currentSong else { return }
+        // Ordering any app window front while the app is hidden can make
+        // AppKit unhide the whole app, bringing the Library window back.
+        guard !NSApp.isHidden else { return }
         if onlyWhenLibraryNotFocused, libraryIsFocused { return }
 
         let isStarred = starred ?? Library.shared.isStarred(songID: song.id)
@@ -288,7 +291,7 @@ private struct TrayPopupView: View {
         }
         .overlay {
             PopupShape()
-                .strokeBorder(Color.black.opacity(0.16), lineWidth: 0.5)
+                .stroke(Color.black.opacity(0.16), lineWidth: 0.5)
         }
         .shadow(color: .black.opacity(0.18), radius: 5, y: 2)
     }
@@ -310,32 +313,46 @@ private struct TrayPopupView: View {
     }
 }
 
-private struct PopupShape: InsettableShape {
-    private var insetAmount: CGFloat = 0
-
+private struct PopupShape: Shape {
     func path(in rect: CGRect) -> Path {
         let pointerHeight: CGFloat = 7
-        let body = CGRect(x: rect.minX + insetAmount,
-                          y: rect.minY + pointerHeight,
-                          width: max(0, rect.width - insetAmount * 2),
-                          height: max(0, rect.height - pointerHeight - insetAmount))
-        var path = Path()
-        path.addRoundedRect(in: body,
-                            cornerSize: CGSize(width: 10, height: 10))
-
+        let pointerHalfWidth: CGFloat = 7
+        let radius: CGFloat = 10
+        let top = rect.minY + pointerHeight
+        let bottom = rect.maxY
+        let left = rect.minX
+        let right = rect.maxX
         let centerX = rect.midX
-        path.move(to: CGPoint(x: centerX - 7,
-                              y: rect.minY + pointerHeight))
+
+        var path = Path()
+        path.move(to: CGPoint(x: left, y: top + radius))
+        path.addArc(center: CGPoint(x: left + radius, y: top + radius),
+                    radius: radius,
+                    startAngle: .degrees(180),
+                    endAngle: .degrees(270),
+                    clockwise: false)
+        path.addLine(to: CGPoint(x: centerX - pointerHalfWidth, y: top))
         path.addLine(to: CGPoint(x: centerX, y: rect.minY))
-        path.addLine(to: CGPoint(x: centerX + 7,
-                                 y: rect.minY + pointerHeight))
+        path.addLine(to: CGPoint(x: centerX + pointerHalfWidth, y: top))
+        path.addLine(to: CGPoint(x: right - radius, y: top))
+        path.addArc(center: CGPoint(x: right - radius, y: top + radius),
+                    radius: radius,
+                    startAngle: .degrees(270),
+                    endAngle: .degrees(0),
+                    clockwise: false)
+        path.addLine(to: CGPoint(x: right, y: bottom - radius))
+        path.addArc(center: CGPoint(x: right - radius, y: bottom - radius),
+                    radius: radius,
+                    startAngle: .degrees(0),
+                    endAngle: .degrees(90),
+                    clockwise: false)
+        path.addLine(to: CGPoint(x: left + radius, y: bottom))
+        path.addArc(center: CGPoint(x: left + radius, y: bottom - radius),
+                    radius: radius,
+                    startAngle: .degrees(90),
+                    endAngle: .degrees(180),
+                    clockwise: false)
         path.closeSubpath()
         return path
-    }
-
-    func inset(by amount: CGFloat) -> PopupShape {
-        var copy = self
-        copy.insetAmount += amount
-        return copy
     }
 }

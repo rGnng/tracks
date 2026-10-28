@@ -31,6 +31,7 @@ final class WindowModeCenter: ObservableObject {
     static let shared = WindowModeCenter()
 
     @Published private(set) var mode: Mode = .library
+    @Published private(set) var isFullScreen = false
     @Published private(set) var miniQueueExpanded = false
     @Published private(set) var miniQueueHeight: CGFloat = MiniPlayerMetrics.defaultQueueHeight
 
@@ -99,6 +100,21 @@ final class WindowModeCenter: ObservableObject {
     func register(_ window: NSWindow) {
         guard self.window !== window else { return }
         self.window = window
+        isFullScreen = window.styleMask.contains(.fullScreen)
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.didEnterFullScreenNotification,
+            object: window,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.isFullScreen = true }
+        }
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.didExitFullScreenNotification,
+            object: window,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.isFullScreen = false }
+        }
         NotificationCenter.default.addObserver(
             forName: NSWindow.didBecomeKeyNotification,
             object: window,
@@ -128,11 +144,10 @@ final class WindowModeCenter: ObservableObject {
     }
 
     func hideWindow() {
-        if mode == .miniPlayer {
-            miniWindow?.orderOut(nil)
-        } else {
-            window?.orderOut(nil)
-        }
+        // Hide the whole application, like Command-H. This deactivates Tracks
+        // and returns focus to the previous app instead of leaving an empty
+        // active app with its player window merely ordered out.
+        NSApp.hide(nil)
     }
 
     func toggleWindowVisibility() {
@@ -141,7 +156,7 @@ final class WindowModeCenter: ObservableObject {
             showWindow()
             return
         }
-        if current.isVisible && !current.isMiniaturized {
+        if !NSApp.isHidden, current.isVisible, !current.isMiniaturized {
             hideWindow()
         } else {
             showWindow()
@@ -178,6 +193,7 @@ final class WindowModeCenter: ObservableObject {
     private func showLibraryWindow() {
         miniWindow?.orderOut(nil)
         guard let window else { return }
+        NSApp.unhide(nil)
         if window.isMiniaturized {
             window.deminiaturize(nil)
         }
@@ -189,6 +205,7 @@ final class WindowModeCenter: ObservableObject {
     private func showMiniPlayerWindow() {
         let mini = ensureMiniWindow()
         window?.orderOut(nil)
+        NSApp.unhide(nil)
         if mini.isMiniaturized {
             mini.deminiaturize(nil)
         }

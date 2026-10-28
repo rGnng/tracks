@@ -7,6 +7,7 @@ struct AudiaApp: App {
     @AppStorage("appearanceMode") private var appearanceMode = "auto"
     @AppStorage("highlightColor") private var highlightColorRaw = HighlightColor.graphite.rawValue
     @AppStorage("showStatusBar") private var showStatusBar = true
+    @ObservedObject private var sidebar = SidebarVisibilityStore.shared
 
     private var highlightColor: Color {
         (HighlightColor(rawValue: highlightColorRaw) ?? .system).color
@@ -35,12 +36,9 @@ struct AudiaApp: App {
 
             CommandGroup(after: .textEditing) {
                 Button("Find") {
-                    let wasMini = WindowModeCenter.shared.mode == .miniPlayer
-                    WindowModeCenter.shared.setMode(.library)
-                    WindowModeCenter.shared.showWindow()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + (wasMini ? 0.30 : 0.05)) {
-                        NotificationCenter.default.post(name: .focusSearch, object: nil)
-                    }
+                    guard let window = NSApp.keyWindow,
+                          window === WindowModeCenter.shared.mainWindow else { return }
+                    NotificationCenter.default.post(name: .focusSearch, object: nil)
                 }
                 .keyboardShortcut("f", modifiers: .command)
             }
@@ -69,6 +67,13 @@ struct AudiaApp: App {
             // Add these to the standard View menu instead of creating a second
             // top-level menu titled "View".
             CommandGroup(after: .toolbar) {
+                Button(sidebar.isVisible ? "Hide Sidebar" : "Show Sidebar") {
+                    sidebar.toggle()
+                }
+                .keyboardShortcut("l", modifiers: [.command, .shift])
+
+                Divider()
+
                 Button(showStatusBar ? "Hide Status Bar" : "Show Status Bar") {
                     showStatusBar.toggle()
                 }
@@ -1598,9 +1603,17 @@ final class AppearanceController {
     }
 }
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var focusMonitor: Any?
     private var keyMonitor: Any?
+    private var windowMenuObserver: NSObjectProtocol?
+    private var isPruningWindowMenu = false
+    private let hiddenWindowMenuTitles: Set<String> = [
+        "Tracks",
+        "Get Info",
+        "Set Up Tracks Library",
+    ]
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         // Window tabbing is not used by this app.
@@ -1613,9 +1626,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
         installFocusMonitor()
         installKeyMonitor()
+        installWindowMenuPruner()
         MPDServer.shared.startFromPreferences()
         SystemWideShortcutCenter.shared.start()
         TrayController.shared.start()
+    }
+
+    private func installWindowMenuPruner() {
+        pruneWindowMenu()
+        DispatchQueue.main.async { [weak self] in
+            self?.pruneWindowMenu()
+        }
+        windowMenuObserver = NotificationCenter.default.addObserver(
+            forName: NSMenu.didAddItemNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let self,
+                  let menu = notification.object as? NSMenu,
+                  menu === NSApp.windowsMenu else { return }
+            DispatchQueue.main.async { [weak self] in
+                self?.pruneWindowMenu()
+            }
+        }
+    }
+
+    private func pruneWindowMenu() {
+        guard !isPruningWindowMenu,
+              let menu = NSApp.windowsMenu else { return }
+        isPruningWindowMenu = true
+        defer { isPruningWindowMenu = false }
+
+        for item in menu.items where hiddenWindowMenuTitles.contains(item.title) {
+            menu.removeItem(item)
+        }
+
+        var previousWasSeparator = false
+        for item in menu.items {
+            if item.isSeparatorItem {
+                if previousWasSeparator {
+                    menu.removeItem(item)
+                    continue
+                }
+                previousWasSeparator = true
+            } else {
+                previousWasSeparator = false
+            }
+        }
+        while let last = menu.items.last, last.isSeparatorItem {
+            menu.removeItem(last)
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -1699,6 +1759,31 @@ enum KeyboardShortcuts {
         }
 
         guard modifiers.isEmpty, !isEditingText else { return event }
+
+        if window === WindowModeCenter.shared.mainWindow {
+            switch event.keyCode {
+            case 18: // 1
+                NavigationCenter.shared.sidebarSelection = .library(.recentlyAdded)
+                return nil
+            case 19: // 2
+                NavigationCenter.shared.sidebarSelection = .library(.albums)
+                return nil
+            case 20: // 3
+                NavigationCenter.shared.sidebarSelection = .library(.artists)
+                return nil
+            case 21: // 4
+                NavigationCenter.shared.sidebarSelection = .library(.songs)
+                return nil
+            case 23: // 5
+                NavigationCenter.shared.sidebarSelection = .library(.genres)
+                return nil
+            case 28: // 8
+                NavigationCenter.shared.sidebarSelection = .starred
+                return nil
+            default:
+                break
+            }
+        }
 
         switch event.keyCode {
         case 123: // left arrow

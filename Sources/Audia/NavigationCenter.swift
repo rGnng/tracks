@@ -9,6 +9,8 @@ final class NavigationCenter: ObservableObject {
     @Published var albumToOpen: UUID?
     /// Artist name to select after switching to the Artists browser.
     @Published var artistToOpen: String?
+    /// Sidebar section requested by a Library-only keyboard shortcut.
+    @Published var sidebarSelection: SidebarSelection?
 
     /// Shows the Library window and opens the album detail view.
     func openAlbum(_ albumID: UUID) {

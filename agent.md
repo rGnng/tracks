@@ -435,6 +435,24 @@ Important schema decisions:
   migrated. The local handler skips text editing and returns events untouched
   while a recorder is active. Command-[ posts `.goBackRequested`; matching also
   accepts keyCode 33 so the shortcut still works with non-US/IME keyboard input.
+- `SidebarVisibilityStore` controls the Library sidebar. It persists windowed
+  visibility under `sidebarVisible` (default true) and full-screen visibility
+  under `sidebarFullScreenVisible` (default false) independently. It is toggled
+  by **View > Hide/Show Sidebar**, Command-Shift-L, or the left toolbar button
+  shown only in full screen. These menu/global keys are intentionally not in the
+  editable shortcut table.
+- While the Library window is the key window, unmodified `1`–`5` select Recently
+  Added, Albums, Artists, Songs, and Genres; `8` selects Stared. They are ignored
+  while editing text and for every other window.
+- Command-F posts `.focusSearch` only when the Library window is key. It no
+  longer switches from MiniPlayer/Settings/Get Info to the Library.
+- The show/hide player shortcut now calls `NSApp.hide(nil)` when hiding and
+  `NSApp.unhide(nil)` before showing, so focus returns to the previously active
+  application. Tray popups are suppressed while `NSApp.isHidden`, otherwise an
+  app-owned panel can cause AppKit to unhide the Library window.
+- The Window menu is pruned after launch and after menu additions. SwiftUI's
+  scene entries for Tracks, Get Info, and Set Up Tracks Library are removed;
+  only the explicit Library/MiniPlayer commands remain.
 - System tray (menu bar) is off by default. `TrayController` uses the SF Symbol
   `opticaldisc.fill`. Optional track-change and
   current-song star popups default to track-change off, star on, and
