@@ -275,17 +275,6 @@ struct ShortcutBinding: Codable, Equatable, Identifiable {
 
 enum KeyboardShortcutStore {
     private static let bindingsKey = "shortcut.bindings.v2"
-    private static let showHideKey = "shortcut.showHideWindow.v1"
-    private static let starKey = "shortcut.starCurrent.systemWide.v1"
-    private static let legacyStarKey = "shortcut.starCurrent.global.v1"
-    private static let goToAlbumKey = "shortcut.goToCurrentAlbum.v1"
-    private static let muteKey = "shortcut.mute.v1"
-    private static let volumeDownKey = "shortcut.volumeDown.v1"
-    private static let volumeUpKey = "shortcut.volumeUp.v1"
-
-    private struct Setting: Codable {
-        var shortcut: KeyboardShortcut?
-    }
 
     static func loadBindings() -> [ShortcutBinding] {
         let defaults = UserDefaults.standard
@@ -296,16 +285,9 @@ enum KeyboardShortcutStore {
             return configured
         }
 
-        // Migrate the previous one-shortcut-per-action settings. Existing
-        // app-only Space playback is now an ordinary editable binding too.
-        let migrated = ShortcutAction.allCases.compactMap { action -> ShortcutBinding? in
-            guard isEnabled(action), let shortcut = load(action) else { return nil }
-            return ShortcutBinding(action: action,
-                                   shortcut: shortcut,
-                                   scope: scope(for: action))
-        }
-        saveBindings(migrated)
-        return migrated
+        let initial = defaultBindings
+        saveBindings(initial)
+        return initial
     }
 
     static func saveBindings(_ bindings: [ShortcutBinding]) {
@@ -313,130 +295,13 @@ enum KeyboardShortcutStore {
         UserDefaults.standard.set(data, forKey: bindingsKey)
     }
 
-    static func loadShowHide() -> KeyboardShortcut? {
-        load(key: showHideKey, fallback: .defaultShowHide)
-    }
-
-    static func saveShowHide(_ shortcut: KeyboardShortcut?) {
-        save(shortcut, key: showHideKey)
-    }
-
-    static func loadStar() -> KeyboardShortcut? {
-        let defaults = UserDefaults.standard
-        if defaults.data(forKey: starKey) == nil,
-           let legacy = defaults.data(forKey: legacyStarKey) {
-            defaults.set(legacy, forKey: starKey)
-            defaults.removeObject(forKey: legacyStarKey)
+    private static var defaultBindings: [ShortcutBinding] {
+        ShortcutAction.allCases.compactMap { action in
+            guard let shortcut = action.defaultShortcut else { return nil }
+            return ShortcutBinding(action: action,
+                                   shortcut: shortcut,
+                                   scope: action.defaultScope)
         }
-        return load(key: starKey, fallback: .defaultStarCurrent)
-    }
-
-    static func saveStar(_ shortcut: KeyboardShortcut?) {
-        save(shortcut, key: starKey)
-        UserDefaults.standard.removeObject(forKey: legacyStarKey)
-    }
-
-    static func loadGoToAlbum() -> KeyboardShortcut? {
-        load(key: goToAlbumKey, fallback: .defaultGoToCurrentAlbum)
-    }
-
-    static func saveGoToAlbum(_ shortcut: KeyboardShortcut?) {
-        save(shortcut, key: goToAlbumKey)
-    }
-
-    static func load(_ action: ShortcutAction) -> KeyboardShortcut? {
-        switch action {
-        case .mute: return loadMute()
-        case .volumeDown: return loadVolumeDown()
-        case .volumeUp: return loadVolumeUp()
-        case .showHide: return loadShowHide()
-        case .starCurrent: return loadStar()
-        case .goToCurrentAlbum: return loadGoToAlbum()
-        case .playPause: return .defaultPlayPause
-        case .nextTrack, .previousTrack: return nil
-        }
-    }
-
-    static func save(_ shortcut: KeyboardShortcut?, for action: ShortcutAction) {
-        switch action {
-        case .mute: saveMute(shortcut)
-        case .volumeDown: saveVolumeDown(shortcut)
-        case .volumeUp: saveVolumeUp(shortcut)
-        case .showHide: saveShowHide(shortcut)
-        case .starCurrent: saveStar(shortcut)
-        case .goToCurrentAlbum: saveGoToAlbum(shortcut)
-        case .playPause, .nextTrack, .previousTrack: break
-        }
-    }
-
-    static func scope(for action: ShortcutAction) -> ShortcutScope {
-        let key = "shortcut.\(action.rawValue).scope.v1"
-        guard let raw = UserDefaults.standard.string(forKey: key) else {
-            return action.defaultScope
-        }
-        if raw == "global" { return .systemWide }
-        return ShortcutScope(rawValue: raw) ?? action.defaultScope
-    }
-
-    static func setScope(_ scope: ShortcutScope, for action: ShortcutAction) {
-        UserDefaults.standard.set(scope.rawValue,
-                                  forKey: "shortcut.\(action.rawValue).scope.v1")
-    }
-
-    static func isEnabled(_ action: ShortcutAction) -> Bool {
-        let key = "shortcut.\(action.rawValue).enabled.v1"
-        return UserDefaults.standard.object(forKey: key) as? Bool ?? true
-    }
-
-    static func setEnabled(_ enabled: Bool, for action: ShortcutAction) {
-        UserDefaults.standard.set(enabled,
-                                  forKey: "shortcut.\(action.rawValue).enabled.v1")
-    }
-
-    static func loadMute() -> KeyboardShortcut? {
-        load(key: muteKey, fallback: .defaultMute)
-    }
-
-    static func saveMute(_ shortcut: KeyboardShortcut?) {
-        save(shortcut, key: muteKey)
-    }
-
-    static func loadVolumeDown() -> KeyboardShortcut? {
-        load(key: volumeDownKey, fallback: .defaultVolumeDown)
-    }
-
-    static func saveVolumeDown(_ shortcut: KeyboardShortcut?) {
-        save(shortcut, key: volumeDownKey)
-    }
-
-    static func loadVolumeUp() -> KeyboardShortcut? {
-        load(key: volumeUpKey, fallback: .defaultVolumeUp)
-    }
-
-    static func saveVolumeUp(_ shortcut: KeyboardShortcut?) {
-        save(shortcut, key: volumeUpKey)
-    }
-
-    private static func load(key: String,
-                             fallback: KeyboardShortcut) -> KeyboardShortcut? {
-        let defaults = UserDefaults.standard
-        if let data = defaults.data(forKey: key),
-           let setting = try? JSONDecoder().decode(Setting.self, from: data) {
-            guard var shortcut = setting.shortcut else { return nil }
-            if shortcut.keyCode == nil,
-               shortcut.key == fallback.key,
-               shortcut.modifiers == fallback.modifiers {
-                shortcut.keyCode = fallback.keyCode
-            }
-            return shortcut
-        }
-        return fallback
-    }
-
-    private static func save(_ shortcut: KeyboardShortcut?, key: String) {
-        let setting = Setting(shortcut: shortcut)
-        guard let data = try? JSONEncoder().encode(setting) else { return }
-        UserDefaults.standard.set(data, forKey: key)
     }
 }
 

@@ -34,11 +34,12 @@ SQLite, and includes a built-in MPD server.
   popups. The icon is off by default; star popups default on, track-change
   popups default off, and popups can be limited to when the Library window is
   not focused. Popup duration is configurable and defaults to 1500 ms.
-- Each shortcut has a System-wide checkbox. Unchecked means In-App only; checked
-  works in other apps. Defaults are in-app mute/volume, go to current album (J),
-  and system-wide show/hide Tracks (F17) plus add/remove current song from
-  Stared playlist (F18). Command-1/2 reopen the main window when every window is
-  closed.
+- Shortcuts are split into In-App and System-wide tables. Add an action with
+  **+**, remove it with **−**, and click its Key field to record a combination.
+  Defaults: in-app mute `m`, volume down `-`, volume up `=`, play/pause Space,
+  and go to current album `j`; system-wide show/hide Tracks `F17` and
+  add/remove the current song from Stared playlist `F18`. Command-1/2 reopen the
+  main window when every window is closed.
 - Library and MiniPlayer are separate windows and are never shown together.
   Opening MiniPlayer hides Library; closing MiniPlayer restores Library. The
   MiniPlayer has no separate return-to-Library button.

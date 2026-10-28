@@ -405,26 +405,23 @@ Important schema decisions:
 - Play Later appends to the bottom of the queue and sits below Play Next.
 - Get Info has Details, Artwork, and File tabs, with tag/artwork writeback for the
   Internal Library.
-- Every shortcut row has a **System-wide** checkbox. Unchecked means in-app
-  (only while Tracks is focused); checked uses Carbon hot keys
-  (`SystemWideShortcuts.swift`) and works in other apps without Accessibility
-  permission. Defaults: mute `m`, volume down `-`, volume up `=`, and go to
-  current album `j` are unchecked; show/hide Tracks `F17` and add/remove the
-  current song from Stared playlist `F18` are checked. Moving a shortcut between
-  scopes saves the scope and re-registers the Carbon hot keys. The star action
-  always targets the current playing song, not row selection.
-- Settings > Shortcuts uses standard AppKit shortcut recorders
-  (`KeyboardShortcut.swift`): click a field, press a key combination, Escape
-  cancels, and bare Delete clears the shortcut. Modifiers and shifted symbols
-  are supported. Each shortcut is stored as JSON under its own UserDefaults key
-  (`shortcut.showHideWindow.v1`, `shortcut.starCurrent.systemWide.v1`,
-  `shortcut.goToCurrentAlbum.v1`, `shortcut.mute.v1`,
-  `shortcut.volumeDown.v1`, `shortcut.volumeUp.v1`), with a
-  matching `shortcut.<action>.scope.v1` value. Reset restores that row's
-  shortcut default, not its scope. The local handler skips text editing and returns
-  events untouched while a recorder is active. Command-[ posts
-  `.goBackRequested`; matching also accepts keyCode 33 so the shortcut still
-  works with non-US/IME keyboard input.
+- Settings > Shortcuts has separate In-App and System-wide tables. Use **+** to
+  add an available action and **−** to remove the selected binding. In-App
+  bindings are handled by the local key monitor; System-wide bindings use Carbon
+  hot keys (`SystemWideShortcuts.swift`) and work in other apps without
+  Accessibility permission. Defaults: in-app mute `m`, volume down `-`, volume
+  up `=`, play/pause Space, and go to current album `j`; system-wide show/hide
+  Tracks `F17` and add/remove the current song from Stared playlist `F18`. The
+  star action always targets the current playing song, not row selection.
+- Click a Key field to record a combination, press Escape to cancel, or Delete
+  to clear it. Modifiers and shifted symbols are supported. The table prevents
+  duplicate assignments across both scopes. **Display raw values** shows the
+  stored key codes and modifier names instead of the display labels.
+- Shortcuts are stored as one JSON array under `shortcut.bindings.v2`. Legacy
+  per-action keys (`shortcut.*.v1`, scope and enabled flags) are ignored, not
+  migrated. The local handler skips text editing and returns events untouched
+  while a recorder is active. Command-[ posts `.goBackRequested`; matching also
+  accepts keyCode 33 so the shortcut still works with non-US/IME keyboard input.
 - System tray (menu bar) is off by default. `TrayController` uses the SF Symbol
   `opticaldisc.fill`. Optional track-change and
   current-song star popups default to track-change off, star on, and
@@ -778,7 +775,8 @@ by AppKit's title-bar layout pass.
 - `migratePlaylistItemAddTimes()` adds `playlist_items.added_at` to older
   libraries and backfills missing values from playlist creation time + position.
 - `player_queue` is created with `CREATE TABLE IF NOT EXISTS`; no version bump.
-- Older shortcut-string formats are not migrated.
+- Only `shortcut.bindings.v2` is read; legacy per-action shortcut keys and
+  shortcut formats are ignored.
 
 ## 12. Key pitfalls and rules
 
