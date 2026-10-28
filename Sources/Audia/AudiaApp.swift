@@ -1809,22 +1809,45 @@ enum KeyboardShortcuts {
             KeyboardNavigator.shared.send(.up)
             return nil
         case 116: // page up
-            scrollByPage(up: true, event: event)
+            handleScroll(.pageUp, in: window, event: event)
             return nil
         case 121: // page down
-            scrollByPage(up: false, event: event)
+            handleScroll(.pageDown, in: window, event: event)
             return nil
         case 115: // home
-            scrollToTop(event: event)
+            handleScroll(.top, in: window, event: event)
             return nil
         case 119: // end
-            scrollToBottom(event: event)
+            handleScroll(.bottom, in: window, event: event)
             return nil
         case 36, 76: // return / enter
             KeyboardNavigator.shared.activate()
             return nil
         default:
             return event
+        }
+    }
+
+    private static func handleScroll(_ command: KeyboardNavigator.ScrollCommand,
+                                     in window: NSWindow,
+                                     event: NSEvent) {
+        // The Library lists own their scroll view through SwiftUI. Direct
+        // NSScrollView scrolling there fought the view's layout and could snap
+        // it back to the previous focus row. Other windows still use the
+        // AppKit fallback below.
+        if window === WindowModeCenter.shared.mainWindow {
+            KeyboardNavigator.shared.sendScroll(command)
+            return
+        }
+        switch command {
+        case .pageUp:
+            scrollByPage(up: true, event: event)
+        case .pageDown:
+            scrollByPage(up: false, event: event)
+        case .top:
+            scrollToTop(event: event)
+        case .bottom:
+            scrollToBottom(event: event)
         }
     }
 

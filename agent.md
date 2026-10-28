@@ -368,6 +368,12 @@ Important schema decisions:
   anchor. Lists shorter than the viewport naturally stay at the top, and
   SwiftUI clamps anchors at the last row. There is no center-on-selection
   fallback.
+- Home/End/Page Up/Page Down are routed through `KeyboardNavigator` to the
+  mounted SwiftUI list, which scrolls with `ScrollViewReader`; do not poke the
+  hosting `NSScrollView` directly for these views. Visibility comes from
+  `onScrollTargetVisibilityChange` and drives both viewport persistence and
+  arrow-key navigation, so an off-screen saved focus cannot pull the list back
+  to its old row after scrolling.
 - Opening an album detail from the current grid keeps the mounted grid's scroll
   offset unchanged, so returning leaves the clicked album where it was.
   `Go to Album` from another view overrides the anchor with the target album;

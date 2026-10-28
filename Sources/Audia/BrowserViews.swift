@@ -179,7 +179,11 @@ private struct BrowserList<Item: Identifiable>: View where Item.ID == String {
     let onDoubleTap: (Item) -> Void
 
     @ObservedObject private var navigator = KeyboardNavigator.shared
-    @State private var viewportAnchorID: Item.ID?
+    @State private var didRestoreViewport = false
+    @State private var allowViewportSave = false
+    @State private var visibleIDs: Set<Item.ID> = []
+
+    private let initialViewportAnchorID: Item.ID?
 
     init(items: [Item], selectedID: Binding<Item.ID?>,
          title: @escaping (Item) -> String,
@@ -196,7 +200,7 @@ private struct BrowserList<Item: Identifiable>: View where Item.ID == String {
         let anchor = savedAnchor.flatMap { id in
             items.contains(where: { $0.id == id }) ? id : nil
         }
-        _viewportAnchorID = State(initialValue: anchor ?? selectedID.wrappedValue)
+        initialViewportAnchorID = anchor ?? selectedID.wrappedValue
     }
 
     var body: some View {
@@ -220,21 +224,38 @@ private struct BrowserList<Item: Identifiable>: View where Item.ID == String {
                 .scrollTargetLayout()
                 .padding(.vertical, 6)
             }
-            .scrollPosition(id: $viewportAnchorID, anchor: .top)
+            .onScrollTargetVisibilityChange(idType: String.self, threshold: 0.1) { visible in
+                visibleIDs = Set(visible)
+                guard allowViewportSave,
+                      let top = items.first(where: { visible.contains($0.id) }) else { return }
+                ViewPositionStore.setViewportAnchorID(top.id, for: viewportAnchorKey)
+            }
+            .onAppear {
+                guard !didRestoreViewport else { return }
+                didRestoreViewport = true
+                DispatchQueue.main.async {
+                    if let anchor = initialViewportAnchorID {
+                        proxy.scrollTo(anchor, anchor: .top)
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                        allowViewportSave = true
+                    }
+                }
+            }
             .onChange(of: navigator.moveCount) { _, _ in
-                guard moveSelection(), let id = selectedID else { return }
+                guard moveSelection(), let id = selectedID, !visibleIDs.contains(id) else { return }
                 withAnimation(.easeInOut(duration: 0.08)) {
                     proxy.scrollTo(id, anchor: .center)
                 }
+            }
+            .onChange(of: navigator.scrollCount) { _, _ in
+                scroll(to: navigator.lastScrollCommand, proxy: proxy)
             }
             .onChange(of: navigator.activateCount) { _, _ in
                 activateSelection()
             }
         }
         .background(Theme.contentBackground)
-        .onChange(of: viewportAnchorID) { _, id in
-            ViewPositionStore.setViewportAnchorID(id, for: viewportAnchorKey)
-        }
     }
 
     private func activateSelection() {
@@ -249,15 +270,41 @@ private struct BrowserList<Item: Identifiable>: View where Item.ID == String {
         guard navigator.lastMove == .up || navigator.lastMove == .down else { return false }
         guard !items.isEmpty else { return false }
         let delta = navigator.lastMove == .up ? -1 : 1
-        let nextID: Item.ID
-        if let selectedID, let index = items.firstIndex(where: { $0.id == selectedID }) {
-            nextID = items[min(max(index + delta, 0), items.count - 1)].id
+        let baseIndex: Int
+        if let selectedID,
+           let index = items.firstIndex(where: { $0.id == selectedID }),
+           visibleIDs.contains(selectedID) {
+            baseIndex = index
+        } else if let topVisible = items.first(where: { visibleIDs.contains($0.id) }) {
+            baseIndex = items.firstIndex(where: { $0.id == topVisible.id }) ?? 0
+        } else if let selectedID,
+                  let index = items.firstIndex(where: { $0.id == selectedID }) {
+            baseIndex = index
         } else {
-            nextID = items[0].id
+            baseIndex = 0
         }
+        let nextID = items[min(max(baseIndex + delta, 0), items.count - 1)].id
         guard nextID != selectedID else { return false }
         selectedID = nextID
         return true
+    }
+
+    private func scroll(to command: KeyboardNavigator.ScrollCommand,
+                        proxy: ScrollViewProxy) {
+        guard !items.isEmpty else { return }
+        switch command {
+        case .top:
+            if let id = items.first?.id { proxy.scrollTo(id, anchor: .top) }
+        case .bottom:
+            if let id = items.last?.id { proxy.scrollTo(id, anchor: .bottom) }
+        case .pageUp, .pageDown:
+            guard let top = items.first(where: { visibleIDs.contains($0.id) }),
+                  let index = items.firstIndex(where: { $0.id == top.id }) else { return }
+            let page = max(1, visibleIDs.count - 1)
+            let target = index + (command == .pageUp ? -page : page)
+            let clamped = min(max(target, 0), items.count - 1)
+            proxy.scrollTo(items[clamped].id, anchor: .top)
+        }
     }
 }
 

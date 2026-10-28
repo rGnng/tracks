@@ -18,12 +18,25 @@ final class KeyboardNavigator: ObservableObject {    static let shared = Keyboar
         case right
     }
 
+    enum ScrollCommand {
+        case top
+        case bottom
+        case pageUp
+        case pageDown
+    }
+
     var region: Region = .content
 
     @Published private(set) var moveCount = 0
     private(set) var lastMove: Move = .down
 
     @Published private(set) var activateCount = 0
+
+    /// Home/End/Page keys are routed to the focused SwiftUI list, which scrolls
+    /// through `ScrollViewReader`. Poking NSScrollView directly bypasses
+    /// SwiftUI's scroll bookkeeping and made the view jump back to its old row.
+    @Published private(set) var scrollCount = 0
+    private(set) var lastScrollCommand: ScrollCommand = .top
 
     func send(_ move: Move) {
         lastMove = move
@@ -32,5 +45,10 @@ final class KeyboardNavigator: ObservableObject {    static let shared = Keyboar
 
     func activate() {
         activateCount += 1
+    }
+
+    func sendScroll(_ command: ScrollCommand) {
+        lastScrollCommand = command
+        scrollCount += 1
     }
 }
