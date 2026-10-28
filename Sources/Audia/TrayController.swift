@@ -248,6 +248,8 @@ private struct TrayPopupView: View {
     let song: Song
     let isStarred: Bool
 
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
     private var subtitle: String {
         if song.album.isEmpty { return song.artist }
         if song.artist.isEmpty { return song.album }
@@ -255,59 +257,85 @@ private struct TrayPopupView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            UpTriangle()
-                .fill(Color(nsColor: .windowBackgroundColor))
-                .frame(width: 14, height: 7)
-                .overlay(
-                    UpTriangle()
-                        .stroke(Color.black.opacity(0.14), lineWidth: 0.5)
-                )
-            HStack(spacing: 9) {
-                AlbumArtwork(artwork: Library.shared.artwork(forAlbumTitle: song.album))
-                    .frame(width: 38, height: 38)
-                    .clipShape(RoundedRectangle(cornerRadius: 4))
+        HStack(spacing: 9) {
+            AlbumArtwork(artwork: Library.shared.artwork(forAlbumTitle: song.album))
+                .frame(width: 38, height: 38)
+                .clipShape(RoundedRectangle(cornerRadius: 4))
 
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 5) {
-                        Text(song.title)
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundColor(Theme.primaryText)
-                            .lineLimit(1)
-                        Spacer(minLength: 0)
-                        Image(systemName: isStarred ? "star.fill" : "star")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(isStarred ? Theme.highlight : Theme.secondaryText)
-                    }
-                    Text(subtitle)
-                        .font(.system(size: 10.5))
-                        .foregroundColor(Theme.secondaryText)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 5) {
+                    Text(song.title)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(Theme.primaryText)
                         .lineLimit(1)
+                    Spacer(minLength: 0)
+                    Image(systemName: isStarred ? "star.fill" : "star")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(isStarred ? Theme.highlight : Theme.secondaryText)
                 }
+                Text(subtitle)
+                    .font(.system(size: 10.5))
+                    .foregroundColor(Theme.secondaryText)
+                    .lineLimit(1)
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(Color(nsColor: .windowBackgroundColor))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .strokeBorder(Color.black.opacity(0.14), lineWidth: 0.5)
-                    )
-            )
-            .shadow(color: .black.opacity(0.18), radius: 5, y: 2)
         }
+        .padding(.horizontal, 10)
+        .padding(.top, 15)
+        .padding(.bottom, 8)
         .frame(width: 300, height: 63, alignment: .top)
+        .background {
+            popupBackground
+        }
+        .overlay {
+            PopupShape()
+                .strokeBorder(Color.black.opacity(0.16), lineWidth: 0.5)
+        }
+        .shadow(color: .black.opacity(0.18), radius: 5, y: 2)
+    }
+
+    @ViewBuilder
+    private var popupBackground: some View {
+        ZStack {
+            if reduceTransparency {
+                Color(nsColor: .windowBackgroundColor)
+            } else {
+                Rectangle()
+                    .fill(.ultraThinMaterial)
+                // Keep enough tint for text contrast over bright or busy
+                // wallpapers while leaving the blur visible.
+                Color(nsColor: .windowBackgroundColor).opacity(0.45)
+            }
+        }
+        .clipShape(PopupShape())
     }
 }
 
-private struct UpTriangle: Shape {
+private struct PopupShape: InsettableShape {
+    private var insetAmount: CGFloat = 0
+
     func path(in rect: CGRect) -> Path {
+        let pointerHeight: CGFloat = 7
+        let body = CGRect(x: rect.minX + insetAmount,
+                          y: rect.minY + pointerHeight,
+                          width: max(0, rect.width - insetAmount * 2),
+                          height: max(0, rect.height - pointerHeight - insetAmount))
         var path = Path()
-        path.move(to: CGPoint(x: rect.minX, y: rect.maxY))
-        path.addLine(to: CGPoint(x: rect.midX, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+        path.addRoundedRect(in: body,
+                            cornerSize: CGSize(width: 10, height: 10))
+
+        let centerX = rect.midX
+        path.move(to: CGPoint(x: centerX - 7,
+                              y: rect.minY + pointerHeight))
+        path.addLine(to: CGPoint(x: centerX, y: rect.minY))
+        path.addLine(to: CGPoint(x: centerX + 7,
+                                 y: rect.minY + pointerHeight))
         path.closeSubpath()
         return path
+    }
+
+    func inset(by amount: CGFloat) -> PopupShape {
+        var copy = self
+        copy.insetAmount += amount
+        return copy
     }
 }
