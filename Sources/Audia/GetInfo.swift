@@ -510,7 +510,7 @@ struct GetInfoView: View {
             albumTitle = uniform(.album, songs.map(\.album))
             genre = uniform(.genre, songs.map(\.genre))
             year = uniform(.year, songs.map(\.year))
-            track = uniform(.track, songs.map { $0.trackNumber > 0 ? String($0.trackNumber) : "" })
+            track = uniform(.track, songs.map(\.trackNumberLabel))
             trackTotal = uniform(.trackTotal, songs.map { song in
                 let total = song.trackTotal > 0 ? song.trackTotal : songs.count
                 return total > 0 ? String(total) : ""
@@ -544,7 +544,7 @@ struct GetInfoView: View {
             albumTitle = song.album
             genre = song.genre
             year = song.year
-            track = song.trackNumber > 0 ? String(song.trackNumber) : ""
+            track = song.trackNumberLabel
             let fallbackTotal = song.trackTotal > 0 ? song.trackTotal : result.album.songs.count
             trackTotal = fallbackTotal > 0 ? String(fallbackTotal) : ""
             disc = song.discNumber > 0 ? String(song.discNumber) : ""

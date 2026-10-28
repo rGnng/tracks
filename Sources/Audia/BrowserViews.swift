@@ -544,7 +544,7 @@ private struct BrowserSongRow: View {
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundColor(isSelected ? Theme.highlightForeground : Theme.highlight)
                 } else {
-                    Text("\(song.trackNumber)")
+                    Text(song.trackNumberLabel)
                         .font(.system(size: 11).monospacedDigit())
                         .foregroundColor(isSelected ? Theme.highlightForeground.opacity(0.85) : Theme.secondaryText)
                 }

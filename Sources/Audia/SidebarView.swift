@@ -193,7 +193,7 @@ struct SidebarView: View {
         }
     }
 
-    private var sidebarActivity: (title: String, progress: Double, detail: String?)? {
+    private var sidebarActivity: (title: String, progress: Double?, detail: String?)? {
         if importer.isImporting {
             let detail = importer.importTotal > 0
                 ? "\(importer.importCompleted)/\(importer.importTotal)"
@@ -201,9 +201,9 @@ struct SidebarView: View {
             return ("Importing", importer.importProgress, detail)
         }
         if library.isScanning {
-            let title = library.scanPhase == .parsing ? "Parsing" : "Scanning Libraries"
-            let detail = library.scanTotal > 0 ? "\(library.scanCompleted)/\(library.scanTotal)" : nil
-            return (title, library.scanProgress, detail)
+            return (library.scanPhase.rawValue,
+                    library.scanActivityProgress,
+                    library.scanActivityDetail)
         }
         return nil
     }
@@ -294,9 +294,9 @@ private struct SidebarItem: View {
     }
 }
 
-private struct SidebarActivityView: View {
+struct SidebarActivityView: View {
     let title: String
-    let progress: Double
+    let progress: Double?
     let detail: String?
 
     var body: some View {
@@ -314,9 +314,15 @@ private struct SidebarActivityView: View {
                         .foregroundColor(Theme.secondaryText.opacity(0.85))
                 }
             }
-            ProgressView(value: min(max(progress, 0), 1))
-                .progressViewStyle(.linear)
-                .controlSize(.mini)
+            Group {
+                if let progress {
+                    ProgressView(value: min(max(progress, 0), 1))
+                } else {
+                    ProgressView()
+                }
+            }
+            .progressViewStyle(.linear)
+            .controlSize(.mini)
         }
         .padding(.horizontal, 10)
         .padding(.bottom, 6)

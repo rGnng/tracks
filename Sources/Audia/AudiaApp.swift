@@ -28,8 +28,12 @@ struct AudiaApp: App {
                 .keyboardShortcut("o", modifiers: .command)
             }
 
+            // Keep SwiftUI's per-window entries out of the Window menu. The
+            // explicit Library and MiniPlayer commands below are the supported
+            // window switchers for this app.
+            CommandGroup(replacing: .windowList) {}
+
             CommandGroup(after: .textEditing) {
-                Divider()
                 Button("Find") {
                     let wasMini = WindowModeCenter.shared.mode == .miniPlayer
                     WindowModeCenter.shared.setMode(.library)
@@ -103,6 +107,7 @@ struct AudiaApp: App {
 
 private enum SettingsAlert: Identifiable {
     case error(String)
+    case shortcutConflict(String)
     case confirmOpen(String)
     case confirmDisable(MusicLibrary)
     case confirmDelete(MusicLibrary)
@@ -111,6 +116,7 @@ private enum SettingsAlert: Identifiable {
     var id: String {
         switch self {
         case .error(let message): return "error:\(message)"
+        case .shortcutConflict(let message): return "shortcut-conflict:\(message)"
         case .confirmOpen(let path): return "open:\(path)"
         case .confirmDisable(let library): return "disable:\(library.id)"
         case .confirmDelete(let library): return "delete:\(library.id)"
@@ -160,23 +166,10 @@ struct SettingsView: View {
     private var trayOnlyWhenLibraryNotFocused = true
     @AppStorage(TrayController.DefaultsKey.popupDurationMs)
     private var trayPopupDurationMs = 1500
-    @State private var starShortcut: KeyboardShortcut? = KeyboardShortcutStore.loadStar()
-    @State private var goToAlbumShortcut: KeyboardShortcut? = KeyboardShortcutStore.loadGoToAlbum()
-    @State private var showHideShortcut: KeyboardShortcut? = KeyboardShortcutStore.loadShowHide()
-    @State private var muteShortcut: KeyboardShortcut? = KeyboardShortcutStore.loadMute()
-    @State private var volumeDownShortcut: KeyboardShortcut? = KeyboardShortcutStore.loadVolumeDown()
-    @State private var volumeUpShortcut: KeyboardShortcut? = KeyboardShortcutStore.loadVolumeUp()
-    @State private var starScope = KeyboardShortcutStore.scope(for: .starCurrent)
-    @State private var goToAlbumScope = KeyboardShortcutStore.scope(for: .goToCurrentAlbum)
-    @State private var showHideScope = KeyboardShortcutStore.scope(for: .showHide)
-    @State private var muteScope = KeyboardShortcutStore.scope(for: .mute)
-    @State private var volumeDownScope = KeyboardShortcutStore.scope(for: .volumeDown)
-    @State private var volumeUpScope = KeyboardShortcutStore.scope(for: .volumeUp)
-    @State private var enabledShortcuts = Dictionary(
-        uniqueKeysWithValues: ShortcutAction.allCases.map {
-            ($0, KeyboardShortcutStore.isEnabled($0))
-        }
-    )
+    @State private var shortcutBindings = KeyboardShortcutStore.loadBindings()
+    @State private var showRawShortcutValues = false
+    @State private var selectedInAppBindingID: UUID?
+    @State private var selectedSystemWideBindingID: UUID?
     @ObservedObject private var library = Library.shared
     @ObservedObject private var artworkCache = ArtworkCache.shared
     @ObservedObject private var mpd = MPDServer.shared
@@ -217,23 +210,9 @@ struct SettingsView: View {
         .background(SettingsFocusSink())
         .onAppear {
             artworkQualityText = "\(artworkQualityPercent)"
-            starShortcut = KeyboardShortcutStore.loadStar()
-            goToAlbumShortcut = KeyboardShortcutStore.loadGoToAlbum()
-            showHideShortcut = KeyboardShortcutStore.loadShowHide()
-            muteShortcut = KeyboardShortcutStore.loadMute()
-            volumeDownShortcut = KeyboardShortcutStore.loadVolumeDown()
-            volumeUpShortcut = KeyboardShortcutStore.loadVolumeUp()
-            starScope = KeyboardShortcutStore.scope(for: .starCurrent)
-            goToAlbumScope = KeyboardShortcutStore.scope(for: .goToCurrentAlbum)
-            showHideScope = KeyboardShortcutStore.scope(for: .showHide)
-            muteScope = KeyboardShortcutStore.scope(for: .mute)
-            volumeDownScope = KeyboardShortcutStore.scope(for: .volumeDown)
-            volumeUpScope = KeyboardShortcutStore.scope(for: .volumeUp)
-            enabledShortcuts = Dictionary(
-                uniqueKeysWithValues: ShortcutAction.allCases.map {
-                    ($0, KeyboardShortcutStore.isEnabled($0))
-                }
-            )
+            shortcutBindings = KeyboardShortcutStore.loadBindings()
+            selectedInAppBindingID = nil
+            selectedSystemWideBindingID = nil
             artworkCache.refreshCacheSize()
         }
         .onChange(of: artworkCacheJPEGQuality) { _, _ in
@@ -244,6 +223,12 @@ struct SettingsView: View {
             case .error(let message):
                 return Alert(
                     title: Text("Library Error"),
+                    message: Text(message),
+                    dismissButton: .default(Text("OK"))
+                )
+            case .shortcutConflict(let message):
+                return Alert(
+                    title: Text("Shortcut Already Assigned"),
                     message: Text(message),
                     dismissButton: .default(Text("OK"))
                 )
@@ -335,13 +320,24 @@ struct SettingsView: View {
     }
 
     private func settingsPageHeader(_ section: SettingsSection) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(section.title)
-                .font(SettingsTypography.pageTitle)
-                .foregroundColor(Theme.primaryText)
-            Text(section.subtitle)
-                .font(SettingsTypography.help)
-                .foregroundColor(Theme.secondaryText)
+        HStack(alignment: .center, spacing: 16) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(section.title)
+                    .font(SettingsTypography.pageTitle)
+                    .foregroundColor(Theme.primaryText)
+                Text(section.subtitle)
+                    .font(SettingsTypography.help)
+                    .foregroundColor(Theme.secondaryText)
+            }
+            Spacer(minLength: 8)
+            if section == .library, library.isScanning {
+                SidebarActivityView(
+                    title: library.scanPhase.rawValue,
+                    progress: library.scanActivityProgress,
+                    detail: library.scanActivityDetail
+                )
+                .frame(width: 180)
+            }
         }
     }
 
@@ -440,19 +436,6 @@ struct SettingsView: View {
                     .foregroundColor(Theme.secondaryText)
             }
 
-            if library.isScanning {
-                VStack(alignment: .leading, spacing: 4) {
-                    ProgressView(value: library.scanProgress)
-                        .progressViewStyle(.linear)
-                    Text(library.scanTotal > 0
-                         ? "Scanning \(library.scanCompleted) of \(library.scanTotal) files…"
-                         : "Scanning…")
-                        .font(SettingsTypography.help)
-                        .foregroundColor(Theme.secondaryText)
-                }
-                .padding(.vertical, 4)
-            }
-
             internalLibrarySection
             Divider()
             externalLibrariesSection
@@ -521,132 +504,200 @@ struct SettingsView: View {
     }
 
     private var shortcutsSettings: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            shortcutTableHeader
-            shortcutRow(.mute,
-                        enabled: enabledBinding(for: .mute),
-                        shortcut: $muteShortcut,
-                        scope: $muteScope)
-            shortcutRow(.volumeDown,
-                        enabled: enabledBinding(for: .volumeDown),
-                        shortcut: $volumeDownShortcut,
-                        scope: $volumeDownScope)
-            shortcutRow(.volumeUp,
-                        enabled: enabledBinding(for: .volumeUp),
-                        shortcut: $volumeUpShortcut,
-                        scope: $volumeUpScope)
-            shortcutRow(.showHide,
-                        enabled: enabledBinding(for: .showHide),
-                        shortcut: $showHideShortcut,
-                        scope: $showHideScope)
-            shortcutRow(.starCurrent,
-                        enabled: enabledBinding(for: .starCurrent),
-                        shortcut: $starShortcut,
-                        scope: $starScope)
-            shortcutRow(.goToCurrentAlbum,
-                        enabled: enabledBinding(for: .goToCurrentAlbum),
-                        shortcut: $goToAlbumShortcut,
-                        scope: $goToAlbumScope)
-        }
-        .onChange(of: starShortcut) { _, value in
-            KeyboardShortcutStore.save(value, for: .starCurrent)
-            SystemWideShortcutCenter.shared.reload()
-        }
-        .onChange(of: goToAlbumShortcut) { _, value in
-            KeyboardShortcutStore.save(value, for: .goToCurrentAlbum)
-            SystemWideShortcutCenter.shared.reload()
-        }
-        .onChange(of: showHideShortcut) { _, value in
-            KeyboardShortcutStore.save(value, for: .showHide)
-            SystemWideShortcutCenter.shared.reload()
-        }
-        .onChange(of: muteShortcut) { _, value in
-            KeyboardShortcutStore.save(value, for: .mute)
-            SystemWideShortcutCenter.shared.reload()
-        }
-        .onChange(of: volumeDownShortcut) { _, value in
-            KeyboardShortcutStore.save(value, for: .volumeDown)
-            SystemWideShortcutCenter.shared.reload()
-        }
-        .onChange(of: volumeUpShortcut) { _, value in
-            KeyboardShortcutStore.save(value, for: .volumeUp)
-            SystemWideShortcutCenter.shared.reload()
-        }
-        .onChange(of: starScope) { _, value in saveScope(value, for: .starCurrent) }
-        .onChange(of: goToAlbumScope) { _, value in saveScope(value, for: .goToCurrentAlbum) }
-        .onChange(of: showHideScope) { _, value in saveScope(value, for: .showHide) }
-        .onChange(of: muteScope) { _, value in saveScope(value, for: .mute) }
-        .onChange(of: volumeDownScope) { _, value in saveScope(value, for: .volumeDown) }
-        .onChange(of: volumeUpScope) { _, value in saveScope(value, for: .volumeUp) }
-        .onChange(of: enabledShortcuts) { _, values in
-            for action in ShortcutAction.allCases {
-                KeyboardShortcutStore.setEnabled(values[action] ?? true, for: action)
+        VStack(alignment: .leading, spacing: 14) {
+            shortcutBindingTable(for: .inApp,
+                                 selectedID: $selectedInAppBindingID)
+            shortcutBindingTable(for: .systemWide,
+                                 selectedID: $selectedSystemWideBindingID)
+
+            HStack {
+                Spacer()
+                Toggle("Display raw values", isOn: $showRawShortcutValues)
+                    .toggleStyle(.checkbox)
+                    .controlSize(.mini)
+                    .font(.system(size: 9))
+                    .padding(.trailing, 6)
             }
+        }
+        .onChange(of: shortcutBindings) { _, bindings in
+            KeyboardShortcutStore.saveBindings(bindings)
             SystemWideShortcutCenter.shared.reload()
         }
     }
 
-    private func saveScope(_ scope: ShortcutScope, for action: ShortcutAction) {
-        KeyboardShortcutStore.setScope(scope, for: action)
-        SystemWideShortcutCenter.shared.reload()
-    }
+    private func shortcutBindingTable(for scope: ShortcutScope,
+                                      selectedID: Binding<UUID?>) -> some View {
+        let ids = shortcutBindingIDs(for: scope)
+        let visibleRows = max(1, min(ids.count, 6))
+        let hasAvailableActions = !availableShortcutActions(for: scope).isEmpty
 
-    private var shortcutTableHeader: some View {
-        HStack(spacing: 8) {
-            Text("Enabled")
-                .frame(width: 58)
-            Text("Action")
-                .frame(maxWidth: .infinity, alignment: .leading)
-            Text("System-Wide")
-                .frame(width: 100)
-            Text("Key")
-                .frame(width: 132)
-            Color.clear
-                .frame(width: 48, height: 1)
+        return VStack(alignment: .leading, spacing: 6) {
+            Text(scope.title)
+                .font(SettingsTypography.cardTitle)
+                .foregroundColor(Theme.primaryText)
+
+            VStack(spacing: 0) {
+                HStack(spacing: 0) {
+                    Text("Action")
+                        .frame(width: 300, alignment: .leading)
+                    Spacer(minLength: 0)
+                    Divider()
+                    Text("Key")
+                        .frame(width: 105, alignment: .leading)
+                        .padding(.leading, 10)
+                }
+                .font(SettingsTypography.body.weight(.semibold))
+                .foregroundColor(Theme.primaryText)
+                .padding(.horizontal, 10)
+                .frame(height: 27)
+                .background(Theme.controlBackground.opacity(0.7))
+
+                Divider()
+
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        if ids.isEmpty {
+                            Text("No shortcuts assigned")
+                                .font(SettingsTypography.help)
+                                .foregroundColor(Theme.secondaryText)
+                                .frame(maxWidth: .infinity, minHeight: 20)
+                        } else {
+                            ForEach(ids, id: \.self) { id in
+                                if let index = shortcutBindings.firstIndex(where: { $0.id == id }) {
+                                    shortcutBindingRow($shortcutBindings[index],
+                                                       selectedID: selectedID)
+                                }
+                            }
+                        }
+                    }
+                }
+                .frame(height: CGFloat(visibleRows * 20))
+
+                Divider()
+
+                HStack(spacing: 0) {
+                    ShortcutTableButton(kind: .add,
+                                         isEnabled: hasAvailableActions,
+                                         actions: availableShortcutActions(for: scope),
+                                         onSelect: { action in
+                                             addShortcutBinding(action, for: scope, selectedID: selectedID)
+                                         })
+                    .frame(width: 20, height: 20)
+                    .help("Add shortcut")
+
+                    ShortcutTableButton(kind: .remove,
+                                         isEnabled: selectedID.wrappedValue.map { ids.contains($0) } == true,
+                                         onClick: {
+                                             removeShortcutBinding(selectedID.wrappedValue, from: scope)
+                                         })
+                    .frame(width: 20, height: 20)
+                    .help("Remove selected shortcut")
+
+                    Spacer(minLength: 0)
+                }
+                .frame(height: 20)
+                .background(Theme.controlBackground.opacity(0.4))
+            }
+            .background(Theme.controlBackground.opacity(0.25))
+            .overlay(Rectangle().strokeBorder(Theme.controlBorder, lineWidth: 0.5))
         }
-        .font(SettingsTypography.help.weight(.semibold))
-        .foregroundColor(Theme.secondaryText)
-        .padding(.bottom, 2)
     }
 
-    private func enabledBinding(for action: ShortcutAction) -> Binding<Bool> {
+    private func availableShortcutActions(for scope: ShortcutScope) -> [ShortcutAction] {
+        let assigned = Set(shortcutBindings.compactMap { binding -> ShortcutAction? in
+            guard binding.scope == scope else { return nil }
+            return binding.action
+        })
+        return ShortcutAction.allCases.filter { !assigned.contains($0) }
+    }
+
+    private func shortcutBindingIDs(for scope: ShortcutScope) -> [UUID] {
+        shortcutBindings.filter { $0.scope == scope }.map(\.id)
+    }
+
+    private func shortcutBindingRow(_ binding: Binding<ShortcutBinding>,
+                                   selectedID: Binding<UUID?>) -> some View {
+        let id = binding.wrappedValue.id
+        return HStack(spacing: 0) {
+            Text(binding.wrappedValue.action?.title ?? "")
+                .font(SettingsTypography.body)
+                .foregroundColor(Theme.primaryText)
+                .frame(width: 300, alignment: .leading)
+                .contentShape(Rectangle())
+                .onTapGesture { selectedID.wrappedValue = id }
+
+            Spacer(minLength: 0)
+            Group {
+                if selectedID.wrappedValue == id {
+                    ShortcutRecorder(shortcut: shortcutBinding(for: id),
+                                     label: binding.wrappedValue.action?.title ?? "Shortcut",
+                                     showsRawValue: showRawShortcutValues,
+                                     onFocus: { selectedID.wrappedValue = id })
+                } else {
+                    Text(shortcutDisplayValue(binding.wrappedValue.shortcut))
+                        .font(.system(size: 11).monospaced())
+                        .foregroundColor(Theme.secondaryText)
+                        .lineLimit(1)
+                        .padding(.leading, 6)
+                        .contentShape(Rectangle())
+                        .onTapGesture { selectedID.wrappedValue = id }
+                }
+            }
+            .frame(width: 105, height: 20, alignment: .leading)
+            .padding(.leading, 10)
+        }
+        .padding(.horizontal, 10)
+        .frame(height: 20)
+        .background(selectedID.wrappedValue == id
+                    ? Theme.selectionFill.opacity(0.22)
+                    : Color.clear)
+        .contentShape(Rectangle())
+        .onTapGesture { selectedID.wrappedValue = id }
+    }
+
+    private func shortcutDisplayValue(_ shortcut: KeyboardShortcut?) -> String {
+        guard let shortcut else { return "" }
+        return showRawShortcutValues ? shortcut.rawValue : shortcut.display
+    }
+
+    private func shortcutBinding(for id: UUID) -> Binding<KeyboardShortcut?> {
         Binding(
-            get: { enabledShortcuts[action] ?? true },
-            set: { enabledShortcuts[action] = $0 }
+            get: { shortcutBindings.first(where: { $0.id == id })?.shortcut },
+            set: { shortcut in updateShortcut(shortcut, for: id) }
         )
     }
 
-    private func shortcutRow(_ action: ShortcutAction,
-                             enabled: Binding<Bool>,
-                             shortcut: Binding<KeyboardShortcut?>,
-                             scope: Binding<ShortcutScope>) -> some View {
-        HStack(spacing: 8) {
-            Toggle("", isOn: enabled)
-                .labelsHidden()
-                .toggleStyle(.checkbox)
-                .controlSize(.small)
-                .frame(width: 58)
-                .help("Enable or disable this shortcut")
-            Text(action.title)
-                .font(SettingsTypography.body)
-                .foregroundColor(enabled.wrappedValue ? Theme.primaryText : Theme.secondaryText)
-                .lineLimit(1)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            Toggle("", isOn: Binding(
-                get: { scope.wrappedValue == .systemWide },
-                set: { scope.wrappedValue = $0 ? .systemWide : .inApp }
-            ))
-            .labelsHidden()
-            .toggleStyle(.checkbox)
-            .controlSize(.small)
-            .frame(width: 100)
-            .help("Checked: system-wide. Unchecked: in-app.")
-            ShortcutRecorder(shortcut: shortcut, label: action.title)
-                .frame(width: 132, height: 22)
-            Button("Reset") { shortcut.wrappedValue = action.defaultShortcut }
-                .controlSize(.small)
-                .frame(width: 48, alignment: .trailing)
+    private func updateShortcut(_ shortcut: KeyboardShortcut?, for id: UUID) {
+        guard let index = shortcutBindings.firstIndex(where: { $0.id == id }) else { return }
+        if let shortcut,
+           let conflict = shortcutBindings.first(where: {
+               $0.id != id && $0.shortcut?.conflicts(with: shortcut) == true
+           }) {
+            alert = .shortcutConflict("\(shortcut.display) is already assigned to \(conflict.action?.title ?? "another action"). Choose another shortcut or remove that binding first.")
+            return
         }
+        shortcutBindings[index].shortcut = shortcut
+    }
+
+    private func addShortcutBinding(_ action: ShortcutAction,
+                                    for scope: ShortcutScope,
+                                    selectedID: Binding<UUID?>) {
+        guard !shortcutBindings.contains(where: { $0.scope == scope && $0.action == action }) else { return }
+        let binding = ShortcutBinding(action: action, shortcut: nil, scope: scope)
+        shortcutBindings.append(binding)
+        selectedID.wrappedValue = binding.id
+    }
+
+    private func removeShortcutBinding(_ id: UUID?, from scope: ShortcutScope) {
+        guard let id,
+              let position = shortcutBindingIDs(for: scope).firstIndex(of: id) else { return }
+        let rows = shortcutBindingIDs(for: scope)
+        let remaining = rows.filter { $0 != id }
+        let nextSelection = remaining.dropFirst(min(position, remaining.count)).first
+            ?? remaining.last
+        shortcutBindings.removeAll { $0.id == id }
+        if scope == .inApp { selectedInAppBindingID = nextSelection }
+        else { selectedSystemWideBindingID = nextSelection }
     }
 
     private var traySettings: some View {
@@ -1635,12 +1686,12 @@ enum KeyboardShortcuts {
             return nil
         }
 
+        let bindings = KeyboardShortcutStore.loadBindings()
         if !isEditingText {
-            for action in ShortcutAction.allCases
-                where KeyboardShortcutStore.scope(for: action) == .inApp
-                    && KeyboardShortcutStore.isEnabled(action) {
+            for binding in bindings where binding.scope == .inApp {
+                guard let action = binding.action else { continue }
                 if event.isARepeat, !action.allowsRepeat { continue }
-                guard let shortcut = KeyboardShortcutStore.load(action),
+                guard let shortcut = binding.shortcut,
                       shortcut.matches(event) else { continue }
                 action.perform()
                 return nil
@@ -1650,9 +1701,6 @@ enum KeyboardShortcuts {
         guard modifiers.isEmpty, !isEditingText else { return event }
 
         switch event.keyCode {
-        case 49: // space
-            PlayerState.shared.togglePlayPause()
-            return nil
         case 123: // left arrow
             KeyboardNavigator.shared.send(.left)
             return nil

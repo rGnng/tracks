@@ -28,9 +28,23 @@ struct KeyboardShortcut: Codable, Equatable {
     static let defaultMute = KeyboardShortcut(key: "m", modifiers: [], display: "M", keyCode: 46)
     static let defaultVolumeDown = KeyboardShortcut(key: "-", modifiers: [], display: "-", keyCode: 27)
     static let defaultVolumeUp = KeyboardShortcut(key: "=", modifiers: [], display: "=", keyCode: 24)
+    static let defaultPlayPause = KeyboardShortcut(key: "keyCode:49",
+                                                   modifiers: [],
+                                                   display: "Space",
+                                                   keyCode: 49)
 
     var modifierFlags: NSEvent.ModifierFlags {
         NSEvent.ModifierFlags(rawValue: modifiers)
+    }
+
+    var rawValue: String {
+        var components: [String] = []
+        if modifierFlags.contains(.control) { components.append("Ctrl") }
+        if modifierFlags.contains(.option) { components.append("Alt") }
+        if modifierFlags.contains(.shift) { components.append("Shift") }
+        if modifierFlags.contains(.command) { components.append("Cmd") }
+        components.append(key)
+        return components.joined(separator: "+")
     }
 
     init(key: String, modifiers: NSEvent.ModifierFlags, display: String, keyCode: UInt16? = nil) {
@@ -50,6 +64,17 @@ struct KeyboardShortcut: Codable, Equatable {
             return key == "keyCode:\(event.keyCode)"
         }
         return event.characters == key
+    }
+
+    func conflicts(with other: KeyboardShortcut) -> Bool {
+        let flags: NSEvent.ModifierFlags = [.command, .option, .control, .shift]
+        guard modifierFlags.intersection(flags) == other.modifierFlags.intersection(flags) else {
+            return false
+        }
+        if let keyCode, let otherKeyCode = other.keyCode, keyCode == otherKeyCode {
+            return true
+        }
+        return key == other.key
     }
 
     init?(event: NSEvent) {
@@ -126,7 +151,7 @@ struct KeyboardShortcut: Codable, Equatable {
     }
 }
 
-enum ShortcutScope: String, CaseIterable, Identifiable {
+enum ShortcutScope: String, CaseIterable, Identifiable, Codable {
     case inApp
     case systemWide
 
@@ -140,10 +165,13 @@ enum ShortcutScope: String, CaseIterable, Identifiable {
     }
 }
 
-enum ShortcutAction: String, CaseIterable, Identifiable {
+enum ShortcutAction: String, CaseIterable, Identifiable, Codable {
     case mute
     case volumeDown
     case volumeUp
+    case playPause
+    case nextTrack
+    case previousTrack
     case showHide
     case starCurrent
     case goToCurrentAlbum
@@ -155,17 +183,22 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
         case .mute: return "Mute"
         case .volumeDown: return "Volume down"
         case .volumeUp: return "Volume up"
+        case .playPause: return "Play / Pause"
+        case .nextTrack: return "Next Track"
+        case .previousTrack: return "Previous Track"
         case .showHide: return "Show or hide Library Window"
         case .starCurrent: return "Star/Unstar current playing"
         case .goToCurrentAlbum: return "Go to current album"
         }
     }
 
-    var defaultShortcut: KeyboardShortcut {
+    var defaultShortcut: KeyboardShortcut? {
         switch self {
         case .mute: return .defaultMute
         case .volumeDown: return .defaultVolumeDown
         case .volumeUp: return .defaultVolumeUp
+        case .playPause: return .defaultPlayPause
+        case .nextTrack, .previousTrack: return nil
         case .showHide: return .defaultShowHide
         case .starCurrent: return .defaultStarCurrent
         case .goToCurrentAlbum: return .defaultGoToCurrentAlbum
@@ -174,14 +207,15 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
 
     var defaultScope: ShortcutScope {
         switch self {
-        case .mute, .volumeDown, .volumeUp, .goToCurrentAlbum: return .inApp
+        case .mute, .volumeDown, .volumeUp, .playPause,
+             .nextTrack, .previousTrack, .goToCurrentAlbum: return .inApp
         case .showHide, .starCurrent: return .systemWide
         }
     }
 
     var allowsRepeat: Bool {
         switch self {
-        case .volumeDown, .volumeUp: return true
+        case .volumeDown, .volumeUp, .nextTrack, .previousTrack: return true
         default: return false
         }
     }
@@ -195,6 +229,12 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
             PlayerState.shared.stepDisplayVolume(up: false)
         case .volumeUp:
             PlayerState.shared.stepDisplayVolume(up: true)
+        case .playPause:
+            PlayerState.shared.togglePlayPause()
+        case .nextTrack:
+            PlayerState.shared.next()
+        case .previousTrack:
+            PlayerState.shared.previous()
         case .showHide:
             WindowModeCenter.shared.toggleWindowVisibility()
         case .starCurrent:
@@ -206,7 +246,35 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
     }
 }
 
+struct ShortcutBinding: Codable, Equatable, Identifiable {
+    var id: UUID
+    var action: ShortcutAction?
+    var shortcut: KeyboardShortcut?
+    var scope: ShortcutScope
+
+    init(id: UUID = UUID(),
+         action: ShortcutAction,
+         shortcut: KeyboardShortcut?,
+         scope: ShortcutScope) {
+        self.id = id
+        self.action = action
+        self.shortcut = shortcut
+        self.scope = scope
+    }
+
+    init(id: UUID = UUID(),
+         action: ShortcutAction?,
+         shortcut: KeyboardShortcut?,
+         scope: ShortcutScope) {
+        self.id = id
+        self.action = action
+        self.shortcut = shortcut
+        self.scope = scope
+    }
+}
+
 enum KeyboardShortcutStore {
+    private static let bindingsKey = "shortcut.bindings.v2"
     private static let showHideKey = "shortcut.showHideWindow.v1"
     private static let starKey = "shortcut.starCurrent.systemWide.v1"
     private static let legacyStarKey = "shortcut.starCurrent.global.v1"
@@ -217,6 +285,32 @@ enum KeyboardShortcutStore {
 
     private struct Setting: Codable {
         var shortcut: KeyboardShortcut?
+    }
+
+    static func loadBindings() -> [ShortcutBinding] {
+        let defaults = UserDefaults.standard
+        if let data = defaults.data(forKey: bindingsKey),
+           let bindings = try? JSONDecoder().decode([ShortcutBinding].self, from: data) {
+            let configured = bindings.filter { $0.action != nil }
+            if configured.count != bindings.count { saveBindings(configured) }
+            return configured
+        }
+
+        // Migrate the previous one-shortcut-per-action settings. Existing
+        // app-only Space playback is now an ordinary editable binding too.
+        let migrated = ShortcutAction.allCases.compactMap { action -> ShortcutBinding? in
+            guard isEnabled(action), let shortcut = load(action) else { return nil }
+            return ShortcutBinding(action: action,
+                                   shortcut: shortcut,
+                                   scope: scope(for: action))
+        }
+        saveBindings(migrated)
+        return migrated
+    }
+
+    static func saveBindings(_ bindings: [ShortcutBinding]) {
+        guard let data = try? JSONEncoder().encode(bindings) else { return }
+        UserDefaults.standard.set(data, forKey: bindingsKey)
     }
 
     static func loadShowHide() -> KeyboardShortcut? {
@@ -258,6 +352,8 @@ enum KeyboardShortcutStore {
         case .showHide: return loadShowHide()
         case .starCurrent: return loadStar()
         case .goToCurrentAlbum: return loadGoToAlbum()
+        case .playPause: return .defaultPlayPause
+        case .nextTrack, .previousTrack: return nil
         }
     }
 
@@ -269,6 +365,7 @@ enum KeyboardShortcutStore {
         case .showHide: saveShowHide(shortcut)
         case .starCurrent: saveStar(shortcut)
         case .goToCurrentAlbum: saveGoToAlbum(shortcut)
+        case .playPause, .nextTrack, .previousTrack: break
         }
     }
 
@@ -351,19 +448,25 @@ enum ShortcutRecorderState {
 struct ShortcutRecorder: NSViewRepresentable {
     @Binding var shortcut: KeyboardShortcut?
     var label: String = "Shortcut"
+    var showsRawValue = false
+    var onFocus: (() -> Void)? = nil
 
     func makeNSView(context: Context) -> ShortcutRecorderView {
         let view = ShortcutRecorderView()
         view.onChange = { shortcut = $0 }
+        view.onFocus = onFocus
         view.setAccessibilityLabel(label)
         view.setShortcut(shortcut)
+        view.setShowsRawValue(showsRawValue)
         return view
     }
 
     func updateNSView(_ view: ShortcutRecorderView, context: Context) {
         view.onChange = { shortcut = $0 }
+        view.onFocus = onFocus
         view.setAccessibilityLabel(label)
         view.setShortcut(shortcut)
+        view.setShowsRawValue(showsRawValue)
     }
 
     static func dismantleNSView(_ view: ShortcutRecorderView, coordinator: ()) {
@@ -372,10 +475,12 @@ struct ShortcutRecorder: NSViewRepresentable {
 }
 
 @MainActor
-final class ShortcutRecorderView: NSView {
+final class ShortcutRecorderView: NSButton {
     var onChange: ((KeyboardShortcut?) -> Void)?
+    var onFocus: (() -> Void)?
 
     private(set) var shortcut: KeyboardShortcut?
+    private var showsRawValue = false
     private var previousShortcut: KeyboardShortcut?
     private var isRecording = false
     private var resignObserver: NSObjectProtocol?
@@ -392,11 +497,17 @@ final class ShortcutRecorderView: NSView {
 
     private func configure() {
         focusRingType = .default
+        bezelStyle = .rounded
+        isBordered = true
+        alignment = .left
+        setButtonType(.momentaryPushIn)
+        font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
         toolTip = "Click, then press a key combination."
+        setAccessibilityElement(true)
         setAccessibilityRole(.button)
         setAccessibilityLabel("Shortcut")
         setAccessibilityHelp("Click, then press a key combination.")
-        setShortcut(nil)
+        refreshDisplay()
     }
 
     override var acceptsFirstResponder: Bool { true }
@@ -426,11 +537,19 @@ final class ShortcutRecorderView: NSView {
     func setShortcut(_ value: KeyboardShortcut?) {
         guard !isRecording else { return }
         shortcut = value
-        needsDisplay = true
+        refreshDisplay()
+        updateAccessibilityValue()
+    }
+
+    func setShowsRawValue(_ value: Bool) {
+        guard showsRawValue != value else { return }
+        showsRawValue = value
+        refreshDisplay()
         updateAccessibilityValue()
     }
 
     override func becomeFirstResponder() -> Bool {
+        onFocus?()
         if !isRecording {
             beginRecording()
         }
@@ -475,7 +594,7 @@ final class ShortcutRecorderView: NSView {
         previousShortcut = shortcut
         isRecording = true
         ShortcutRecorderState.isRecording = true
-        needsDisplay = true
+        refreshDisplay()
         updateAccessibilityValue()
     }
 
@@ -484,7 +603,7 @@ final class ShortcutRecorderView: NSView {
         onChange?(value)
         isRecording = false
         ShortcutRecorderState.isRecording = false
-        needsDisplay = true
+        refreshDisplay()
         updateAccessibilityValue()
     }
 
@@ -492,13 +611,22 @@ final class ShortcutRecorderView: NSView {
         shortcut = previousShortcut
         isRecording = false
         ShortcutRecorderState.isRecording = false
-        needsDisplay = true
+        refreshDisplay()
         updateAccessibilityValue()
     }
 
     private func updateAccessibilityValue() {
-        let value = isRecording ? "Recording" : (shortcut?.display ?? "None")
+        let value = isRecording ? "Recording" : (displayValue ?? "None")
         setAccessibilityValue(value)
+    }
+
+    private var displayValue: String? {
+        guard let shortcut else { return nil }
+        return showsRawValue ? shortcut.rawValue : shortcut.display
+    }
+
+    private func refreshDisplay() {
+        title = isRecording ? "Type shortcut" : (displayValue ?? "None")
     }
 
     func tearDownRecording() {
@@ -507,38 +635,113 @@ final class ShortcutRecorderView: NSView {
         ShortcutRecorderState.isRecording = false
     }
 
-    override var focusRingMaskBounds: NSRect { bounds }
+}
 
-    override func drawFocusRingMask() {
-        NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5),
-                     xRadius: 5, yRadius: 5).fill()
+@MainActor
+struct ShortcutTableButton: NSViewRepresentable {
+    enum Kind: Equatable {
+        case add
+        case remove
+
+        var imageName: String {
+            switch self {
+            case .add: return "NSAddTemplate"
+            case .remove: return "NSRemoveTemplate"
+            }
+        }
+
+        var accessibilityLabel: String {
+            switch self {
+            case .add: return "Add shortcut"
+            case .remove: return "Remove selected shortcut"
+            }
+        }
     }
 
-    override func draw(_ dirtyRect: NSRect) {
-        let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5),
-                                xRadius: 5, yRadius: 5)
-        NSColor.controlBackgroundColor.setFill()
-        path.fill()
-        (isRecording ? HighlightColor.current.nsColor : NSColor.separatorColor).setStroke()
-        path.lineWidth = isRecording ? 1.5 : 1
-        path.stroke()
+    let kind: Kind
+    var isEnabled = true
+    var actions: [ShortcutAction] = []
+    var onSelect: ((ShortcutAction) -> Void)? = nil
+    var onClick: (() -> Void)? = nil
 
-        let text = isRecording ? "Type shortcut" : (shortcut?.display ?? "None")
-        let style = NSMutableParagraphStyle()
-        style.alignment = .center
-        style.lineBreakMode = .byTruncatingTail
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular),
-            .foregroundColor: shortcut == nil && !isRecording
-                ? NSColor.secondaryLabelColor
-                : NSColor.labelColor,
-            .paragraphStyle: style,
-        ]
-        let size = text.size(withAttributes: attributes)
-        let rect = NSRect(x: 5,
-                          y: (bounds.height - size.height) / 2,
-                          width: bounds.width - 10,
-                          height: size.height)
-        text.draw(in: rect, withAttributes: attributes)
+    func makeCoordinator() -> Coordinator {
+        Coordinator(kind: kind,
+                    actions: actions,
+                    onSelect: onSelect,
+                    onClick: onClick)
+    }
+
+    func makeNSView(context: Context) -> NSButton {
+        let button = NSButton(frame: .zero)
+        button.bezelStyle = .shadowlessSquare
+        button.isBordered = true
+        button.setButtonType(.momentaryPushIn)
+        button.imagePosition = .imageOnly
+        button.image = NSImage(named: NSImage.Name(kind.imageName))
+        button.image?.isTemplate = true
+        button.target = context.coordinator
+        button.action = #selector(Coordinator.activate(_:))
+        button.setAccessibilityElement(true)
+        button.setAccessibilityRole(.button)
+        button.setAccessibilityLabel(kind.accessibilityLabel)
+        update(button, coordinator: context.coordinator)
+        return button
+    }
+
+    func updateNSView(_ button: NSButton, context: Context) {
+        update(button, coordinator: context.coordinator)
+    }
+
+    private func update(_ button: NSButton, coordinator: Coordinator) {
+        coordinator.actions = actions
+        coordinator.onSelect = onSelect
+        coordinator.onClick = onClick
+        button.isEnabled = isEnabled
+    }
+
+    @MainActor
+    final class Coordinator: NSObject {
+        let kind: Kind
+        var actions: [ShortcutAction]
+        var onSelect: ((ShortcutAction) -> Void)?
+        var onClick: (() -> Void)?
+
+        init(kind: Kind,
+             actions: [ShortcutAction],
+             onSelect: ((ShortcutAction) -> Void)?,
+             onClick: (() -> Void)?) {
+            self.kind = kind
+            self.actions = actions
+            self.onSelect = onSelect
+            self.onClick = onClick
+        }
+
+        @objc func activate(_ sender: NSButton) {
+            guard sender.isEnabled else { return }
+            guard kind == .add else {
+                onClick?()
+                return
+            }
+
+            let menu = NSMenu()
+            for action in actions {
+                let item = NSMenuItem(title: action.title,
+                                      action: #selector(selectAction(_:)),
+                                      keyEquivalent: "")
+                item.target = self
+                item.representedObject = action.rawValue
+                menu.addItem(item)
+            }
+            guard !menu.items.isEmpty else { return }
+            menu.popUp(positioning: nil,
+                       at: NSPoint(x: 0, y: sender.bounds.height),
+                       in: sender)
+        }
+
+        @objc private func selectAction(_ sender: NSMenuItem) {
+            guard let rawValue = sender.representedObject as? String,
+                  let action = ShortcutAction(rawValue: rawValue) else { return }
+            onSelect?(action)
+        }
     }
 }

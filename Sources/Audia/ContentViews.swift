@@ -744,7 +744,7 @@ private struct AlbumTrackRow: View {
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundColor(isSelected ? Theme.highlightForeground : Theme.highlight)
                 } else {
-                    Text("\(song.trackNumber)")
+                    Text(song.trackNumberLabel)
                         .font(.system(size: 12))
                         .foregroundColor(isSelected ? Theme.highlightForeground.opacity(0.85) : Theme.secondaryText)
                 }
@@ -1815,7 +1815,7 @@ struct SongTable: View {
         let selected = selectedIDs.contains(song.id)
         switch column {
         case .track:
-            textCell("\(song.trackNumber)", selected: selected)
+            textCell(song.trackNumberLabel, selected: selected)
                 .frame(width: width(of: .track), alignment: .trailing)
         case .name:
             HStack(spacing: 0) {

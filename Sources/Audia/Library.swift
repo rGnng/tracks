@@ -65,9 +65,10 @@ struct LibraryRelocationPlan {
     let additionalFileCount: Int
 }
 
-enum ScanPhase {
-    case scan
-    case parsing
+enum ScanPhase: String, Equatable, Sendable {
+    case findingFiles = "Finding files"
+    case readingMetadata = "Reading metadata"
+    case updatingLibrary = "Updating library"
 }
 
 /// SQLite-backed music library modeled on iTunes.
@@ -102,9 +103,19 @@ final class Library: ObservableObject {
     @Published private(set) var scanCompleted = 0
     @Published private(set) var scanTotal = 0
     @Published private(set) var scanProgress: Double = 0
-    @Published private(set) var scanPhase: ScanPhase = .scan
+    @Published private(set) var scanPhase: ScanPhase = .findingFiles
     @Published var openWarning: String?
     @Published private(set) var scanError: String?
+
+    var scanActivityProgress: Double? {
+        guard scanPhase == .readingMetadata, scanTotal > 0 else { return nil }
+        return scanProgress
+    }
+
+    var scanActivityDetail: String? {
+        guard scanPhase == .readingMetadata, scanTotal > 0 else { return nil }
+        return "\(scanCompleted)/\(scanTotal) files"
+    }
 
     private let db: LibraryDatabase
     private var scanTask: Task<Void, Never>?
@@ -533,19 +544,11 @@ final class Library: ObservableObject {
         let known = force ? [:] : db.knownFiles()
         isScanning = true
         scanError = nil
-        scanPhase = .scan
+        scanPhase = .findingFiles
         scanCompleted = 0
         scanTotal = 0
         scanProgress = 0
-        let progress: @Sendable (Int, Int) -> Void = { [weak self] completed, total in
-            Task { @MainActor in
-                guard let self else { return }
-                if total > 0 { self.scanPhase = .parsing }
-                self.scanCompleted = completed
-                self.scanTotal = total
-                self.scanProgress = total > 0 ? Double(completed) / Double(total) : 0
-            }
-        }
+        let progress = makeProgressHandler()
 
         scanTask = Task { [weak self] in
             let result = await Task.detached(priority: .userInitiated) {
@@ -561,6 +564,7 @@ final class Library: ObservableObject {
                 self.isScanning = false
                 return
             }
+            self.beginLibraryUpdate()
             let artwork = self.db.sync(tracks: result.tracks,
                                        internalMusicRoot: self.internalLibrary?.musicPath,
                                        libraries: libraries)
@@ -585,19 +589,11 @@ final class Library: ObservableObject {
         let known = db.knownFiles()
         isScanning = true
         scanError = nil
-        scanPhase = .scan
+        scanPhase = .findingFiles
         scanCompleted = 0
         scanTotal = 0
         scanProgress = 0
-        let progress: @Sendable (Int, Int) -> Void = { [weak self] completed, total in
-            Task { @MainActor in
-                guard let self else { return }
-                if total > 0 { self.scanPhase = .parsing }
-                self.scanCompleted = completed
-                self.scanTotal = total
-                self.scanProgress = total > 0 ? Double(completed) / Double(total) : 0
-            }
-        }
+        let progress = makeProgressHandler()
 
         scanTask = Task { [weak self] in
             let result = await Task.detached(priority: .userInitiated) {
@@ -613,6 +609,7 @@ final class Library: ObservableObject {
                 self.isScanning = false
                 return
             }
+            self.beginLibraryUpdate()
             let artwork = self.db.sync(tracks: result.tracks,
                                        internalMusicRoot: self.internalLibrary?.musicPath,
                                        libraries: self.enabledLibraries)
@@ -632,7 +629,7 @@ final class Library: ObservableObject {
         let known = db.knownFiles()
         isScanning = true
         scanError = nil
-        scanPhase = .scan
+        scanPhase = .findingFiles
         scanCompleted = 0
         scanTotal = 0
         scanProgress = 0
@@ -653,6 +650,7 @@ final class Library: ObservableObject {
             return nil
         }
 
+        beginLibraryUpdate()
         let artwork = db.sync(tracks: result.tracks,
                               internalMusicRoot: internalLibrary?.musicPath,
                               libraries: enabledLibraries)
@@ -699,7 +697,7 @@ final class Library: ObservableObject {
         let known = db.knownFiles()
         isScanning = true
         scanError = nil
-        scanPhase = .scan
+        scanPhase = .findingFiles
         scanCompleted = 0
         scanTotal = 0
         scanProgress = 0
@@ -719,6 +717,8 @@ final class Library: ObservableObject {
             return nil
         }
 
+        // Relocation preview only compares paths; it does not update the
+        // library until the user confirms the plan.
         let paths = db.songPaths(forLibrary: location.id)
         let foundPaths = Set(result.discoveredFiles.keys.map(canonicalPath))
         let matching = LibraryRelocationMatcher.match(
@@ -755,6 +755,7 @@ final class Library: ObservableObject {
             throw LibraryDatabaseError.transactionFailed("The relocation preview is no longer valid.")
         }
         isScanning = true
+        beginLibraryUpdate()
         defer { isScanning = false }
         let backupURL = try db.backup()
         let validMissingIDs = Set(report.songs.map(\.id)).intersection(removingMissingIDs)
@@ -790,16 +791,25 @@ final class Library: ObservableObject {
         ([internalLibrary].compactMap { $0 } + externalLibraries).filter(\.isEnabled)
     }
 
-    private func makeProgressHandler() -> @Sendable (Int, Int) -> Void {
-        { [weak self] completed, total in
-            Task { @MainActor in
+    private func makeProgressHandler() -> @Sendable (ScanPhase, Int, Int) async -> Void {
+        { [weak self] phase, completed, total in
+            await MainActor.run {
                 guard let self else { return }
-                if total > 0 { self.scanPhase = .parsing }
+                self.scanPhase = phase
                 self.scanCompleted = completed
                 self.scanTotal = total
-                self.scanProgress = total > 0 ? Double(completed) / Double(total) : 0
+                self.scanProgress = phase == .readingMetadata && total > 0
+                    ? Double(completed) / Double(total)
+                    : 0
             }
         }
+    }
+
+    private func beginLibraryUpdate() {
+        scanPhase = .updatingLibrary
+        scanCompleted = 0
+        scanTotal = 0
+        scanProgress = 0
     }
 
     private func reload() {

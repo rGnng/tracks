@@ -500,9 +500,10 @@ enum LibraryScanner {
     static func scan(folders: [String],
                      known: [String: KnownFile] = [:],
                      mode: LibraryScanMode = .full,
-                     progress: (@Sendable (Int, Int) -> Void)? = nil) async -> LibraryScanResult {
+                     progress: (@Sendable (ScanPhase, Int, Int) async -> Void)? = nil) async -> LibraryScanResult {
+        await progress?(.findingFiles, 0, 0)
         let enumeration = enumerateFiles(folders: folders, known: known, mode: mode)
-        progress?(0, enumeration.pending.count)
+        await progress?(.readingMetadata, 0, enumeration.pending.count)
 
         // AVAsset metadata loading is asynchronous. Process a small batch at a
         // time so a large MP3/M4A library does not create hundreds of parallel
@@ -542,7 +543,7 @@ enum LibraryScanner {
                     errors.append("Could not read media metadata: \(batch[offset].path)")
                 }
             }
-            progress?(index, enumeration.pending.count)
+            await progress?(.readingMetadata, index, enumeration.pending.count)
         }
         return LibraryScanResult(tracks: tracks,
                                  discoveredFiles: enumeration.discoveredFiles,

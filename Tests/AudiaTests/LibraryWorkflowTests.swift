@@ -3,6 +3,56 @@ import SQLite3
 @testable import Audia
 
 final class LibraryWorkflowTests: XCTestCase {
+    func testBlankTrackNumberHasNoDisplayLabel() {
+        let unnumbered = Song(title: "Untitled", artist: "Artist", album: "Album",
+                              genre: "", duration: 0, trackNumber: 0, plays: 0)
+        let numbered = Song(title: "Numbered", artist: "Artist", album: "Album",
+                            genre: "", duration: 0, trackNumber: 7, plays: 0)
+
+        XCTAssertEqual(unnumbered.trackNumberLabel, "")
+        XCTAssertEqual(numbered.trackNumberLabel, "7")
+    }
+
+    func testShortcutBindingPersistsActionScopeAndShortcut() throws {
+        let binding = ShortcutBinding(
+            action: .nextTrack,
+            shortcut: KeyboardShortcut(key: "n", modifiers: [], display: "N", keyCode: 45),
+            scope: .systemWide
+        )
+        let emptyRow = ShortcutBinding(action: nil, shortcut: nil, scope: .inApp)
+        let bindings = [binding, emptyRow]
+        let data = try JSONEncoder().encode(bindings)
+        let restored = try JSONDecoder().decode([ShortcutBinding].self, from: data)
+
+        XCTAssertEqual(restored, bindings)
+    }
+
+    func testSameActionCanHaveIndependentBindingsInBothScopes() throws {
+        let inApp = ShortcutBinding(
+            action: .mute,
+            shortcut: KeyboardShortcut(key: "m", modifiers: [], display: "M", keyCode: 46),
+            scope: .inApp
+        )
+        let systemWide = ShortcutBinding(
+            action: .mute,
+            shortcut: KeyboardShortcut(key: "keyCode:80", modifiers: [], display: "F19", keyCode: 80),
+            scope: .systemWide
+        )
+        let data = try JSONEncoder().encode([inApp, systemWide])
+        let restored = try JSONDecoder().decode([ShortcutBinding].self, from: data)
+
+        XCTAssertEqual(restored, [inApp, systemWide])
+    }
+
+    func testShortcutConflictUsesPhysicalKeyAndModifiers() {
+        let plainN = KeyboardShortcut(key: "n", modifiers: [], display: "N", keyCode: 45)
+        let alternateLayoutN = KeyboardShortcut(key: "ñ", modifiers: [], display: "Ñ", keyCode: 45)
+        let commandN = KeyboardShortcut(key: "n", modifiers: [.command], display: "⌘N", keyCode: 45)
+
+        XCTAssertTrue(plainN.conflicts(with: alternateLayoutN))
+        XCTAssertFalse(plainN.conflicts(with: commandN))
+    }
+
     @MainActor
     func testDisablePreservesStoredPlaylistAndReenableRestoresTrack() throws {
         let fixture = try makeFixture()
@@ -262,6 +312,32 @@ final class LibraryWorkflowTests: XCTestCase {
         XCTAssertFalse(unavailable.isComplete)
     }
 
+    func testScannerReportsFindingAndMetadataPhasesInOrder() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        let root = fixture.appendingPathComponent("media", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try makeWaveFile().write(to: root.appendingPathComponent("one.wav"))
+        let recorder = ScanProgressRecorder()
+
+        let result = await LibraryScanner.scan(folders: [root.path], mode: .quick) {
+            phase, completed, total in
+            await recorder.record(phase: phase, completed: completed, total: total)
+        }
+
+        XCTAssertTrue(result.isComplete)
+        let events = await recorder.events
+        XCTAssertEqual(events.map(\.phase), [
+            .findingFiles,
+            .readingMetadata,
+            .readingMetadata,
+        ])
+        XCTAssertEqual(events[1].completed, 0)
+        XCTAssertEqual(events[1].total, 1)
+        XCTAssertEqual(events[2].completed, 1)
+        XCTAssertEqual(events[2].total, 1)
+    }
+
     func testFullScanDetectsSizeChangeEvenWhenModificationTimeMatches() async throws {
         let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture) }
@@ -431,5 +507,19 @@ private extension Data {
     mutating func appendLE(_ value: UInt32) {
         var littleEndian = value.littleEndian
         Swift.withUnsafeBytes(of: &littleEndian) { append(contentsOf: $0) }
+    }
+}
+
+private actor ScanProgressRecorder {
+    struct Event: Sendable {
+        let phase: ScanPhase
+        let completed: Int
+        let total: Int
+    }
+
+    private(set) var events: [Event] = []
+
+    func record(phase: ScanPhase, completed: Int, total: Int) {
+        events.append(Event(phase: phase, completed: completed, total: total))
     }
 }

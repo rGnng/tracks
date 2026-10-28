@@ -82,6 +82,8 @@ struct Song: Identifiable, Hashable {
     }
 
     var yearNumber: Int { Self.yearNumber(from: year) }
+    var trackNumberLabel: String { trackNumber > 0 ? String(trackNumber) : "" }
+
     fileprivate static func yearNumber(from value: String) -> Int {
         Int(value.prefix(4)) ?? 0
     }
