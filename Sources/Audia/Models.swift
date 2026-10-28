@@ -322,16 +322,7 @@ enum ViewPositionStore {
     }
 
     static func viewportAnchorID(for name: String) -> String? {
-        let defaults = UserDefaults.standard
-        if let value = defaults.string(forKey: viewportAnchorKey(name)) {
-            return value
-        }
-        // Migrate the old, ambiguously named `.top` key once.
-        let legacyKey = "viewPosition.\(name).top"
-        guard let legacy = defaults.string(forKey: legacyKey) else { return nil }
-        defaults.set(legacy, forKey: viewportAnchorKey(name))
-        defaults.removeObject(forKey: legacyKey)
-        return legacy
+        UserDefaults.standard.string(forKey: viewportAnchorKey(name))
     }
 
     static func setViewportAnchorID(_ id: String?, for name: String) {
@@ -341,7 +332,6 @@ enum ViewPositionStore {
         } else {
             defaults.removeObject(forKey: viewportAnchorKey(name))
         }
-        defaults.removeObject(forKey: "viewPosition.\(name).top")
     }
 
     static func selectionID(for name: String) -> String? {

@@ -158,10 +158,7 @@ final class AudioDevices: ObservableObject {
     static let shared = AudioDevices()
 
     private static let selectionKey = "audioOutputSelection"
-    private static let legacyUIDKey = "audioOutputDeviceUID"
-    private static let legacyVolumeControlKey = "mpd.systemVolume"
     static let systemDefaultID = "system-default"
-    static let systemDefaultVolumeControlID = "system-default-volume-control"
 
     @Published private(set) var devices: [AudioOutputDevice] = []
     @Published private(set) var selectedID: String
@@ -197,15 +194,10 @@ final class AudioDevices: ObservableObject {
 
     private init() {
         let defaults = UserDefaults.standard
-        let legacyUID = defaults.string(forKey: Self.legacyUIDKey)
-        let legacyVolumeControl = defaults.bool(forKey: Self.legacyVolumeControlKey)
         let initialID = defaults.string(forKey: Self.selectionKey)
-            ?? legacyUID
-            ?? (legacyVolumeControl ? Self.systemDefaultVolumeControlID : Self.systemDefaultID)
+            ?? Self.systemDefaultID
         selectedID = initialID
         defaults.set(initialID, forKey: Self.selectionKey)
-        defaults.removeObject(forKey: Self.legacyUIDKey)
-        defaults.removeObject(forKey: Self.legacyVolumeControlKey)
 
         refresh()
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
