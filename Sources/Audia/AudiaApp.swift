@@ -514,8 +514,8 @@ struct SettingsView: View {
                 Spacer()
                 Toggle("Display raw values", isOn: $showRawShortcutValues)
                     .toggleStyle(.checkbox)
-                    .controlSize(.mini)
-                    .font(.system(size: 9))
+                    .controlSize(.small)
+                    .font(SettingsTypography.help)
                     .padding(.trailing, 6)
             }
         }
