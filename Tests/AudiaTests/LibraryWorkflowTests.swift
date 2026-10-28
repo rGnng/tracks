@@ -345,6 +345,12 @@ final class LibraryWorkflowTests: XCTestCase {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let audio = root.appendingPathComponent("size-change.wav")
         try makeWaveFile(seconds: 1).write(to: audio)
+        // Use a whole-second timestamp so the filesystem round-trip after
+        // rewriting the file cannot change sub-second precision.
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date(timeIntervalSince1970: 1_700_000_000)],
+            ofItemAtPath: audio.path
+        )
         let originalAttributes = try FileManager.default.attributesOfItem(atPath: audio.path)
         let originalDate = try XCTUnwrap(originalAttributes[.modificationDate] as? Date)
         let originalSize = try XCTUnwrap(originalAttributes[.size] as? NSNumber).int64Value
