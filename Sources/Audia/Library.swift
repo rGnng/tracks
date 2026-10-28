@@ -179,7 +179,6 @@ final class Library: ObservableObject {
         }
 
         externalLibraries = db.loadLibraries().filter { $0.kind == .external }
-        db.assignUnownedSongs(to: [internalLibrary].compactMap { $0 } + externalLibraries)
     }
 
     // MARK: Setup state
@@ -286,7 +285,6 @@ final class Library: ObservableObject {
 
         if added {
             externalLibraries = db.loadLibraries().filter { $0.kind == .external }
-            db.assignUnownedSongs(to: [internalLibrary].compactMap { $0 } + externalLibraries)
             rescanAll()
         }
         return errors
@@ -337,7 +335,6 @@ final class Library: ObservableObject {
         let backupURL = try db.backup()
         try db.deleteLibraryAndSongs(id: id)
         externalLibraries = db.loadLibraries().filter { $0.kind == .external }
-        db.assignUnownedSongs(to: [internalLibrary].compactMap { $0 } + externalLibraries)
         reload()
         return backupURL
     }
@@ -377,7 +374,6 @@ final class Library: ObservableObject {
         let library = db.ensureLibrary(path: path, kind: .internalLibrary, name: displayName(for: path))
         internalLibrary = library
         externalLibraries = db.loadLibraries().filter { $0.kind == .external }
-        db.assignUnownedSongs(to: [library] + externalLibraries)
         reload()
         rescanAll()
     }
@@ -450,7 +446,6 @@ final class Library: ObservableObject {
             UserDefaults.standard.removeObject(forKey: Self.setupDismissedKey)
             internalLibrary = opened
             externalLibraries = db.loadLibraries().filter { $0.kind == .external }
-            db.assignUnownedSongs(to: [opened] + externalLibraries)
 
             if switchingDatabase {
                 PlayerState.shared.stopAndClear()
@@ -764,7 +759,6 @@ final class Library: ObservableObject {
                                songPaths: plan.matchedSongPaths,
                                removingSongIDs: validMissingIDs)
         externalLibraries = db.loadLibraries().filter { $0.kind == .external }
-        db.assignUnownedSongs(to: [internalLibrary].compactMap { $0 } + externalLibraries)
         let artwork = db.sync(tracks: plan.scannedTracks,
                               internalMusicRoot: internalLibrary?.musicPath,
                               libraries: enabledLibraries)

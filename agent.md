@@ -93,9 +93,8 @@ If no Internal Library exists, the fallback database path is
   backfilled from `playlists.date_created + position`.
 - `player_queue` is a singleton table (`id = 1`). `queue_entries` and
   `base_queue_entries` store JSON arrays of `{id, songID}` queue-entry records;
-  `next_queue_id` persists the monotonic MPD-ID allocator. The legacy
-  `queue_ids` / `base_queue_ids` columns are still written for compatibility
-  and are used only to seed entries when the new columns are empty.
+  `next_queue_id` persists the monotonic MPD-ID allocator. Older queue columns
+  are not read or written.
 - `PRAGMA user_version = 1` remains as an inert legacy value; no code reads it.
 - Do not clear playback history, play counts, stars, playlists, or user window
   preferences while testing.
@@ -215,8 +214,8 @@ Important schema decisions:
 - `songs.library_id` identifies the owning source; `libraries.enabled` controls
   whether its songs appear in the normal library and playlists. Disabling does
   not delete or rewrite songs or playlist items.
-- Existing databases migrate `libraries.enabled` and `songs.library_id`; legacy
-  song ownership is backfilled from the configured scan roots.
+- `createSchema()` defines the only supported schema. Old library databases
+  missing current columns are not migrated.
 - `playlists.date_modified` is maintained for MPD `Last-Modified`.
 - `playlist_items` has a primary key on `(playlist_id, song_id)`, so a stored
   playlist cannot contain duplicate copies of the same song.
@@ -784,17 +783,15 @@ by AppKit's title-bar layout pass.
   frame/layout pass. Keep the nudge restricted to initial setup and mode
   changes; never run it from a key/activation notification.
 
-## 11. Schema migrations
+## 11. Schema policy
 
 - `createSchema()` creates the current tables and columns for new libraries.
-- `migratePlaylistItemAddTimes()` adds `playlist_items.added_at` to older
-  libraries and backfills missing values from playlist creation time + position.
-- `player_queue` is created with `CREATE TABLE IF NOT EXISTS`.
-  `migratePlayerQueueColumns()` adds `queue_entries`, `base_queue_entries`, and
-  `next_queue_id` to older queue tables. Existing `queue_ids` rows are converted
-  to sequential entry IDs on first load, then the new columns are written.
+- There are no runtime schema migrations. Old databases missing current columns
+  (or still using the old queue columns) are not supported.
 - Only `shortcut.bindings.v2` is read; legacy per-action shortcut keys and
   shortcut formats are ignored.
+- If a schema change is needed later, introduce a versioned migration from this
+  baseline rather than adding another compatibility fallback.
 
 ## 12. Key pitfalls and rules
 

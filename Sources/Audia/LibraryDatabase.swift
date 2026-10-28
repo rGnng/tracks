@@ -301,8 +301,6 @@ final class LibraryDatabase {
         );
         CREATE TABLE IF NOT EXISTS player_queue (
             id INTEGER PRIMARY KEY CHECK (id = 1),
-            queue_ids TEXT NOT NULL,
-            base_queue_ids TEXT NOT NULL,
             queue_entries TEXT NOT NULL DEFAULT '[]',
             base_queue_entries TEXT NOT NULL DEFAULT '[]',
             next_queue_id INTEGER NOT NULL DEFAULT 1,
@@ -314,76 +312,6 @@ final class LibraryDatabase {
         CREATE INDEX IF NOT EXISTS idx_songs_artist ON songs(artist_id);
         CREATE INDEX IF NOT EXISTS idx_songs_library ON songs(library_id);
         CREATE INDEX IF NOT EXISTS idx_playlist_items ON playlist_items(playlist_id, position);
-        """)
-        migrateLibraryColumns()
-        migratePlaylistItemAddTimes()
-        migratePlayerQueueColumns()
-    }
-
-    private func migratePlayerQueueColumns() {
-        if !tableHasColumn("player_queue", column: "queue_entries") {
-            exec("ALTER TABLE player_queue ADD COLUMN queue_entries TEXT NOT NULL DEFAULT '[]';")
-        }
-        if !tableHasColumn("player_queue", column: "base_queue_entries") {
-            exec("ALTER TABLE player_queue ADD COLUMN base_queue_entries TEXT NOT NULL DEFAULT '[]';")
-        }
-        if !tableHasColumn("player_queue", column: "next_queue_id") {
-            exec("ALTER TABLE player_queue ADD COLUMN next_queue_id INTEGER NOT NULL DEFAULT 1;")
-        }
-    }
-
-    private func migrateLibraryColumns() {
-        if !tableHasColumn("libraries", column: "enabled") {
-            exec("ALTER TABLE libraries ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1;")
-        }
-        if !tableHasColumn("songs", column: "library_id") {
-            exec("ALTER TABLE songs ADD COLUMN library_id TEXT;")
-        }
-        exec("CREATE INDEX IF NOT EXISTS idx_songs_library ON songs(library_id);")
-        exec("CREATE INDEX IF NOT EXISTS idx_songs_album ON songs(album_id);")
-        exec("CREATE INDEX IF NOT EXISTS idx_songs_artist ON songs(artist_id);")
-        exec("CREATE INDEX IF NOT EXISTS idx_playlist_items ON playlist_items(playlist_id, position);")
-    }
-
-    private func tableHasColumn(_ table: String, column: String) -> Bool {
-        guard let stmt = prepare("PRAGMA table_info(\(table))") else { return false }
-        defer { sqlite3_finalize(stmt) }
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            if text(stmt, 1) == column { return true }
-        }
-        return false
-    }
-
-    /// Adds the per-playlist-item add timestamp to existing databases. Older
-    /// rows did not record a real add time, so their timestamps are backfilled
-    /// from the playlist creation time plus the stored position. This keeps the
-    /// current playlist order intact for the initial Add Seq display.
-    private func migratePlaylistItemAddTimes() {
-        var hasAddedAt = false
-        if let stmt = prepare("PRAGMA table_info(playlist_items)") {
-            while sqlite3_step(stmt) == SQLITE_ROW {
-                if text(stmt, 1) == "added_at" {
-                    hasAddedAt = true
-                    break
-                }
-            }
-            sqlite3_finalize(stmt)
-        }
-
-        if !hasAddedAt {
-            exec("ALTER TABLE playlist_items ADD COLUMN added_at REAL NOT NULL DEFAULT 0;")
-        }
-
-        exec("""
-        UPDATE playlist_items
-        SET added_at = COALESCE(
-            NULLIF((SELECT p.date_created FROM playlists p
-                    WHERE p.id = playlist_items.playlist_id), 0),
-            NULLIF((SELECT p.date_modified FROM playlists p
-                    WHERE p.id = playlist_items.playlist_id), 0),
-            CAST(strftime('%s','now') AS REAL)
-        ) + position
-        WHERE added_at <= 0;
         """)
     }
 
@@ -585,36 +513,6 @@ final class LibraryDatabase {
         guard result == SQLITE_DONE else {
             throw LibraryDatabaseError.transactionFailed(databaseErrorMessage)
         }
-    }
-
-    /// Backfills ownership for pre-library_id databases using each library's scan root.
-    func assignUnownedSongs(to libraries: [MusicLibrary]) {
-        guard !libraries.isEmpty,
-              let stmt = prepare("SELECT id, path, library_id FROM songs") else { return }
-        var updates: [(songID: String, libraryID: String)] = []
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            guard let songID = text(stmt, 0), let storedPath = text(stmt, 1) else { continue }
-            let currentLibraryID = text(stmt, 2)
-            let songPath = canonicalPath(storedPath)
-            let owner = libraries
-                .map { (library: $0, root: canonicalPath($0.scanPath)) }
-                .filter { isUnder(songPath, root: $0.root) }
-                .max { $0.root.count < $1.root.count }
-            if let owner, currentLibraryID != owner.library.id.uuidString {
-                updates.append((songID, owner.library.id.uuidString))
-            }
-        }
-        sqlite3_finalize(stmt)
-        guard !updates.isEmpty else { return }
-        exec("BEGIN;")
-        for update in updates {
-            guard let updateStmt = prepare("UPDATE songs SET library_id = ? WHERE id = ?") else { continue }
-            bind(updateStmt, 1, update.libraryID)
-            bind(updateStmt, 2, update.songID)
-            sqlite3_step(updateStmt)
-            sqlite3_finalize(updateStmt)
-        }
-        exec("COMMIT;")
     }
 
     func songPaths(forLibrary id: UUID) -> [(id: UUID, path: String)] {
@@ -1369,31 +1267,22 @@ final class LibraryDatabase {
         }
 
         let encoder = JSONEncoder()
-        let songIDs = state.entries.map(\.songID)
-        let baseSongIDs = state.baseEntries.map(\.songID)
         guard let queueData = try? encoder.encode(state.entries),
               let baseData = try? encoder.encode(state.baseEntries),
-              let legacyQueueData = try? encoder.encode(songIDs),
-              let legacyBaseData = try? encoder.encode(baseSongIDs),
               let queueJSON = String(data: queueData, encoding: .utf8),
               let baseJSON = String(data: baseData, encoding: .utf8),
-              let legacyQueueJSON = String(data: legacyQueueData, encoding: .utf8),
-              let legacyBaseJSON = String(data: legacyBaseData, encoding: .utf8),
               let stmt = prepare("""
                   INSERT OR REPLACE INTO player_queue
-                      (id, queue_ids, base_queue_ids, queue_entries,
-                       base_queue_entries, next_queue_id, current_index,
-                       elapsed, updated_at)
-                  VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)
+                      (id, queue_entries, base_queue_entries, next_queue_id,
+                       current_index, elapsed, updated_at)
+                  VALUES (1, ?, ?, ?, ?, ?, ?)
                   """) else { return }
-        bind(stmt, 1, legacyQueueJSON)
-        bind(stmt, 2, legacyBaseJSON)
-        bind(stmt, 3, queueJSON)
-        bind(stmt, 4, baseJSON)
-        bind(stmt, 5, Int(state.nextQueueID))
-        bind(stmt, 6, state.currentIndex ?? -1)
-        bind(stmt, 7, state.elapsed)
-        bind(stmt, 8, Date().timeIntervalSince1970)
+        bind(stmt, 1, queueJSON)
+        bind(stmt, 2, baseJSON)
+        bind(stmt, 3, Int(state.nextQueueID))
+        bind(stmt, 4, state.currentIndex ?? -1)
+        bind(stmt, 5, state.elapsed)
+        bind(stmt, 6, Date().timeIntervalSince1970)
         sqlite3_step(stmt)
         sqlite3_finalize(stmt)
     }
@@ -1401,7 +1290,7 @@ final class LibraryDatabase {
     func loadPlayerQueue() -> PersistedPlayerQueue? {
         guard let stmt = prepare("""
             SELECT queue_entries, base_queue_entries, next_queue_id,
-                   queue_ids, base_queue_ids, current_index, elapsed
+                   current_index, elapsed
             FROM player_queue WHERE id = 1
             """) else { return nil }
         guard sqlite3_step(stmt) == SQLITE_ROW else {
@@ -1411,43 +1300,22 @@ final class LibraryDatabase {
         let entriesJSON = text(stmt, 0) ?? ""
         let baseEntriesJSON = text(stmt, 1) ?? ""
         let nextID = int(stmt, 2)
-        let legacyQueueJSON = text(stmt, 3) ?? ""
-        let legacyBaseJSON = text(stmt, 4) ?? ""
-        let index = int(stmt, 5)
-        let elapsed = double(stmt, 6)
+        let index = int(stmt, 3)
+        let elapsed = double(stmt, 4)
         sqlite3_finalize(stmt)
 
         let decoder = JSONDecoder()
-        var entries: [PersistedQueueEntry] = []
-        if let data = entriesJSON.data(using: .utf8),
-           let decoded = try? decoder.decode([PersistedQueueEntry].self, from: data) {
-            entries = decoded
+        guard let entriesData = entriesJSON.data(using: .utf8),
+              let entries = try? decoder.decode([PersistedQueueEntry].self,
+                                                 from: entriesData),
+              !entries.isEmpty else {
+            return nil
         }
-
-        if entries.isEmpty,
-           let data = legacyQueueJSON.data(using: .utf8),
-           let songIDs = try? decoder.decode([UUID].self, from: data) {
-            entries = songIDs.enumerated().map {
-                PersistedQueueEntry(id: UInt32($0.offset + 1), songID: $0.element)
-            }
-        }
-        guard !entries.isEmpty else { return nil }
 
         var baseEntries: [PersistedQueueEntry] = []
         if let data = baseEntriesJSON.data(using: .utf8),
            let decoded = try? decoder.decode([PersistedQueueEntry].self, from: data) {
             baseEntries = decoded
-        }
-        if baseEntries.isEmpty,
-           let data = legacyBaseJSON.data(using: .utf8),
-           let baseIDs = try? decoder.decode([UUID].self, from: data) {
-            var remaining = entries
-            for songID in baseIDs {
-                guard let position = remaining.firstIndex(where: { $0.songID == songID }) else {
-                    continue
-                }
-                baseEntries.append(remaining.remove(at: position))
-            }
         }
         if baseEntries.isEmpty { baseEntries = entries }
 

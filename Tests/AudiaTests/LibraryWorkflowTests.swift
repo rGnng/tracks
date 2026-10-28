@@ -1,5 +1,4 @@
 import XCTest
-import SQLite3
 @testable import Audia
 
 final class LibraryWorkflowTests: XCTestCase {
@@ -75,41 +74,6 @@ final class LibraryWorkflowTests: XCTestCase {
         XCTAssertEqual(loaded.nextQueueID, 10)
         XCTAssertEqual(loaded.currentIndex, 2)
         XCTAssertEqual(loaded.elapsed, 42, accuracy: 0.001)
-    }
-
-    @MainActor
-    func testLegacyPlayerQueueSeedsStableEntryIDs() throws {
-        let fixture = try makeFixture()
-        defer { try? FileManager.default.removeItem(at: fixture) }
-        let path = fixture.appendingPathComponent("library.sqlite").path
-        LibraryDatabase(path: path).closeForTermination()
-
-        let first = UUID()
-        let second = UUID()
-        let queueJSON = "[\"\(first.uuidString)\",\"\(second.uuidString)\"]"
-        let baseJSON = "[\"\(second.uuidString)\",\"\(first.uuidString)\"]"
-        var handle: OpaquePointer?
-        XCTAssertEqual(sqlite3_open(path, &handle), SQLITE_OK)
-        let sql = """
-        INSERT OR REPLACE INTO player_queue
-            (id, queue_ids, base_queue_ids, current_index, elapsed, updated_at)
-        VALUES (1, '\(queueJSON)', '\(baseJSON)', 0, 12, 0);
-        """
-        XCTAssertEqual(sqlite3_exec(handle, sql, nil, nil, nil), SQLITE_OK)
-        XCTAssertEqual(sqlite3_close(handle), SQLITE_OK)
-
-        let database = LibraryDatabase(path: path)
-        defer { database.closeForTermination() }
-        let loaded = try XCTUnwrap(database.loadPlayerQueue())
-        XCTAssertEqual(loaded.entries,
-                       [PersistedQueueEntry(id: 1, songID: first),
-                        PersistedQueueEntry(id: 2, songID: second)])
-        XCTAssertEqual(loaded.baseEntries,
-                       [PersistedQueueEntry(id: 2, songID: second),
-                        PersistedQueueEntry(id: 1, songID: first)])
-        XCTAssertEqual(loaded.nextQueueID, 3)
-        XCTAssertEqual(loaded.currentIndex, 0)
-        XCTAssertEqual(loaded.elapsed, 12, accuracy: 0.001)
     }
 
     func testShortcutConflictUsesPhysicalKeyAndModifiers() {
@@ -439,85 +403,6 @@ final class LibraryWorkflowTests: XCTestCase {
         let full = await LibraryScanner.scan(folders: [root.path], known: known, mode: .full)
         XCTAssertTrue(full.isComplete, full.errors.joined(separator: "\n"))
         XCTAssertEqual(full.tracks.count, 1)
-    }
-
-    @MainActor
-    func testLegacySchemaAddsEnabledAndLibraryOwnershipColumns() throws {
-        let fixture = try makeFixture()
-        defer { try? FileManager.default.removeItem(at: fixture) }
-        let databaseURL = fixture.appendingPathComponent("legacy.sqlite")
-        let mediaRoot = fixture.appendingPathComponent("legacy-media", isDirectory: true)
-        try FileManager.default.createDirectory(at: mediaRoot, withIntermediateDirectories: true)
-        let songPath = mediaRoot.appendingPathComponent("old-song.wav").path
-        let libraryID = LibraryScanner.stableUUID("library|\(mediaRoot.path)").uuidString
-        let artistID = UUID().uuidString
-        let albumID = UUID().uuidString
-        let songID = UUID().uuidString
-        var handle: OpaquePointer?
-        XCTAssertEqual(sqlite3_open(databaseURL.path, &handle), SQLITE_OK)
-        let legacySchema = """
-        CREATE TABLE artists (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE);
-        CREATE TABLE albums (id TEXT PRIMARY KEY, title TEXT NOT NULL, artist_id TEXT NOT NULL,
-            genre TEXT NOT NULL DEFAULT '', year TEXT NOT NULL DEFAULT '', artwork BLOB,
-            UNIQUE(title, artist_id));
-        CREATE TABLE songs (id TEXT PRIMARY KEY, path TEXT NOT NULL UNIQUE, title TEXT NOT NULL,
-            artist_id TEXT NOT NULL, album_id TEXT NOT NULL, genre TEXT NOT NULL DEFAULT '',
-            year TEXT NOT NULL DEFAULT '', track INTEGER NOT NULL DEFAULT 0,
-            track_total INTEGER NOT NULL DEFAULT 0, disc INTEGER NOT NULL DEFAULT 0,
-            disc_total INTEGER NOT NULL DEFAULT 0, comments TEXT NOT NULL DEFAULT '',
-            duration REAL NOT NULL DEFAULT 0, date_added REAL NOT NULL,
-            play_count INTEGER NOT NULL DEFAULT 0, rating INTEGER NOT NULL DEFAULT 0,
-            loved INTEGER NOT NULL DEFAULT 0, last_played REAL,
-            skip_count INTEGER NOT NULL DEFAULT 0, mtime REAL NOT NULL DEFAULT 0,
-            file_size INTEGER NOT NULL DEFAULT 0);
-        CREATE TABLE libraries (id TEXT PRIMARY KEY, path TEXT NOT NULL UNIQUE,
-            kind TEXT NOT NULL, name TEXT NOT NULL, date_added REAL NOT NULL);
-        CREATE TABLE playlists (id TEXT PRIMARY KEY, name TEXT NOT NULL,
-            date_created REAL NOT NULL, date_modified REAL NOT NULL DEFAULT 0);
-        CREATE TABLE playlist_items (playlist_id TEXT NOT NULL, song_id TEXT NOT NULL,
-            position INTEGER NOT NULL, PRIMARY KEY (playlist_id, song_id));
-        INSERT INTO libraries(id, path, kind, name, date_added)
-            VALUES ('\(libraryID)', '\(mediaRoot.path)', 'external', 'Legacy Media', 1);
-        INSERT INTO artists(id, name) VALUES ('\(artistID)', 'Legacy Artist');
-        INSERT INTO albums(id, title, artist_id) VALUES ('\(albumID)', 'Legacy Album', '\(artistID)');
-        INSERT INTO songs(id, path, title, artist_id, album_id, date_added)
-            VALUES ('\(songID)', '\(songPath)', 'Legacy Song', '\(artistID)', '\(albumID)', 1);
-        """
-        XCTAssertEqual(sqlite3_exec(handle, legacySchema, nil, nil, nil), SQLITE_OK)
-        XCTAssertEqual(sqlite3_close(handle), SQLITE_OK)
-
-        let database = LibraryDatabase(path: databaseURL.path)
-        defer { database.closeForTermination() }
-        var migratedHandle: OpaquePointer?
-        XCTAssertEqual(sqlite3_open(databaseURL.path, &migratedHandle), SQLITE_OK)
-
-        func hasColumn(_ table: String, _ column: String) -> Bool {
-            var statement: OpaquePointer?
-            guard sqlite3_prepare_v2(migratedHandle,
-                                     "PRAGMA table_info(\(table))", -1,
-                                     &statement, nil) == SQLITE_OK,
-                  let statement else { return false }
-            defer { sqlite3_finalize(statement) }
-            while sqlite3_step(statement) == SQLITE_ROW {
-                if let name = sqlite3_column_text(statement, 1), String(cString: name) == column {
-                    return true
-                }
-            }
-            return false
-        }
-
-        XCTAssertTrue(hasColumn("libraries", "enabled"))
-        XCTAssertTrue(hasColumn("songs", "library_id"))
-        XCTAssertEqual(sqlite3_close(migratedHandle), SQLITE_OK)
-
-        let legacyLibrary = try XCTUnwrap(database.loadLibraries().first)
-        XCTAssertTrue(legacyLibrary.isEnabled)
-        database.assignUnownedSongs(to: database.loadLibraries())
-        XCTAssertEqual(database.loadLibrary().albums.first?.songs.first?.id.uuidString, songID)
-        try database.setLibraryEnabled(legacyLibrary.id, enabled: false)
-        XCTAssertTrue(database.loadLibrary().albums.isEmpty)
-        try database.setLibraryEnabled(legacyLibrary.id, enabled: true)
-        XCTAssertEqual(database.loadLibrary().albums.first?.songs.first?.id.uuidString, songID)
     }
 
     private func makeFixture() throws -> URL {
