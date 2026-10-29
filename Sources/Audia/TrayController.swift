@@ -47,6 +47,10 @@ final class TrayController: NSObject, NSMenuItemValidation {
     private var sequence = 0
     private var isExpanded = false
     private var isHiding = false
+    /// Exit is two-stage: collapse to the idle width first, then flip the
+    /// cover back to the disc. This flag hands the second stage from the
+    /// width tween to the flip tween.
+    private var pendingExitFlip = false
 
     private let coverCache = NSCache<NSString, NSImage>()
     private var coverLoadTask: Task<Void, Never>?
@@ -59,7 +63,8 @@ final class TrayController: NSObject, NSMenuItemValidation {
     private let expandDuration: TimeInterval = 0.32
     private let shrinkDuration: TimeInterval = 0.32
     private var entranceDuration: TimeInterval { max(flipDuration, expandDuration) }
-    private var exitDuration: TimeInterval { max(flipDuration, shrinkDuration) }
+    /// Exit collapses first, then flips, so the two phases run back to back.
+    private var exitDuration: TimeInterval { shrinkDuration + flipDuration }
 
     private override init() {
         super.init()
@@ -310,6 +315,7 @@ final class TrayController: NSObject, NSMenuItemValidation {
         hideWorkItem = nil
         isHiding = false
         isExpanded = false
+        pendingExitFlip = false
 
         model.flipAngle = 0
         model.showsInfo = true
@@ -332,6 +338,7 @@ final class TrayController: NSObject, NSMenuItemValidation {
         hideWorkItem = nil
         isHiding = false
         isExpanded = false
+        pendingExitFlip = false
 
         animateFlip(to: 180, duration: flipDuration)
         animateLength(to: TrayStatusModel.expandedLength, duration: expandDuration)
@@ -472,16 +479,27 @@ final class TrayController: NSObject, NSMenuItemValidation {
         let token = sequence
         isHiding = true
         isExpanded = false
+        pendingExitFlip = true
 
         animateLength(to: TrayStatusModel.idleLength, duration: shrinkDuration)
-        animateFlip(to: 0, duration: flipDuration)
+        if widthTween == nil {
+            // Already at the idle width; start the flip immediately.
+            startPendingExitFlip()
+        }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + exitDuration) { [weak self] in
             guard let self, self.sequence == token else { return }
+            self.pendingExitFlip = false
             self.model.showsInfo = false
             self.model.flipAngle = 0
             self.isHiding = false
         }
+    }
+
+    private func startPendingExitFlip() {
+        guard pendingExitFlip, isHiding else { return }
+        pendingExitFlip = false
+        animateFlip(to: 0, duration: flipDuration)
     }
 
     private func resetInfo() {
@@ -492,6 +510,7 @@ final class TrayController: NSObject, NSMenuItemValidation {
         pendingShow = false
         isExpanded = false
         isHiding = false
+        pendingExitFlip = false
         model.showsInfo = false
         model.flipAngle = 0
         statusItem?.length = TrayStatusModel.idleLength
@@ -502,6 +521,7 @@ final class TrayController: NSObject, NSMenuItemValidation {
         animationTimer = nil
         widthTween = nil
         flipTween = nil
+        pendingExitFlip = false
     }
 
     private func animateLength(to target: CGFloat, duration: TimeInterval) {
@@ -552,6 +572,7 @@ final class TrayController: NSObject, NSMenuItemValidation {
             if now >= tween.end {
                 statusItem?.length = CGFloat(tween.to)
                 widthTween = nil
+                startPendingExitFlip()
             }
         }
         if let tween = flipTween, now >= tween.start {

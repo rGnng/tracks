@@ -200,9 +200,10 @@ queue, and history live on this Mac.
 - The cover is prefetched, center-cropped, bilinearly downsampled, and cached
   before the flip, so the back of the card never flashes empty. Albums without
   artwork show their generated color gradient.
-- After a configurable display duration (default 1500 ms), the card shrinks and
-  flips back to the disc. Song-change and star/unstar triggers are independent
-  toggles. The normal status-item menu still opens on click.
+- After a configurable display duration (default 1500 ms), the card shrinks
+  back to the icon first, then flips back to the disc. Song-change and
+  star/unstar triggers are independent toggles. The normal status-item menu
+  still opens on click.
 - The card is part of the menu bar, so it does not unhide the Library window.
 
 ### Settings and appearance

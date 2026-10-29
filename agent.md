@@ -4,7 +4,8 @@ Last updated: 2026-10-29
 
 This file is the handoff snapshot for a future coding agent. Read it before changing
 the project, then verify the current code and running state. The current backlog is
-`TODO/STATUS.md`.
+`TODO/STATUS.md`; AlbumGrid/AlbumList behavior is specified in
+`docs/ALBUM_VIEW_SPEC.md`.
 
 ## 1. Product and scope
 
@@ -510,8 +511,10 @@ Important schema decisions:
   while expanding the item leftwards to 120 points; the cover stays left-aligned
   and the prepared title, artist/album, and star are revealed as the width grows.
   Text truncates with an ellipsis. After `tray.popupDurationMs` (default 1500 ms)
-  the width shrinks back to the icon while the cover flips left back to the disc.
-  All width, flip, and layout motion uses a circular ease-in-out curve.
+  the width shrinks back to the icon first, then the cover flips left back to
+  the disc. The exit phases are sequential: `shrinkDuration` followed by
+  `flipDuration`. All width, flip, and layout motion uses a circular
+  ease-in-out curve.
 - Track-change and star/unstar strips are enabled independently
   (`tray.trackChange`, `tray.starChange`); both default on. Existing installs are
   migrated once through `tray.infostripMigration`. The old
@@ -1028,7 +1031,8 @@ traffic lights are custom SwiftUI controls, not standard window buttons.
 - External Libraries are read-only for audio-file edits. Their Tracks index can
   be disabled/re-enabled or deleted after confirmation; deleting the index does
   not delete the external audio files.
-- No security-scoped bookmarks; relevant only if the app is sandboxed later.
+- No security-scoped bookmarks; the app is not sandboxed. Mac App Store
+  distribution is not a target.
 - No per-library album isolation.
 - No undo for file deletion beyond the macOS Trash.
 - The project is tracked on `main`; the app icon source, generated `.icns`, and
