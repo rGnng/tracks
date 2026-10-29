@@ -326,36 +326,52 @@ enum SidebarSelectionStore {
 /// remains selected even when it is outside that viewport. No pixel offset is
 /// stored.
 enum ViewPositionStore {
-    private static func viewportAnchorKey(_ name: String) -> String {
-        "viewPosition.\(name).viewportAnchor"
+    private static func viewportOffsetKey(_ name: String) -> String {
+        "viewPosition.\(name).viewportOffset"
     }
 
-    private static func selectionKey(_ name: String) -> String {
-        "viewPosition.\(name).selection"
-    }
-
-    static func viewportAnchorID(for name: String) -> String? {
-        UserDefaults.standard.string(forKey: viewportAnchorKey(name))
-    }
-
-    static func setViewportAnchorID(_ id: String?, for name: String) {
+    static func viewportOffset(for name: String) -> CGFloat? {
         let defaults = UserDefaults.standard
-        if let id {
-            defaults.set(id, forKey: viewportAnchorKey(name))
-        } else {
-            defaults.removeObject(forKey: viewportAnchorKey(name))
-        }
+        guard defaults.object(forKey: viewportOffsetKey(name)) != nil else { return nil }
+        return CGFloat(defaults.double(forKey: viewportOffsetKey(name)))
     }
 
-    static func selectionID(for name: String) -> String? {
-        UserDefaults.standard.string(forKey: selectionKey(name))
+    static func setViewportOffset(_ offset: CGFloat?, for name: String) {
+        let defaults = UserDefaults.standard
+        if let offset {
+            defaults.set(Double(offset), forKey: viewportOffsetKey(name))
+        } else {
+            defaults.removeObject(forKey: viewportOffsetKey(name))
+        }
+    }
+}
+
+/// Cursor/selection memory for the current app session only. It deliberately
+/// does not touch UserDefaults: switching views restores the cursor, but a
+/// relaunch starts with no selected item and only the saved scroll offset.
+final class ViewFocusStore: @unchecked Sendable {
+    static let shared = ViewFocusStore()
+
+    private let lock = NSLock()
+    private var focusByKey: [String: String] = [:]
+    private var selectionByKey: [String: Set<String>] = [:]
+
+    func focusID(for name: String) -> String? {
+        lock.lock()
+        defer { lock.unlock() }
+        return focusByKey[name]
     }
 
-    static func setSelectionID(_ id: String?, for name: String) {
-        if let id {
-            UserDefaults.standard.set(id, forKey: selectionKey(name))
-        } else {
-            UserDefaults.standard.removeObject(forKey: selectionKey(name))
-        }
+    func selectionIDs(for name: String) -> Set<String> {
+        lock.lock()
+        defer { lock.unlock() }
+        return selectionByKey[name] ?? []
+    }
+
+    func set(selection: Set<String>, focus: String?, for name: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        selectionByKey[name] = selection.isEmpty ? nil : selection
+        focusByKey[name] = focus
     }
 }

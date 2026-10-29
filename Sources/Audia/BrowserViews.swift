@@ -16,7 +16,7 @@ struct ArtistsBrowser: View {
         let requested = initialArtistID.flatMap { id in
             artists.contains(where: { $0.id == id }) ? id : nil
         }
-        let stored = ViewPositionStore.selectionID(for: "artists").flatMap { id in
+        let stored = ViewFocusStore.shared.focusID(for: "artists").flatMap { id in
             artists.contains(where: { $0.id == id }) ? id : nil
         }
         _selectedID = State(initialValue: requested ?? stored ?? artists.first?.id)
@@ -34,7 +34,7 @@ struct ArtistsBrowser: View {
                 selectedID: $selectedID,
                 title: { $0.name },
                 detail: { "\($0.albums.count)" },
-                viewportAnchorKey: "artists.list"
+                scrollKey: "artists.list"
             ) { artist in
                 player.play(artist.albums.flatMap(\.songs))
             }
@@ -61,12 +61,16 @@ struct ArtistsBrowser: View {
             updateStatusBar()
         }
         .onChange(of: selectedID) { _, id in
-            ViewPositionStore.setSelectionID(id, for: "artists")
+            ViewFocusStore.shared.set(selection: id.map { [$0] } ?? [],
+                                      focus: id,
+                                      for: "artists")
             updateStatusBar()
         }
         .onAppear {
             consumePendingArtist()
-            ViewPositionStore.setSelectionID(selectedID, for: "artists")
+            ViewFocusStore.shared.set(selection: selectedID.map { [$0] } ?? [],
+                                      focus: selectedID,
+                                      for: "artists")
             updateStatusBar()
         }
         .onChange(of: navigation.artistToOpen) { _, _ in
@@ -100,7 +104,7 @@ struct GenresBrowser: View {
 
     init(genres: [GenreItem]) {
         self.genres = genres
-        let stored = ViewPositionStore.selectionID(for: "genres").flatMap { id in
+        let stored = ViewFocusStore.shared.focusID(for: "genres").flatMap { id in
             genres.contains(where: { $0.id == id }) ? id : nil
         }
         _selectedID = State(initialValue: stored ?? genres.first?.name)
@@ -123,7 +127,7 @@ struct GenresBrowser: View {
                 selectedID: $selectedID,
                 title: { $0.name },
                 detail: { "\($0.count)" },
-                viewportAnchorKey: "genres.list"
+                scrollKey: "genres.list"
             ) { genre in
                 player.play(library.albums.filter { $0.genre == genre.name }.flatMap(\.songs))
             }
@@ -150,11 +154,15 @@ struct GenresBrowser: View {
             updateStatusBar()
         }
         .onChange(of: selectedID) { _, id in
-            ViewPositionStore.setSelectionID(id, for: "genres")
+            ViewFocusStore.shared.set(selection: id.map { [$0] } ?? [],
+                                      focus: id,
+                                      for: "genres")
             updateStatusBar()
         }
         .onAppear {
-            ViewPositionStore.setSelectionID(selectedID, for: "genres")
+            ViewFocusStore.shared.set(selection: selectedID.map { [$0] } ?? [],
+                                      focus: selectedID,
+                                      for: "genres")
             updateStatusBar()
         }
     }
@@ -175,99 +183,82 @@ private struct BrowserList<Item: Identifiable>: View where Item.ID == String {
     @Binding var selectedID: Item.ID?
     let title: (Item) -> String
     let detail: (Item) -> String
-    let viewportAnchorKey: String
+    let scrollKey: String
     let onDoubleTap: (Item) -> Void
 
     @ObservedObject private var navigator = KeyboardNavigator.shared
-    @State private var didRestoreViewport = false
     @State private var allowViewportSave = false
-    @State private var visibleIDs: Set<Item.ID> = []
-
-    private let initialViewportAnchorID: Item.ID?
+    @State private var viewportSaveTask: Task<Void, Never>?
+    @State private var scrollPosition: ScrollPosition
+    @State private var metrics = ListScrollMetrics()
 
     init(items: [Item], selectedID: Binding<Item.ID?>,
          title: @escaping (Item) -> String,
          detail: @escaping (Item) -> String,
-         viewportAnchorKey: String,
+         scrollKey: String,
          onDoubleTap: @escaping (Item) -> Void) {
         self.items = items
         self._selectedID = selectedID
         self.title = title
         self.detail = detail
-        self.viewportAnchorKey = viewportAnchorKey
+        self.scrollKey = scrollKey
         self.onDoubleTap = onDoubleTap
-        let savedAnchor = ViewPositionStore.viewportAnchorID(for: viewportAnchorKey)
-        let anchor = savedAnchor.flatMap { id in
-            items.contains(where: { $0.id == id }) ? id : nil
-        }
-        initialViewportAnchorID = anchor ?? selectedID.wrappedValue
+        _scrollPosition = State(initialValue: ScrollPosition())
     }
 
     var body: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                // Real layout markers, not overlays: ScrollViewReader does not
-                // reliably resolve IDs inside a LazyVStack overlay.
-                VStack(spacing: 0) {
-                    Color.clear
-                        .frame(height: 0)
-                        .id("browserListTop")
-                    LazyVStack(spacing: 0) {
-                        ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-                            let selected = selectedID == item.id
-                            BrowserRow(
-                                title: title(item),
-                                detail: detail(item),
-                                isSelected: selected,
-                                background: rowBackground(index: index, selected: selected)
-                            )
-                            .id(item.id)
-                            .contentShape(Rectangle())
-                            .onTapGesture { selectedID = item.id }
-                            .simultaneousGesture(TapGesture(count: 2).onEnded { onDoubleTap(item) })
-                        }
-                    }
-                    .scrollTargetLayout()
-                    .padding(.vertical, 6)
-                    Color.clear
-                        .frame(height: 0)
-                        .id("browserListBottom")
+        ScrollView {
+            LazyVStack(spacing: 0) {
+                ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                    let selected = selectedID == item.id
+                    BrowserRow(
+                        title: title(item),
+                        detail: detail(item),
+                        isSelected: selected,
+                        background: rowBackground(index: index, selected: selected)
+                    )
+                    .id(item.id)
+                    .contentShape(Rectangle())
+                    .onTapGesture { selectedID = item.id }
+                    .simultaneousGesture(TapGesture(count: 2).onEnded { onDoubleTap(item) })
                 }
             }
-            .onScrollTargetVisibilityChange(idType: String.self, threshold: 0.1) { visible in
-                visibleIDs = Set(visible)
-                guard allowViewportSave,
-                      let top = items.first(where: { visible.contains($0.id) }) else { return }
-                ViewPositionStore.setViewportAnchorID(top.id, for: viewportAnchorKey)
+            .scrollTargetLayout()
+            .padding(.vertical, 6)
+        }
+        .scrollPosition($scrollPosition)
+        .onScrollGeometryChange(for: ListScrollMetrics.self) { geometry in
+            ListScrollMetrics(offset: geometry.contentOffset.y,
+                              viewportHeight: geometry.containerSize.height,
+                              contentHeight: geometry.contentSize.height)
+        } action: { _, new in
+            metrics = new
+            scheduleViewportSave()
+        }
+        .task {
+            for _ in 0..<50 {
+                if metrics.viewportHeight > 0 { break }
+                try? await Task.sleep(for: .milliseconds(10))
             }
-            .onAppear {
-                guard !didRestoreViewport else { return }
-                didRestoreViewport = true
-                DispatchQueue.main.async {
-                    if let anchor = initialViewportAnchorID {
-                        if anchor == items.first?.id {
-                            proxy.scrollTo("browserListTop", anchor: .top)
-                        } else {
-                            proxy.scrollTo(anchor, anchor: .top)
-                        }
-                    }
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                        allowViewportSave = true
-                    }
-                }
+            if let offset = ViewPositionStore.viewportOffset(for: scrollKey), offset > 0 {
+                scrollPosition.scrollTo(y: offset)
             }
-            .onChange(of: navigator.moveCount) { _, _ in
-                guard moveSelection(), let id = selectedID else { return }
-                withAnimation(.easeInOut(duration: 0.08)) {
-                    proxy.scrollTo(id, anchor: .center)
-                }
-            }
-            .onChange(of: navigator.scrollCount) { _, _ in
-                scroll(to: navigator.lastScrollCommand, proxy: proxy)
-            }
-            .onChange(of: navigator.activateCount) { _, _ in
-                activateSelection()
-            }
+            try? await Task.sleep(for: .milliseconds(200))
+            allowViewportSave = true
+        }
+        .onDisappear { saveViewportNow() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
+            saveViewportNow()
+        }
+        .onChange(of: navigator.moveCount) { _, _ in
+            guard moveSelection() else { return }
+            revealSelection()
+        }
+        .onChange(of: navigator.scrollCount) { _, _ in
+            scroll(to: navigator.lastScrollCommand)
+        }
+        .onChange(of: navigator.activateCount) { _, _ in
+            activateSelection()
         }
         .background(Theme.contentBackground)
     }
@@ -287,10 +278,10 @@ private struct BrowserList<Item: Identifiable>: View where Item.ID == String {
         let baseIndex: Int
         if let selectedID,
            let index = items.firstIndex(where: { $0.id == selectedID }),
-           visibleIDs.contains(selectedID) {
+           isOnScreen(selectedID, index: index) {
             baseIndex = index
-        } else if let topVisible = items.first(where: { visibleIDs.contains($0.id) }) {
-            baseIndex = items.firstIndex(where: { $0.id == topVisible.id }) ?? 0
+        } else if let topIndex = topVisibleIndex() {
+            baseIndex = topIndex
         } else if let selectedID,
                   let index = items.firstIndex(where: { $0.id == selectedID }) {
             baseIndex = index
@@ -303,22 +294,71 @@ private struct BrowserList<Item: Identifiable>: View where Item.ID == String {
         return true
     }
 
-    private func scroll(to command: KeyboardNavigator.ScrollCommand,
-                        proxy: ScrollViewProxy) {
+    private func revealSelection() {
+        guard let id = selectedID,
+              let index = items.firstIndex(where: { $0.id == id }) else { return }
+        let frame = browserRowFrame(at: index)
+        guard let target = ListScroll.revealTarget(for: frame, metrics: metrics, padding: 6) else { return }
+        withAnimation(.easeInOut(duration: 0.08)) {
+            scrollPosition.scrollTo(y: target)
+        }
+    }
+
+    private func scroll(to command: KeyboardNavigator.ScrollCommand) {
         guard !items.isEmpty else { return }
         switch command {
         case .top:
-            proxy.scrollTo("browserListTop", anchor: .top)
+            scrollPosition.scrollTo(edge: .top)
         case .bottom:
-            proxy.scrollTo("browserListBottom", anchor: .bottom)
+            scrollPosition.scrollTo(edge: .bottom)
         case .pageUp, .pageDown:
-            guard let top = items.first(where: { visibleIDs.contains($0.id) }),
-                  let index = items.firstIndex(where: { $0.id == top.id }) else { return }
-            let page = max(1, visibleIDs.count - 1)
+            guard let index = topVisibleIndex() else { return }
+            let page = max(1, visibleBrowserRows - 1)
             let target = index + (command == .pageUp ? -page : page)
             let clamped = min(max(target, 0), items.count - 1)
-            proxy.scrollTo(items[clamped].id, anchor: .top)
+            let targetOffset = ListScroll.pageTarget(for: browserRowFrame(at: clamped),
+                                                     metrics: metrics,
+                                                     padding: 6)
+            scrollPosition.scrollTo(y: targetOffset)
         }
+    }
+
+    private func scheduleViewportSave() {
+        viewportSaveTask?.cancel()
+        viewportSaveTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled else { return }
+            saveViewportNow()
+        }
+    }
+
+    private func saveViewportNow() {
+        guard allowViewportSave else { return }
+        ViewPositionStore.setViewportOffset(metrics.offset, for: scrollKey)
+    }
+
+    private var visibleBrowserRows: Int {
+        max(1, Int(ceil(metrics.viewportHeight / 26)))
+    }
+
+    private func topVisibleIndex() -> Int? {
+        for index in items.indices {
+            let frame = browserRowFrame(at: index)
+            if frame.maxY > metrics.offset + 0.5 {
+                return index
+            }
+        }
+        return nil
+    }
+
+    private func isOnScreen(_ id: Item.ID, index: Int) -> Bool {
+        let frame = browserRowFrame(at: index)
+        return frame.maxY > metrics.offset + 0.5
+            && frame.minY < metrics.offset + metrics.viewportHeight - 0.5
+    }
+
+    private func browserRowFrame(at index: Int) -> CGRect {
+        CGRect(x: 0, y: 6 + CGFloat(index) * 26, width: 1, height: 26)
     }
 }
 

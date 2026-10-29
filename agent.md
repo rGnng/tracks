@@ -357,35 +357,34 @@ Important schema decisions:
   `library:<section>`, `starred`, or `playlist:<uuid>`. A missing, malformed,
   or deleted-playlist value falls back to **Recently Added**. The first launch
   and library switches also use Recently Added as the default view.
-- Scrollable content persists a focus item under
-  `viewPosition.<view>.selection` and a viewport anchor under
-  `viewPosition.<view>.viewportAnchor` (Albums, Recently Added, each song-table
-  context, and the Artists/Genres browser lists). The viewport anchor is the
-  item that was at the top edge of the saved viewport; it is not the focus
-  target. On first appearance or launch the view restores both: the selection
-  stays focused and the viewport anchor avoids pulling an already-visible focus
-  to the top. If there is no valid anchor, the focused item is used as the
-  anchor. Lists shorter than the viewport naturally stay at the top, and
-  SwiftUI clamps anchors at the last row. There is no center-on-selection
-  fallback.
+- Scrollable content stores its exact scroll offset under
+  `viewPosition.<view>.viewportOffset` (Albums, Recently Added, each song-table
+  context, and the Artists/Genres browser lists). The offset is the only
+  viewport restoration source; do not mix it with item-anchor positioning,
+  which shifts the viewport by the row padding. Offsets are saved after
+  scrolling and on view disappearance/termination.
+- Cursor/selection is session-only (`ViewFocusStore`). Switching views in the
+  same app session restores the selected items and focus, but quitting and
+  relaunching starts with no selected album/song and only the saved scroll
+  offset. Artists/Genres fall back to the first item when the session store is
+  empty. There is no center-on-selection restore.
 - Home/End/Page Up/Page Down are routed through `KeyboardNavigator` to the
-  mounted SwiftUI list, which scrolls with `ScrollViewReader`; do not poke the
-  hosting `NSScrollView` directly for these views. Home/End scroll to
-  zero-height content-edge anchors, not to the first/last item, so the grid's
-  22pt and list's 6pt content padding stays visible at both ends (the last row
-  keeps its album/artist text and the bottom gap). Page Up/Down move to the
-  target visible row. Keyboard selection always centers the selected item so a
-  partially visible cover/row is revealed completely. Visibility comes from
-  `onScrollTargetVisibilityChange` and drives both viewport persistence and
-  arrow-key navigation, so an off-screen saved focus cannot pull the list back
-  to its old row after scrolling. IDs inside a `LazyVStack` overlay are not
-  reliable `ScrollViewReader` targets; the song table and browser lists use
-  zero-height marker views as real layout siblings instead.
+  mounted SwiftUI list. The lists use `ScrollPosition` plus
+  `onScrollGeometryChange`, not `ScrollViewReader`, so they always know the
+  current content offset, viewport height, and content height. Home/End scroll
+  to offset `0` / `maxOffset`, preserving the grid's 22pt and list's 6pt
+  content padding at both ends (the last row keeps its album/artist text and
+  the bottom gap). Page Up/Down move to the target visible row with the same
+  top inset. Keyboard selection scrolls only enough to show the selected item
+  completely plus the same padding; it does not center. An off-screen saved
+  focus starts arrow navigation from the first item actually visible in the
+  current viewport. Viewport persistence saves the exact scroll offset, not a
+  top item. Album-grid item frames are computed from the uniform grid layout
+  when the SwiftUI preference frames are unavailable after a long scroll jump.
 - Opening an album detail from the current grid keeps the mounted grid's scroll
   offset unchanged, so returning leaves the clicked album where it was.
-  `Go to Album` from another view overrides the anchor with the target album;
-  returning from that detail therefore brings the album row to the first row
-  rather than centering it.
+  `Go to Album` from another view scrolls the target album row to the first
+  row; the resulting offset is persisted like any other scroll.
 - Album cards/rows use single click for selection or album-detail navigation.
   Double-click no longer starts album playback; use the hover Play button or the
   context menu instead.
