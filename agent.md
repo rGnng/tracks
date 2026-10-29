@@ -1,9 +1,10 @@
 # Tracks (internal target: Audia) - Agent Handoff
 
-Last updated: 2026-10-26
+Last updated: 2026-10-29
 
 This file is the handoff snapshot for a future coding agent. Read it before changing
-the project, then verify the current code and running state.
+the project, then verify the current code and running state. The current backlog is
+`TODO/STATUS.md`.
 
 ## 1. Product and scope
 
@@ -118,7 +119,7 @@ Sources/Audia/
   Theme.swift                Light/dark colors and layout constants
   Models.swift               Artwork, Song, Album, Playlist, MusicLibrary, sidebar models
   Library.swift              Library singleton, scanning, playlists, read-only rules, delete API
-  LibraryDatabase.swift      SQLite schema, sync/prune, playlists, queue, song deletion
+  LibraryDatabase.swift      SQLite schema, sync, playlists, queue, song deletion
   LibraryOrganizer.swift     Canonical file names and tag-driven file relocation
   LibraryDeletion.swift      Delete confirmation UI and partial-failure alert
   FLACLibrary.swift          FLAC/AVFoundation metadata readers and LibraryScanner
