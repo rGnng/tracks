@@ -370,10 +370,17 @@ Important schema decisions:
   fallback.
 - Home/End/Page Up/Page Down are routed through `KeyboardNavigator` to the
   mounted SwiftUI list, which scrolls with `ScrollViewReader`; do not poke the
-  hosting `NSScrollView` directly for these views. Visibility comes from
+  hosting `NSScrollView` directly for these views. Home/End scroll to
+  zero-height content-edge anchors, not to the first/last item, so the grid's
+  22pt and list's 6pt content padding stays visible at both ends (the last row
+  keeps its album/artist text and the bottom gap). Page Up/Down move to the
+  target visible row. Keyboard selection always centers the selected item so a
+  partially visible cover/row is revealed completely. Visibility comes from
   `onScrollTargetVisibilityChange` and drives both viewport persistence and
   arrow-key navigation, so an off-screen saved focus cannot pull the list back
-  to its old row after scrolling.
+  to its old row after scrolling. IDs inside a `LazyVStack` overlay are not
+  reliable `ScrollViewReader` targets; the song table and browser lists use
+  zero-height marker views as real layout siblings instead.
 - Opening an album detail from the current grid keeps the mounted grid's scroll
   offset unchanged, so returning leaves the clicked album where it was.
   `Go to Album` from another view overrides the anchor with the target album;

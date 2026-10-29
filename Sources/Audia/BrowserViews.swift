@@ -206,23 +206,33 @@ private struct BrowserList<Item: Identifiable>: View where Item.ID == String {
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(spacing: 0) {
-                    ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-                        let selected = selectedID == item.id
-                        BrowserRow(
-                            title: title(item),
-                            detail: detail(item),
-                            isSelected: selected,
-                            background: rowBackground(index: index, selected: selected)
-                        )
-                        .id(item.id)
-                        .contentShape(Rectangle())
-                        .onTapGesture { selectedID = item.id }
-                        .simultaneousGesture(TapGesture(count: 2).onEnded { onDoubleTap(item) })
+                // Real layout markers, not overlays: ScrollViewReader does not
+                // reliably resolve IDs inside a LazyVStack overlay.
+                VStack(spacing: 0) {
+                    Color.clear
+                        .frame(height: 0)
+                        .id("browserListTop")
+                    LazyVStack(spacing: 0) {
+                        ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                            let selected = selectedID == item.id
+                            BrowserRow(
+                                title: title(item),
+                                detail: detail(item),
+                                isSelected: selected,
+                                background: rowBackground(index: index, selected: selected)
+                            )
+                            .id(item.id)
+                            .contentShape(Rectangle())
+                            .onTapGesture { selectedID = item.id }
+                            .simultaneousGesture(TapGesture(count: 2).onEnded { onDoubleTap(item) })
+                        }
                     }
+                    .scrollTargetLayout()
+                    .padding(.vertical, 6)
+                    Color.clear
+                        .frame(height: 0)
+                        .id("browserListBottom")
                 }
-                .scrollTargetLayout()
-                .padding(.vertical, 6)
             }
             .onScrollTargetVisibilityChange(idType: String.self, threshold: 0.1) { visible in
                 visibleIDs = Set(visible)
@@ -235,7 +245,11 @@ private struct BrowserList<Item: Identifiable>: View where Item.ID == String {
                 didRestoreViewport = true
                 DispatchQueue.main.async {
                     if let anchor = initialViewportAnchorID {
-                        proxy.scrollTo(anchor, anchor: .top)
+                        if anchor == items.first?.id {
+                            proxy.scrollTo("browserListTop", anchor: .top)
+                        } else {
+                            proxy.scrollTo(anchor, anchor: .top)
+                        }
                     }
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                         allowViewportSave = true
@@ -243,7 +257,7 @@ private struct BrowserList<Item: Identifiable>: View where Item.ID == String {
                 }
             }
             .onChange(of: navigator.moveCount) { _, _ in
-                guard moveSelection(), let id = selectedID, !visibleIDs.contains(id) else { return }
+                guard moveSelection(), let id = selectedID else { return }
                 withAnimation(.easeInOut(duration: 0.08)) {
                     proxy.scrollTo(id, anchor: .center)
                 }
@@ -294,9 +308,9 @@ private struct BrowserList<Item: Identifiable>: View where Item.ID == String {
         guard !items.isEmpty else { return }
         switch command {
         case .top:
-            if let id = items.first?.id { proxy.scrollTo(id, anchor: .top) }
+            proxy.scrollTo("browserListTop", anchor: .top)
         case .bottom:
-            if let id = items.last?.id { proxy.scrollTo(id, anchor: .bottom) }
+            proxy.scrollTo("browserListBottom", anchor: .bottom)
         case .pageUp, .pageDown:
             guard let top = items.first(where: { visibleIDs.contains($0.id) }),
                   let index = items.firstIndex(where: { $0.id == top.id }) else { return }

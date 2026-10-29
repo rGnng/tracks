@@ -192,6 +192,20 @@ struct AlbumGrid: View {
                         )
                     }
                     .frame(minHeight: viewport.size.height, alignment: .top)
+                    // Home/End target the content edges, not the first/last
+                    // album, so the grid's 22pt inset stays visible.
+                    .overlay(alignment: .top) {
+                        Color.clear
+                            .frame(height: 1)
+                            .id("albumGridTop")
+                            .allowsHitTesting(false)
+                    }
+                    .overlay(alignment: .bottom) {
+                        Color.clear
+                            .frame(height: 1)
+                            .id("albumGridBottom")
+                            .allowsHitTesting(false)
+                    }
                     .background(
                         Color.clear
                             .contentShape(Rectangle())
@@ -225,7 +239,11 @@ struct AlbumGrid: View {
                     // proxy to scroll to a saved item that may be far below.
                     DispatchQueue.main.async {
                         if let anchor = initialViewportAnchorID {
-                            proxy.scrollTo(anchor, anchor: .top)
+                            if anchor == albums.first?.id {
+                                proxy.scrollTo("albumGridTop", anchor: .top)
+                            } else {
+                                proxy.scrollTo(anchor, anchor: .top)
+                            }
                         }
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                             allowViewportSave = true
@@ -235,14 +253,18 @@ struct AlbumGrid: View {
                 .onChange(of: revealTargetID) { _, id in
                     guard let id else { return }
                     DispatchQueue.main.async {
-                        proxy.scrollTo(id, anchor: .top)
+                        if id == albums.first?.id {
+                            proxy.scrollTo("albumGridTop", anchor: .top)
+                        } else {
+                            proxy.scrollTo(id, anchor: .top)
+                        }
                         revealTargetID = nil
                     }
                 }
                 .onChange(of: navigator.moveCount) { _, _ in
                     guard expandedAlbum == nil else { return }
                     moveSelection(proxy: proxy)
-                    if let id = selectionAnchor, !visibleAlbumIDs.contains(id) {
+                    if let id = selectionAnchor {
                         withAnimation(.easeInOut(duration: 0.08)) {
                             proxy.scrollTo(id, anchor: .center)
                         }
@@ -264,9 +286,9 @@ struct AlbumGrid: View {
         guard !albums.isEmpty else { return }
         switch command {
         case .top:
-            if let id = albums.first?.id { proxy.scrollTo(id, anchor: .top) }
+            proxy.scrollTo("albumGridTop", anchor: .top)
         case .bottom:
-            if let id = albums.last?.id { proxy.scrollTo(id, anchor: .bottom) }
+            proxy.scrollTo("albumGridBottom", anchor: .bottom)
         case .pageUp, .pageDown:
             guard let top = albums.first(where: { visibleAlbumIDs.contains($0.id) }),
                   let index = albums.firstIndex(where: { $0.id == top.id }) else { return }
@@ -551,7 +573,6 @@ private struct AlbumDetailView: View {
                 }
                 .buttonStyle(.plain)
                 .padding(.bottom, 14)
-                .id("albumDetailTop")
 
                 HStack(alignment: .top, spacing: 24) {
                     AlbumArtwork(artwork: album.artwork)
@@ -625,6 +646,19 @@ private struct AlbumDetailView: View {
                 }
             }
             .padding(22)
+            // Content-edge anchors keep the 22pt top/bottom inset visible.
+            .overlay(alignment: .top) {
+                Color.clear
+                    .frame(height: 1)
+                    .id("albumDetailTop")
+                    .allowsHitTesting(false)
+            }
+            .overlay(alignment: .bottom) {
+                Color.clear
+                    .frame(height: 1)
+                    .id("albumDetailBottom")
+                    .allowsHitTesting(false)
+            }
             .onTapGesture { clearSelection() }
         }
         .onScrollTargetVisibilityChange(idType: UUID.self, threshold: 0.1) { visible in
@@ -632,7 +666,7 @@ private struct AlbumDetailView: View {
         }
         .onChange(of: navigator.moveCount) { _, _ in
             moveSelection(proxy: proxy)
-            if let id = selectionAnchor, !visibleSongIDs.contains(id) {
+            if let id = selectionAnchor {
                 withAnimation(.easeInOut(duration: 0.08)) {
                     proxy.scrollTo(id, anchor: .center)
                 }
@@ -771,7 +805,7 @@ private struct AlbumDetailView: View {
         case .top:
             proxy.scrollTo("albumDetailTop", anchor: .top)
         case .bottom:
-            if let id = album.songs.last?.id { proxy.scrollTo(id, anchor: .bottom) }
+            proxy.scrollTo("albumDetailBottom", anchor: .bottom)
         case .pageUp, .pageDown:
             guard let top = album.songs.first(where: { visibleSongIDs.contains($0.id) }),
                   let index = album.songs.firstIndex(where: { $0.id == top.id }) else { return }
@@ -995,6 +1029,20 @@ struct AlbumList: View {
                         .padding(.vertical, 6)
                     }
                     .frame(minHeight: viewport.size.height, alignment: .top)
+                    // Content-edge anchors keep the list's vertical padding
+                    // visible at Home/End.
+                    .overlay(alignment: .top) {
+                        Color.clear
+                            .frame(height: 1)
+                            .id("albumListTop")
+                            .allowsHitTesting(false)
+                    }
+                    .overlay(alignment: .bottom) {
+                        Color.clear
+                            .frame(height: 1)
+                            .id("albumListBottom")
+                            .allowsHitTesting(false)
+                    }
                     .background(
                         Color.clear
                             .contentShape(Rectangle())
@@ -1026,7 +1074,11 @@ struct AlbumList: View {
                     didRestoreViewport = true
                     DispatchQueue.main.async {
                         if let anchor = initialViewportAnchorID {
-                            proxy.scrollTo(anchor, anchor: .top)
+                            if anchor == albums.first?.id {
+                                proxy.scrollTo("albumListTop", anchor: .top)
+                            } else {
+                                proxy.scrollTo(anchor, anchor: .top)
+                            }
                         }
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                             allowViewportSave = true
@@ -1035,7 +1087,7 @@ struct AlbumList: View {
                 }
                 .onChange(of: navigator.moveCount) { _, _ in
                     moveSelection()
-                    if let id = selectionAnchor, !visibleAlbumIDs.contains(id) {
+                    if let id = selectionAnchor {
                         withAnimation(.easeInOut(duration: 0.08)) {
                             proxy.scrollTo(id, anchor: .center)
                         }
@@ -1240,9 +1292,9 @@ struct AlbumList: View {
         guard !albums.isEmpty else { return }
         switch command {
         case .top:
-            if let id = albums.first?.id { proxy.scrollTo(id, anchor: .top) }
+            proxy.scrollTo("albumListTop", anchor: .top)
         case .bottom:
-            if let id = albums.last?.id { proxy.scrollTo(id, anchor: .bottom) }
+            proxy.scrollTo("albumListBottom", anchor: .bottom)
         case .pageUp, .pageDown:
             guard let top = albums.first(where: { visibleAlbumIDs.contains($0.id) }),
                   let index = albums.firstIndex(where: { $0.id == top.id }) else { return }
@@ -1808,16 +1860,26 @@ struct SongTable: View {
     private var list: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(spacing: 0) {
-                    ForEach(Array(sorted.enumerated()), id: \.element.id) { index, song in
-                        rowView(song, index: index)
-                            .id(song.id)
+                // Real layout markers, not overlays: ScrollViewReader does not
+                // reliably resolve IDs inside a LazyVStack overlay.
+                VStack(spacing: 0) {
+                    Color.clear
+                        .frame(height: 0)
+                        .id("songTableTop")
+                    LazyVStack(spacing: 0) {
+                        ForEach(Array(sorted.enumerated()), id: \.element.id) { index, song in
+                            rowView(song, index: index)
+                                .id(song.id)
+                        }
                     }
+                    .scrollTargetLayout()
+                    .padding(.vertical, 6)
+                    .onTapGesture { clearSelection() }
+                    .marqueeSelectable(selection: $selectedIDs, space: "songTableSpace")
+                    Color.clear
+                        .frame(height: 0)
+                        .id("songTableBottom")
                 }
-                .scrollTargetLayout()
-                .padding(.vertical, 6)
-                .onTapGesture { clearSelection() }
-                .marqueeSelectable(selection: $selectedIDs, space: "songTableSpace")
             }
             .onScrollTargetVisibilityChange(idType: UUID.self, threshold: 0.1) { visible in
                 visibleSongIDs = Set(visible)
@@ -1830,7 +1892,11 @@ struct SongTable: View {
                 didRestoreViewport = true
                 DispatchQueue.main.async {
                     if let anchor = initialViewportAnchorID {
-                        proxy.scrollTo(anchor, anchor: .top)
+                        if anchor == sorted.first?.id {
+                            proxy.scrollTo("songTableTop", anchor: .top)
+                        } else {
+                            proxy.scrollTo(anchor, anchor: .top)
+                        }
                     }
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                         allowViewportSave = true
@@ -1839,7 +1905,7 @@ struct SongTable: View {
             }
             .onChange(of: navigator.moveCount) { _, _ in
                 moveSelection()
-                if let id = selectionAnchor, !visibleSongIDs.contains(id) {
+                if let id = selectionAnchor {
                     withAnimation(.easeInOut(duration: 0.08)) {
                         proxy.scrollTo(id, anchor: .center)
                     }
@@ -2100,9 +2166,9 @@ struct SongTable: View {
         guard !sorted.isEmpty else { return }
         switch command {
         case .top:
-            if let id = sorted.first?.id { proxy.scrollTo(id, anchor: .top) }
+            proxy.scrollTo("songTableTop", anchor: .top)
         case .bottom:
-            if let id = sorted.last?.id { proxy.scrollTo(id, anchor: .bottom) }
+            proxy.scrollTo("songTableBottom", anchor: .bottom)
         case .pageUp, .pageDown:
             guard let top = sorted.first(where: { visibleSongIDs.contains($0.id) }),
                   let index = sorted.firstIndex(where: { $0.id == top.id }) else { return }
