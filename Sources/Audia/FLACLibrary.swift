@@ -600,7 +600,12 @@ enum LibraryScanner {
                 // duplicate rows after a library move.
                 let normalizedURL = URL(fileURLWithPath: fileURL.path).resolvingSymlinksInPath()
                 let storedPath = normalizedURL.path
-                let values = try? normalizedURL.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
+                let values = try? normalizedURL.resourceValues(
+                    forKeys: [.isRegularFileKey, .contentModificationDateKey, .fileSizeKey]
+                )
+                // Folder names are allowed to end in a media extension. Only
+                // actual files may enter the scan queue or the discovered set.
+                guard values?.isRegularFile == true else { continue }
                 let mtime = values?.contentModificationDate?.timeIntervalSince1970 ?? 0
                 let size = Int64(values?.fileSize ?? 0)
                 discovered[storedPath] = KnownFile(mtime: mtime, size: size)

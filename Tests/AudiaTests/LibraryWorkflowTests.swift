@@ -375,6 +375,33 @@ final class LibraryWorkflowTests: XCTestCase {
         XCTAssertFalse(unavailable.isComplete)
     }
 
+    func testQuickScanIgnoresDirectoriesWithAudioExtensions() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        let root = fixture.appendingPathComponent("media", isDirectory: true)
+        let albumFolder = root.appendingPathComponent("album.wav", isDirectory: true)
+        try FileManager.default.createDirectory(at: albumFolder, withIntermediateDirectories: true)
+        let audio = albumFolder.appendingPathComponent("song.wav")
+        try makeWaveFile().write(to: audio)
+
+        let first = await LibraryScanner.scan(folders: [root.path], mode: .quick)
+        XCTAssertTrue(first.isComplete, first.errors.joined(separator: "\n"))
+        XCTAssertEqual(first.tracks.count, 1)
+        XCTAssertFalse(first.errors.contains { $0.contains("album.wav") })
+        let folderPath = albumFolder.resolvingSymlinksInPath().path
+        let audioPath = audio.resolvingSymlinksInPath().path
+        XCTAssertNil(first.discoveredFiles[folderPath],
+                     "Directories must not be treated as media files")
+        XCTAssertNotNil(first.discoveredFiles[audioPath])
+
+        let second = await LibraryScanner.scan(folders: [root.path],
+                                               known: first.discoveredFiles,
+                                               mode: .quick)
+        XCTAssertTrue(second.isComplete, second.errors.joined(separator: "\n"))
+        XCTAssertTrue(second.tracks.isEmpty,
+                      "A repeated Quick Scan must not re-queue the album directory")
+    }
+
     func testScannerReportsFindingAndMetadataPhasesInOrder() async throws {
         let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture) }
