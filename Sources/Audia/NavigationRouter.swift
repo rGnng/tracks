@@ -43,6 +43,8 @@ final class NavigationRouter: ObservableObject {
     @Published private(set) var focus: NavigationFocus = .albumGrid
     @Published private(set) var arrow: NavigationArrow?
     @Published private(set) var scrollEvent: NavigationScrollEvent?
+    let arrowEvents = PassthroughSubject<NavigationArrow, Never>()
+    let scrollEvents = PassthroughSubject<NavigationScrollEvent, Never>()
 
     private var arrowID = 0
     private var scrollEventID = 0
@@ -131,11 +133,15 @@ final class NavigationRouter: ObservableObject {
 
     private func sendArrow(_ direction: NavigationDirection) {
         arrowID &+= 1
-        arrow = NavigationArrow(id: arrowID, direction: direction)
+        let event = NavigationArrow(id: arrowID, direction: direction)
+        arrow = event
+        arrowEvents.send(event)
     }
 
     private func sendScroll(_ command: NavigationScrollCommand) {
         scrollEventID &+= 1
-        scrollEvent = NavigationScrollEvent(id: scrollEventID, command: command)
+        let event = NavigationScrollEvent(id: scrollEventID, command: command)
+        scrollEvent = event
+        scrollEvents.send(event)
     }
 }

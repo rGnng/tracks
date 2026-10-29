@@ -30,10 +30,10 @@ struct ContentPane: View {
     private var content: some View {
         switch selection {
         case .library(.albums):
-            AlbumGrid(albums: sortedAlbums, openAlbumID: $openAlbumID)
+            AlbumGrid(albums: sortedAlbums, openAlbumID: $openAlbumID, viewKey: selection.persistenceValue)
                 .id(selection)
         case .library(.recentlyAdded):
-            AlbumGrid(albums: recentAlbums, openAlbumID: $openAlbumID)
+            AlbumGrid(albums: recentAlbums, openAlbumID: $openAlbumID, viewKey: selection.persistenceValue)
                 .id(selection)
         case .library(.artists):
             ArtistsBrowser(artists: filteredArtists, initialArtistID: navigation.artistToOpen)

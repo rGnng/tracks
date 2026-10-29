@@ -96,6 +96,8 @@ struct SongTableDebugInfo: Equatable {
     var rows = 0
     var selected = 0
     var selectedIndex = -1
+    var selectedID = ""
+    var instance = ""
     var offset: CGFloat = 0
     var viewport: CGFloat = 0
     var content: CGFloat = 0
@@ -120,6 +122,9 @@ struct BrowserDebugInfo: Equatable {
     var offset: CGFloat = 0
     var viewport: CGFloat = 0
     var content: CGFloat = 0
+    var listOffset: CGFloat = 0
+    var listViewport: CGFloat = 0
+    var listContent: CGFloat = 0
 }
 
 struct SidebarDebugInfo: Equatable {
@@ -137,6 +142,8 @@ final class DebugState: ObservableObject {
     @Published var sidebar = SidebarDebugInfo()
     @Published var albumLocateRequest: AlbumLocateRequest?
     @Published var albumLocator = AlbumLocatorDebugInfo()
+    @Published var sessionSave = ""
+    @Published var sessionLoad = ""
 }
 
 private struct DebugFrameModifier: ViewModifier {
@@ -405,6 +412,10 @@ struct DebugPanel: View {
                             metric("rows", "\(state.songTable.rows)")
                             metric("selected", "\(state.songTable.selected)")
                             metric("index", "\(state.songTable.selectedIndex)")
+                            metric("selected id", state.songTable.selectedID.isEmpty ? "—" : state.songTable.selectedID)
+                            metric("instance", state.songTable.instance)
+                            metric("session save", state.sessionSave.isEmpty ? "—" : state.sessionSave)
+                            metric("session load", state.sessionLoad.isEmpty ? "—" : state.sessionLoad)
                             metric("offset", fmt(state.songTable.offset))
                             metric("viewport", fmt(state.songTable.viewport))
                             metric("content", fmt(state.songTable.content))
@@ -416,9 +427,12 @@ struct DebugPanel: View {
                             metric("selected", state.browser.selected)
                             metric("albums", "\(state.browser.albums)")
                             metric("songs selected", "\(state.browser.selectedSongs)")
-                            metric("offset", fmt(state.browser.offset))
-                            metric("viewport", fmt(state.browser.viewport))
-                            metric("content", fmt(state.browser.content))
+                            metric("pane offset", fmt(state.browser.offset))
+                            metric("pane viewport", fmt(state.browser.viewport))
+                            metric("pane content", fmt(state.browser.content))
+                            metric("list offset", fmt(state.browser.listOffset))
+                            metric("list viewport", fmt(state.browser.listViewport))
+                            metric("list content", fmt(state.browser.listContent))
                         }
 
                         section("AlbumDetail") {

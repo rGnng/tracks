@@ -17,7 +17,11 @@ struct ArtistsBrowser: View {
         let requested = initialArtistID.flatMap { id in
             artists.contains(where: { $0.id == id }) ? id : nil
         }
-        _selectedID = State(initialValue: requested ?? artists.first?.id)
+        let storedState = SessionViewState.shared.browserState(for: "artists")
+        let stored = (storedState?.itemCount == artists.count ? storedState?.selectedID : nil).flatMap { id in
+            artists.contains(where: { $0.id == id }) ? id : nil
+        }
+        _selectedID = State(initialValue: requested ?? stored ?? artists.first?.id)
     }
 
     private var selectedArtist: ArtistSummary? {
@@ -31,7 +35,8 @@ struct ArtistsBrowser: View {
                 items: artists,
                 selectedID: $selectedID,
                 title: { $0.name },
-                detail: { "\($0.albums.count)" }
+                detail: { "\($0.albums.count)" },
+                viewKey: "artists"
             ) { artist in
                 player.play(artist.albums.flatMap(\.songs))
             }
@@ -97,7 +102,11 @@ struct GenresBrowser: View {
 
     init(genres: [GenreItem]) {
         self.genres = genres
-        _selectedID = State(initialValue: genres.first?.name)
+        let storedState = SessionViewState.shared.browserState(for: "genres")
+        let stored = (storedState?.itemCount == genres.count ? storedState?.selectedID : nil).flatMap { name in
+            genres.contains(where: { $0.name == name }) ? name : nil
+        }
+        _selectedID = State(initialValue: stored ?? genres.first?.name)
     }
 
     private var selectedGenre: GenreItem? {
@@ -116,7 +125,8 @@ struct GenresBrowser: View {
                 items: genres,
                 selectedID: $selectedID,
                 title: { $0.name },
-                detail: { "\($0.count)" }
+                detail: { "\($0.count)" },
+                viewKey: "genres"
             ) { genre in
                 player.play(library.albums.filter { $0.genre == genre.name }.flatMap(\.songs))
             }
@@ -167,6 +177,7 @@ private struct BrowserList<Item: Identifiable>: View where Item.ID == String {
     @Binding var selectedID: Item.ID?
     let title: (Item) -> String
     let detail: (Item) -> String
+    let viewKey: String
     let onDoubleTap: (Item) -> Void
 
     @State private var scrollPosition = ScrollPosition()
@@ -177,12 +188,20 @@ private struct BrowserList<Item: Identifiable>: View where Item.ID == String {
     init(items: [Item], selectedID: Binding<Item.ID?>,
          title: @escaping (Item) -> String,
          detail: @escaping (Item) -> String,
+         viewKey: String,
          onDoubleTap: @escaping (Item) -> Void) {
         self.items = items
         self._selectedID = selectedID
         self.title = title
         self.detail = detail
+        self.viewKey = viewKey
         self.onDoubleTap = onDoubleTap
+        let stored = SessionViewState.shared.browserState(for: viewKey)
+        let saved = stored?.itemCount == items.count ? stored : nil
+        _scrollPosition = State(initialValue: ScrollPosition(
+            idType: Never.self,
+            y: max(0, saved?.offset ?? 0)
+        ))
     }
 
     var body: some View {
@@ -205,7 +224,6 @@ private struct BrowserList<Item: Identifiable>: View where Item.ID == String {
                     .simultaneousGesture(TapGesture(count: 2).onEnded { onDoubleTap(item) })
                 }
             }
-            .scrollTargetLayout()
             .padding(.vertical, contentTopPadding)
         }
         .scrollPosition($scrollPosition)
@@ -215,26 +233,39 @@ private struct BrowserList<Item: Identifiable>: View where Item.ID == String {
                               contentHeight: geometry.contentSize.height)
         } action: { _, new in
             metrics = new
+            publishDebugState()
         }
         .background(Theme.contentBackground)
         .debugFrame("BrowserList")
-        .onReceive(NavigationRouter.shared.$arrow) { arrow in
-            guard let arrow, NavigationRouter.shared.focus == .browserList else { return }
+        .onReceive(NavigationRouter.shared.arrowEvents) { arrow in
+            guard NavigationRouter.shared.focus == .browserList else { return }
             moveSelection(arrow.direction)
         }
-        .onReceive(NavigationRouter.shared.$scrollEvent) { event in
-            guard let event, NavigationRouter.shared.focus == .browserList else { return }
+        .onReceive(NavigationRouter.shared.scrollEvents) { event in
+            guard NavigationRouter.shared.focus == .browserList else { return }
             handleScroll(event.command)
         }
         .onChange(of: selectedID) { _, _ in publishDebugState() }
         .onChange(of: items.count) { _, _ in publishDebugState() }
         .onAppear { publishDebugState() }
+        .onDisappear {
+            guard metrics.viewportHeight > 0 else { return }
+            SessionViewState.shared.saveBrowser(
+                .init(offset: metrics.offset,
+                      selectedID: selectedID,
+                      itemCount: items.count),
+                for: viewKey
+            )
+        }
     }
 
     private func publishDebugState() {
         var info = DebugState.shared.browser
         info.items = items.count
         info.selected = selectedID ?? "—"
+        info.listOffset = metrics.offset
+        info.listViewport = metrics.viewportHeight
+        info.listContent = metrics.contentHeight
         DebugState.shared.browser = info
     }
 
@@ -409,12 +440,12 @@ private struct BrowserAlbumPane: View {
                 publishDebugState()
             }
         }
-        .onReceive(NavigationRouter.shared.$arrow) { arrow in
-            guard let arrow, NavigationRouter.shared.focus == .browserTracks else { return }
+        .onReceive(NavigationRouter.shared.arrowEvents) { arrow in
+            guard NavigationRouter.shared.focus == .browserTracks else { return }
             moveSelection(arrow.direction)
         }
-        .onReceive(NavigationRouter.shared.$scrollEvent) { event in
-            guard let event, NavigationRouter.shared.focus == .browserTracks else { return }
+        .onReceive(NavigationRouter.shared.scrollEvents) { event in
+            guard NavigationRouter.shared.focus == .browserTracks else { return }
             handleScroll(event.command)
         }
         .onChange(of: selectedSongIDs) { _, _ in publishDebugState() }

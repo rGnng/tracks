@@ -167,8 +167,8 @@ struct SidebarView: View {
         .frame(width: width)
         .background(Theme.sidebarBackground)
         .debugFrame("Sidebar")
-        .onReceive(NavigationRouter.shared.$arrow) { arrow in
-            guard let arrow, NavigationRouter.shared.focus == .sidebar else { return }
+        .onReceive(NavigationRouter.shared.arrowEvents) { arrow in
+            guard NavigationRouter.shared.focus == .sidebar else { return }
             moveSelection(arrow.direction)
         }
         .onChange(of: selection) { _, _ in

@@ -13,6 +13,7 @@ private struct AlbumCardFramesKey: PreferenceKey {
 struct AlbumGrid: View {
     let albums: [Album]
     @Binding var openAlbumID: UUID?
+    let viewKey: String
 
     @ObservedObject private var debug = DebugSettings.shared
     @Environment(\.openWindow) private var openWindow
@@ -36,7 +37,25 @@ struct AlbumGrid: View {
     @State private var metrics = ListScrollMetrics()
 
     private let columns = [GridItem(.adaptive(minimum: 158, maximum: 240), spacing: 22)]
-    private let contentTopPadding: CGFloat = 22
+    private static let contentTopPadding: CGFloat = 22
+    private var contentTopPadding: CGFloat { Self.contentTopPadding }
+
+    init(albums: [Album], openAlbumID: Binding<UUID?>, viewKey: String) {
+        self.albums = albums
+        self._openAlbumID = openAlbumID
+        self.viewKey = viewKey
+
+        let stored = openAlbumID.wrappedValue == nil
+            ? SessionViewState.shared.albumState(for: viewKey)
+            : nil
+        let saved = stored?.itemCount == albums.count ? stored : nil
+        _selectedIDs = State(initialValue: saved?.selectedIDs ?? [])
+        _selectionAnchor = State(initialValue: saved?.anchor)
+        _scrollPosition = State(initialValue: ScrollPosition(
+            idType: Never.self,
+            y: max(0, saved?.offset ?? 0)
+        ))
+    }
 
     private var player: PlayerState { PlayerState.shared }
 
@@ -68,6 +87,13 @@ struct AlbumGrid: View {
             revealAlbum(id: id, in: albums)
         }
         .onAppear {
+            if !albums.isEmpty {
+                let valid = Set(albums.map(\.id))
+                selectedIDs.formIntersection(valid)
+                if let selectionAnchor, !valid.contains(selectionAnchor) {
+                    self.selectionAnchor = nil
+                }
+            }
             updateStatusBar()
             rebuildAlbumIndex()
             publishDebugState()
@@ -76,17 +102,27 @@ struct AlbumGrid: View {
             }
             attemptPendingLocate()
         }
+        .onDisappear {
+            guard metrics.viewportHeight > 0 else { return }
+            SessionViewState.shared.saveAlbum(
+                .init(offset: metrics.offset,
+                      selectedIDs: selectedIDs,
+                      anchor: selectionAnchor,
+                      itemCount: albums.count),
+                for: viewKey
+            )
+        }
         .onChange(of: selectedIDs) { _, _ in
             updateStatusBar()
             publishDebugState()
         }
         .onChange(of: expandedAlbum) { _, _ in updateStatusBar() }
-        .onReceive(NavigationRouter.shared.$arrow) { arrow in
-            guard let arrow, NavigationRouter.shared.focus == .albumGrid else { return }
+        .onReceive(NavigationRouter.shared.arrowEvents) { arrow in
+            guard NavigationRouter.shared.focus == .albumGrid else { return }
             moveSelection(arrow.direction)
         }
-        .onReceive(NavigationRouter.shared.$scrollEvent) { event in
-            guard let event, NavigationRouter.shared.focus == .albumGrid else { return }
+        .onReceive(NavigationRouter.shared.scrollEvents) { event in
+            guard NavigationRouter.shared.focus == .albumGrid else { return }
             handleScroll(event.command)
         }
         .onReceive(DebugState.shared.$albumLocateRequest) { request in
@@ -919,12 +955,12 @@ private struct AlbumDetailView: View {
             publishDebugState()
         }
         .debugFrame("AlbumDetail")
-        .onReceive(NavigationRouter.shared.$arrow) { arrow in
-            guard let arrow, NavigationRouter.shared.focus == .albumDetail else { return }
+        .onReceive(NavigationRouter.shared.arrowEvents) { arrow in
+            guard NavigationRouter.shared.focus == .albumDetail else { return }
             moveSelection(arrow.direction)
         }
-        .onReceive(NavigationRouter.shared.$scrollEvent) { event in
-            guard let event, NavigationRouter.shared.focus == .albumDetail else { return }
+        .onReceive(NavigationRouter.shared.scrollEvents) { event in
+            guard NavigationRouter.shared.focus == .albumDetail else { return }
             handleScroll(event.command)
         }
         .onChange(of: selectedSongIDs) { _, _ in
@@ -1239,6 +1275,14 @@ enum SongTableContext: Hashable {
         }
     }
 
+    var viewStateKey: String {
+        switch self {
+        case .songs: return "songs"
+        case .starred: return "starred"
+        case .playlist(let id): return "playlist:\(id.uuidString)"
+        }
+    }
+
     /// Sorting is remembered per playlist, while column widths and visibility
     /// remain shared by the table kind.
     var sortStorageKey: String {
@@ -1306,6 +1350,8 @@ struct SongTable: View {
     let songs: [Song]
     let context: SongTableContext
     let playlistInfo: [UUID: PlaylistItemInfo]
+    private let restoredSongState: SessionViewState.SongState?
+    @State private var debugInstanceID = String(UUID().uuidString.prefix(4))
 
     @ObservedObject private var playback = PlaybackStatus.shared
     @Environment(\.openWindow) private var openWindow
@@ -1348,7 +1394,8 @@ struct SongTable: View {
     private let statusWidth: CGFloat = 28
     /// Fixed trailing slot for the per-track star button.
     private let starWidth: CGFloat = 28
-    private let contentTopPadding: CGFloat = 6
+    private static let contentTopPadding: CGFloat = 6
+    private var contentTopPadding: CGFloat { Self.contentTopPadding }
 
     private var player: PlayerState { PlayerState.shared }
 
@@ -1384,7 +1431,34 @@ struct SongTable: View {
         _columnOrderCSV = AppStorage(wrappedValue: newDefault, orderKey)
         _sortKeyRaw = AppStorage(wrappedValue: SongSortKey.name.rawValue, "\(sortPrefix).sortKey")
         _sortAscending = AppStorage(wrappedValue: true, "\(sortPrefix).sortAscending")
-        _sortedSongs = State(initialValue: songs)
+
+        let initialSortKey = SongSortKey(
+            rawValue: UserDefaults.standard.string(forKey: "\(sortPrefix).sortKey") ?? ""
+        ) ?? .name
+        let initialAscending = UserDefaults.standard.object(
+            forKey: "\(sortPrefix).sortAscending"
+        ) as? Bool ?? true
+        let initialSongs = songsSorted(songs,
+                                       by: initialSortKey,
+                                       ascending: initialAscending,
+                                       playlistInfo: playlistInfo)
+        var initialIndexes: [UUID: Int] = [:]
+        initialIndexes.reserveCapacity(initialSongs.count)
+        for (index, song) in initialSongs.enumerated() {
+            initialIndexes[song.id] = index
+        }
+        _sortedSongs = State(initialValue: initialSongs)
+        _rowIndexByID = State(initialValue: initialIndexes)
+
+        let stored = SessionViewState.shared.songState(for: context.viewStateKey)
+        let saved = stored?.itemCount == songs.count ? stored : nil
+        self.restoredSongState = saved
+        _selectedIDs = State(initialValue: saved?.selectedIDs ?? [])
+        _selectionAnchor = State(initialValue: saved?.anchor)
+        _scrollPosition = State(initialValue: ScrollPosition(
+            idType: Never.self,
+            y: max(0, saved?.offset ?? 0)
+        ))
     }
 
     // MARK: Column metadata
@@ -1516,15 +1590,26 @@ struct SongTable: View {
         .background(Theme.contentBackground)
         .debugFrame("SongTable")
         .task {
+            if let restoredSongState {
+                DebugState.shared.sessionLoad = "\(context.viewStateKey) off=\(String(format: "%.1f", restoredSongState.offset)) n=\(restoredSongState.selectedIDs.count) a=\(restoredSongState.anchor?.uuidString.prefix(8) ?? "nil")"
+            } else {
+                DebugState.shared.sessionLoad = "\(context.viewStateKey) nil"
+            }
             rebuildSorted()
+            let valid = Set(songs.map(\.id))
+            selectedIDs.formIntersection(valid)
+            if let selectionAnchor, !valid.contains(selectionAnchor) {
+                self.selectionAnchor = nil
+            }
+            updateStatusBar()
             publishDebugState()
         }
-        .onReceive(NavigationRouter.shared.$arrow) { arrow in
-            guard let arrow, NavigationRouter.shared.focus == .songTable else { return }
+        .onReceive(NavigationRouter.shared.arrowEvents) { arrow in
+            guard NavigationRouter.shared.focus == .songTable else { return }
             moveSelection(arrow.direction)
         }
-        .onReceive(NavigationRouter.shared.$scrollEvent) { event in
-            guard let event, NavigationRouter.shared.focus == .songTable else { return }
+        .onReceive(NavigationRouter.shared.scrollEvents) { event in
+            guard NavigationRouter.shared.focus == .songTable else { return }
             handleScroll(event.command)
         }
         .onChange(of: selectedIDs) { _, _ in
@@ -1545,6 +1630,17 @@ struct SongTable: View {
             rebuildSorted()
             publishDebugState()
         }
+        .onDisappear {
+            guard metrics.viewportHeight > 0 else { return }
+            SessionViewState.shared.saveSong(
+                .init(offset: metrics.offset,
+                      selectedIDs: selectedIDs,
+                      anchor: selectionAnchor,
+                      itemCount: songs.count,
+                      debugTag: debugInstanceID),
+                for: context.viewStateKey
+            )
+        }
     }
 
     private func publishDebugState() {
@@ -1556,6 +1652,8 @@ struct SongTable: View {
             rows: sorted.count,
             selected: selectedIDs.count,
             selectedIndex: selectedIndex,
+            selectedID: (selectionAnchor ?? selectedIDs.first)?.uuidString ?? "",
+            instance: debugInstanceID,
             offset: metrics.offset,
             viewport: metrics.viewportHeight,
             content: metrics.contentHeight
