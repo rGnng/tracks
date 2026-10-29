@@ -770,6 +770,7 @@ struct NowPlayingView: View {
                     HStack(spacing: 0) {
                         CenterControlButton(icon: "shuffle",
                                             active: player.isShuffleOn,
+                                            showsActiveBackground: true,
                                             help: "Shuffle") {
                             player.toggleShuffle()
                         }
@@ -783,6 +784,7 @@ struct NowPlayingView: View {
                             }
                             CenterControlButton(icon: player.repeatMode == .one ? "repeat.1" : "repeat",
                                                 active: player.repeatMode != .off,
+                                                showsActiveBackground: true,
                                                 help: repeatHelp) {
                                 player.cycleRepeatMode()
                             }
@@ -975,8 +977,10 @@ private struct NowPlayingMenu: View {
     }
 }
 
-private struct CenterControlButton: View {    let icon: String
+private struct CenterControlButton: View {
+    let icon: String
     let active: Bool
+    var showsActiveBackground = false
     let help: String
     let action: () -> Void
 
@@ -986,6 +990,12 @@ private struct CenterControlButton: View {    let icon: String
                 .font(.system(size: 15, weight: .medium))
                 .foregroundColor(active ? Theme.highlight : Theme.secondaryText)
                 .frame(width: 20, height: 20)
+                .background {
+                    if active && showsActiveBackground {
+                        RoundedRectangle(cornerRadius: 5, style: .continuous)
+                            .fill(Theme.highlight.opacity(0.18))
+                    }
+                }
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
