@@ -326,22 +326,44 @@ enum SidebarSelectionStore {
 /// remains selected even when it is outside that viewport. No pixel offset is
 /// stored.
 enum ViewPositionStore {
-    private static func viewportOffsetKey(_ name: String) -> String {
-        "viewPosition.\(name).viewportOffset"
+    private static let lastViewKey = "lastViewportKey"
+    private static let lastOffsetKey = "lastViewportOffset"
+
+    static func lastViewport() -> (key: String, offset: CGFloat)? {
+        let defaults = UserDefaults.standard
+        guard let key = defaults.string(forKey: lastViewKey),
+              defaults.object(forKey: lastOffsetKey) != nil else { return nil }
+        return (key, CGFloat(defaults.double(forKey: lastOffsetKey)))
     }
 
-    static func viewportOffset(for name: String) -> CGFloat? {
+    static func setLastViewport(key: String, offset: CGFloat) {
         let defaults = UserDefaults.standard
-        guard defaults.object(forKey: viewportOffsetKey(name)) != nil else { return nil }
-        return CGFloat(defaults.double(forKey: viewportOffsetKey(name)))
+        defaults.set(key, forKey: lastViewKey)
+        defaults.set(Double(offset), forKey: lastOffsetKey)
+    }
+}
+
+/// In-memory offsets for views visited during this app session. They make
+/// switching between views smooth without persisting hidden views to disk.
+final class ViewScrollStore: @unchecked Sendable {
+    static let shared = ViewScrollStore()
+
+    private let lock = NSLock()
+    private var offsets: [String: CGFloat] = [:]
+
+    func offset(for name: String) -> CGFloat? {
+        lock.lock()
+        defer { lock.unlock() }
+        return offsets[name]
     }
 
-    static func setViewportOffset(_ offset: CGFloat?, for name: String) {
-        let defaults = UserDefaults.standard
+    func setOffset(_ offset: CGFloat?, for name: String) {
+        lock.lock()
+        defer { lock.unlock() }
         if let offset {
-            defaults.set(Double(offset), forKey: viewportOffsetKey(name))
+            offsets[name] = offset
         } else {
-            defaults.removeObject(forKey: viewportOffsetKey(name))
+            offsets.removeValue(forKey: name)
         }
     }
 }

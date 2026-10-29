@@ -31,6 +31,7 @@ final class KeyboardNavigator: ObservableObject {    static let shared = Keyboar
     private(set) var lastMove: Move = .down
 
     @Published private(set) var activateCount = 0
+    @Published private(set) var clearSelectionCount = 0
 
     /// Home/End/Page keys are routed to the focused SwiftUI list, which scrolls
     /// through its own `ScrollPosition` and geometry. Poking NSScrollView
@@ -46,6 +47,10 @@ final class KeyboardNavigator: ObservableObject {    static let shared = Keyboar
 
     func activate() {
         activateCount += 1
+    }
+
+    func clearSelection() {
+        clearSelectionCount += 1
     }
 
     func sendScroll(_ command: ScrollCommand) {

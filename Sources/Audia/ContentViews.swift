@@ -35,6 +35,7 @@ struct AlbumGrid: View {
     @State private var metrics = ListScrollMetrics()
 
     private let columns = [GridItem(.adaptive(minimum: 158, maximum: 240), spacing: 22)]
+    private let initialOffset: CGFloat?
 
     init(albums: [Album], openAlbumID: Binding<UUID?>, scrollKey: String) {
         self.albums = albums
@@ -47,6 +48,9 @@ struct AlbumGrid: View {
         let selection = Set(sessionSelection.filter { validIDs.contains($0) })
         let restoredSelection = selection.isEmpty ? (focus.map { [$0] } ?? []) : selection
         let restoredFocus = focus ?? restoredSelection.first
+        let sessionOffset = ViewScrollStore.shared.offset(for: scrollKey)
+        let persisted = ViewPositionStore.lastViewport()
+        initialOffset = sessionOffset ?? (persisted?.key == scrollKey ? persisted?.offset : nil)
 
         _scrollPosition = State(initialValue: ScrollPosition())
         _selectedIDs = State(initialValue: restoredSelection)
@@ -227,20 +231,25 @@ struct AlbumGrid: View {
                     if metrics.viewportHeight > 0 { break }
                     try? await Task.sleep(for: .milliseconds(10))
                 }
-                if let offset = ViewPositionStore.viewportOffset(for: scrollKey), offset > 0 {
+                if let offset = initialOffset, offset > 0 {
                     scrollPosition.scrollTo(y: offset)
                 }
                 try? await Task.sleep(for: .milliseconds(200))
                 allowViewportSave = true
+                saveViewportNow()
                 performRevealTarget()
             }
-            .onDisappear { saveViewportNow() }
+            .onDisappear { saveSessionOffsetNow() }
             .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
                 saveViewportNow()
             }
             .onChange(of: revealTargetID) { _, _ in
                 guard allowViewportSave else { return }
                 performRevealTarget()
+            }
+            .onChange(of: navigator.clearSelectionCount) { _, _ in
+                guard expandedAlbum == nil else { return }
+                clearSelection()
             }
             .onChange(of: navigator.moveCount) { _, _ in
                 guard expandedAlbum == nil else { return }
@@ -312,7 +321,13 @@ struct AlbumGrid: View {
 
     private func saveViewportNow() {
         guard allowViewportSave else { return }
-        ViewPositionStore.setViewportOffset(metrics.offset, for: scrollKey)
+        ViewScrollStore.shared.setOffset(metrics.offset, for: scrollKey)
+        ViewPositionStore.setLastViewport(key: scrollKey, offset: metrics.offset)
+    }
+
+    private func saveSessionOffsetNow() {
+        viewportSaveTask?.cancel()
+        ViewScrollStore.shared.setOffset(metrics.offset, for: scrollKey)
     }
 
     private var currentGridSampleFrame: CGRect? {
@@ -750,6 +765,9 @@ private struct AlbumDetailView: View {
             moveSelection()
             revealSelection()
         }
+        .onChange(of: navigator.clearSelectionCount) { _, _ in
+            clearSelection()
+        }
         .onChange(of: navigator.scrollCount) { _, _ in
             scroll(to: navigator.lastScrollCommand)
         }
@@ -1062,6 +1080,8 @@ struct AlbumList: View {
     @State private var scrollPosition: ScrollPosition
     @State private var metrics = ListScrollMetrics()
 
+    private let initialOffset: CGFloat?
+
     init(albums: [Album], scrollKey: String) {
         self.albums = albums
         self.scrollKey = scrollKey
@@ -1072,6 +1092,9 @@ struct AlbumList: View {
         let selection = Set(sessionSelection.filter { validIDs.contains($0) })
         let restoredSelection = selection.isEmpty ? (focus.map { [$0] } ?? []) : selection
         let restoredFocus = focus ?? restoredSelection.first
+        let sessionOffset = ViewScrollStore.shared.offset(for: scrollKey)
+        let persisted = ViewPositionStore.lastViewport()
+        initialOffset = sessionOffset ?? (persisted?.key == scrollKey ? persisted?.offset : nil)
 
         _scrollPosition = State(initialValue: ScrollPosition())
         _selectedIDs = State(initialValue: restoredSelection)
@@ -1180,19 +1203,23 @@ struct AlbumList: View {
                     if metrics.viewportHeight > 0 { break }
                     try? await Task.sleep(for: .milliseconds(10))
                 }
-                if let offset = ViewPositionStore.viewportOffset(for: scrollKey), offset > 0 {
+                if let offset = initialOffset, offset > 0 {
                     scrollPosition.scrollTo(y: offset)
                 }
                 try? await Task.sleep(for: .milliseconds(200))
                 allowViewportSave = true
+                saveViewportNow()
             }
-            .onDisappear { saveViewportNow() }
+            .onDisappear { saveSessionOffsetNow() }
             .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
                 saveViewportNow()
             }
             .onChange(of: navigator.moveCount) { _, _ in
                 moveSelection()
                 revealSelection()
+            }
+            .onChange(of: navigator.clearSelectionCount) { _, _ in
+                clearSelection()
             }
             .onChange(of: navigator.scrollCount) { _, _ in
                 scroll(to: navigator.lastScrollCommand)
@@ -1429,7 +1456,13 @@ struct AlbumList: View {
 
     private func saveViewportNow() {
         guard allowViewportSave else { return }
-        ViewPositionStore.setViewportOffset(metrics.offset, for: scrollKey)
+        ViewScrollStore.shared.setOffset(metrics.offset, for: scrollKey)
+        ViewPositionStore.setLastViewport(key: scrollKey, offset: metrics.offset)
+    }
+
+    private func saveSessionOffsetNow() {
+        viewportSaveTask?.cancel()
+        ViewScrollStore.shared.setOffset(metrics.offset, for: scrollKey)
     }
 
     private var visibleListRows: Int {
@@ -1594,6 +1627,7 @@ struct SongTable: View {
     private let statusWidth: CGFloat = 28
     /// Fixed trailing slot for the per-track star button.
     private let starWidth: CGFloat = 28
+    private let initialOffset: CGFloat?
 
     init(songs: [Song], context: SongTableContext,
          playlistInfo: [UUID: PlaylistItemInfo] = [:]) {
@@ -1641,6 +1675,10 @@ struct SongTable: View {
         let selection = Set(sessionSelection.filter { validIDs.contains($0) })
         let restoredSelection = selection.isEmpty ? (focus.map { [$0] } ?? []) : selection
         let restoredFocus = focus ?? restoredSelection.first
+        let sessionOffset = ViewScrollStore.shared.offset(for: context.scrollPositionKey)
+        let persisted = ViewPositionStore.lastViewport()
+        initialOffset = sessionOffset
+            ?? (persisted?.key == context.scrollPositionKey ? persisted?.offset : nil)
 
         _scrollPosition = State(initialValue: ScrollPosition())
         _selectedIDs = State(initialValue: restoredSelection)
@@ -2038,19 +2076,23 @@ struct SongTable: View {
                 if metrics.viewportHeight > 0 { break }
                 try? await Task.sleep(for: .milliseconds(10))
             }
-            if let offset = ViewPositionStore.viewportOffset(for: context.scrollPositionKey), offset > 0 {
+            if let offset = initialOffset, offset > 0 {
                 scrollPosition.scrollTo(y: offset)
             }
             try? await Task.sleep(for: .milliseconds(200))
             allowViewportSave = true
+            saveViewportNow()
         }
-        .onDisappear { saveViewportNow() }
+        .onDisappear { saveSessionOffsetNow() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
             saveViewportNow()
         }
         .onChange(of: navigator.moveCount) { _, _ in
             moveSelection()
             revealSelection()
+        }
+        .onChange(of: navigator.clearSelectionCount) { _, _ in
+            clearSelection()
         }
         .onChange(of: navigator.scrollCount) { _, _ in
             scroll(to: navigator.lastScrollCommand)
@@ -2342,7 +2384,13 @@ struct SongTable: View {
 
     private func saveViewportNow() {
         guard allowViewportSave else { return }
-        ViewPositionStore.setViewportOffset(metrics.offset, for: context.scrollPositionKey)
+        ViewScrollStore.shared.setOffset(metrics.offset, for: context.scrollPositionKey)
+        ViewPositionStore.setLastViewport(key: context.scrollPositionKey, offset: metrics.offset)
+    }
+
+    private func saveSessionOffsetNow() {
+        viewportSaveTask?.cancel()
+        ViewScrollStore.shared.setOffset(metrics.offset, for: context.scrollPositionKey)
     }
 
     private var visibleTableRows: Int {

@@ -192,6 +192,8 @@ private struct BrowserList<Item: Identifiable>: View where Item.ID == String {
     @State private var scrollPosition: ScrollPosition
     @State private var metrics = ListScrollMetrics()
 
+    private let initialOffset: CGFloat?
+
     init(items: [Item], selectedID: Binding<Item.ID?>,
          title: @escaping (Item) -> String,
          detail: @escaping (Item) -> String,
@@ -203,6 +205,9 @@ private struct BrowserList<Item: Identifiable>: View where Item.ID == String {
         self.detail = detail
         self.scrollKey = scrollKey
         self.onDoubleTap = onDoubleTap
+        let sessionOffset = ViewScrollStore.shared.offset(for: scrollKey)
+        let persisted = ViewPositionStore.lastViewport()
+        initialOffset = sessionOffset ?? (persisted?.key == scrollKey ? persisted?.offset : nil)
         _scrollPosition = State(initialValue: ScrollPosition())
     }
 
@@ -240,19 +245,23 @@ private struct BrowserList<Item: Identifiable>: View where Item.ID == String {
                 if metrics.viewportHeight > 0 { break }
                 try? await Task.sleep(for: .milliseconds(10))
             }
-            if let offset = ViewPositionStore.viewportOffset(for: scrollKey), offset > 0 {
+            if let offset = initialOffset, offset > 0 {
                 scrollPosition.scrollTo(y: offset)
             }
             try? await Task.sleep(for: .milliseconds(200))
             allowViewportSave = true
+            saveViewportNow()
         }
-        .onDisappear { saveViewportNow() }
+        .onDisappear { saveSessionOffsetNow() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
             saveViewportNow()
         }
         .onChange(of: navigator.moveCount) { _, _ in
             guard moveSelection() else { return }
             revealSelection()
+        }
+        .onChange(of: navigator.clearSelectionCount) { _, _ in
+            selectedID = nil
         }
         .onChange(of: navigator.scrollCount) { _, _ in
             scroll(to: navigator.lastScrollCommand)
@@ -334,7 +343,13 @@ private struct BrowserList<Item: Identifiable>: View where Item.ID == String {
 
     private func saveViewportNow() {
         guard allowViewportSave else { return }
-        ViewPositionStore.setViewportOffset(metrics.offset, for: scrollKey)
+        ViewScrollStore.shared.setOffset(metrics.offset, for: scrollKey)
+        ViewPositionStore.setLastViewport(key: scrollKey, offset: metrics.offset)
+    }
+
+    private func saveSessionOffsetNow() {
+        viewportSaveTask?.cancel()
+        ViewScrollStore.shared.setOffset(metrics.offset, for: scrollKey)
     }
 
     private var visibleBrowserRows: Int {

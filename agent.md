@@ -357,17 +357,19 @@ Important schema decisions:
   `library:<section>`, `starred`, or `playlist:<uuid>`. A missing, malformed,
   or deleted-playlist value falls back to **Recently Added**. The first launch
   and library switches also use Recently Added as the default view.
-- Scrollable content stores its exact scroll offset under
-  `viewPosition.<view>.viewportOffset` (Albums, Recently Added, each song-table
-  context, and the Artists/Genres browser lists). The offset is the only
-  viewport restoration source; do not mix it with item-anchor positioning,
-  which shifts the viewport by the row padding. Offsets are saved after
-  scrolling and on view disappearance/termination.
+- The active scroll viewport is persisted as a single `lastViewportKey` /
+  `lastViewportOffset` pair. Only the list currently on screen writes it;
+  hidden views are not persisted. Within one app session, `ViewScrollStore`
+  keeps in-memory offsets for visited views so switching back restores them;
+  after relaunch only the last active view restores its offset, and other
+  views start at the top. Do not mix item anchors with this offset.
 - Cursor/selection is session-only (`ViewFocusStore`). Switching views in the
   same app session restores the selected items and focus, but quitting and
   relaunching starts with no selected album/song and only the saved scroll
   offset. Artists/Genres fall back to the first item when the session store is
   empty. There is no center-on-selection restore.
+- Escape clears the current list's selection (album grid/list, song table,
+  album-detail tracks, artist/genre browser) without moving the viewport.
 - Home/End/Page Up/Page Down are routed through `KeyboardNavigator` to the
   mounted SwiftUI list. The lists use `ScrollPosition` plus
   `onScrollGeometryChange`, not `ScrollViewReader`, so they always know the

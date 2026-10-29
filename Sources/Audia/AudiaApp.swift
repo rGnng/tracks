@@ -1790,6 +1790,9 @@ enum KeyboardShortcuts {
             case 28: // 8
                 NavigationCenter.shared.sidebarSelection = .starred
                 return nil
+            case 53: // escape
+                KeyboardNavigator.shared.clearSelection()
+                return nil
             default:
                 break
             }
