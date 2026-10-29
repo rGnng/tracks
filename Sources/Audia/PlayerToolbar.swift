@@ -74,6 +74,7 @@ struct PlayerToolbar: View {
         }
         .frame(height: 45)
         .clipped()
+        .debugFrame("PlayerToolbar")
     }
 }
 
@@ -1051,11 +1052,7 @@ struct SearchField: View {
                 .focused($focused)
                 .onSubmit {
                     guard focused else { return }
-                    let hasQuery = !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                     focusContent()
-                    if hasQuery {
-                        KeyboardNavigator.shared.selectFirst()
-                    }
                 }
                 .onExitCommand {
                     guard focused else { return }
@@ -1090,7 +1087,6 @@ struct SearchField: View {
 
     private func focusContent() {
         focused = false
-        KeyboardNavigator.shared.region = .content
         DispatchQueue.main.async {
             NotificationCenter.default.post(name: .focusContent, object: nil)
         }

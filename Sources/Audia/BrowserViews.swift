@@ -7,19 +7,17 @@ import AppKit
 struct ArtistsBrowser: View {
     let artists: [ArtistSummary]
 
-    @EnvironmentObject private var player: PlayerState
     @ObservedObject private var navigation = NavigationCenter.shared
     @State private var selectedID: String?
+
+    private var player: PlayerState { PlayerState.shared }
 
     init(artists: [ArtistSummary], initialArtistID: String? = nil) {
         self.artists = artists
         let requested = initialArtistID.flatMap { id in
             artists.contains(where: { $0.id == id }) ? id : nil
         }
-        let stored = ViewFocusStore.shared.focusID(for: "artists").flatMap { id in
-            artists.contains(where: { $0.id == id }) ? id : nil
-        }
-        _selectedID = State(initialValue: requested ?? stored ?? artists.first?.id)
+        _selectedID = State(initialValue: requested ?? artists.first?.id)
     }
 
     private var selectedArtist: ArtistSummary? {
@@ -33,8 +31,7 @@ struct ArtistsBrowser: View {
                 items: artists,
                 selectedID: $selectedID,
                 title: { $0.name },
-                detail: { "\($0.albums.count)" },
-                scrollKey: "artists.list"
+                detail: { "\($0.albums.count)" }
             ) { artist in
                 player.play(artist.albums.flatMap(\.songs))
             }
@@ -54,23 +51,18 @@ struct ArtistsBrowser: View {
             }
         }
         .background(Theme.contentBackground)
+        .debugFrame("ArtistsBrowser")
         .onChange(of: artists) { _, newValue in
             if selectedID == nil || !newValue.contains(where: { $0.id == selectedID }) {
                 selectedID = newValue.first?.id
             }
             updateStatusBar()
         }
-        .onChange(of: selectedID) { _, id in
-            ViewFocusStore.shared.set(selection: id.map { [$0] } ?? [],
-                                      focus: id,
-                                      for: "artists")
+        .onChange(of: selectedID) { _, _ in
             updateStatusBar()
         }
         .onAppear {
             consumePendingArtist()
-            ViewFocusStore.shared.set(selection: selectedID.map { [$0] } ?? [],
-                                      focus: selectedID,
-                                      for: "artists")
             updateStatusBar()
         }
         .onChange(of: navigation.artistToOpen) { _, _ in
@@ -98,16 +90,14 @@ struct ArtistsBrowser: View {
 struct GenresBrowser: View {
     let genres: [GenreItem]
 
-    @EnvironmentObject private var player: PlayerState
     @ObservedObject private var library = Library.shared
     @State private var selectedID: String?
 
+    private var player: PlayerState { PlayerState.shared }
+
     init(genres: [GenreItem]) {
         self.genres = genres
-        let stored = ViewFocusStore.shared.focusID(for: "genres").flatMap { id in
-            genres.contains(where: { $0.id == id }) ? id : nil
-        }
-        _selectedID = State(initialValue: stored ?? genres.first?.name)
+        _selectedID = State(initialValue: genres.first?.name)
     }
 
     private var selectedGenre: GenreItem? {
@@ -126,8 +116,7 @@ struct GenresBrowser: View {
                 items: genres,
                 selectedID: $selectedID,
                 title: { $0.name },
-                detail: { "\($0.count)" },
-                scrollKey: "genres.list"
+                detail: { "\($0.count)" }
             ) { genre in
                 player.play(library.albums.filter { $0.genre == genre.name }.flatMap(\.songs))
             }
@@ -147,22 +136,17 @@ struct GenresBrowser: View {
             }
         }
         .background(Theme.contentBackground)
+        .debugFrame("GenresBrowser")
         .onChange(of: genres) { _, newValue in
             if selectedID == nil || !newValue.contains(where: { $0.name == selectedID }) {
                 selectedID = newValue.first?.name
             }
             updateStatusBar()
         }
-        .onChange(of: selectedID) { _, id in
-            ViewFocusStore.shared.set(selection: id.map { [$0] } ?? [],
-                                      focus: id,
-                                      for: "genres")
+        .onChange(of: selectedID) { _, _ in
             updateStatusBar()
         }
         .onAppear {
-            ViewFocusStore.shared.set(selection: selectedID.map { [$0] } ?? [],
-                                      focus: selectedID,
-                                      for: "genres")
             updateStatusBar()
         }
     }
@@ -183,13 +167,9 @@ private struct BrowserList<Item: Identifiable>: View where Item.ID == String {
     @Binding var selectedID: Item.ID?
     let title: (Item) -> String
     let detail: (Item) -> String
-    let scrollKey: String
     let onDoubleTap: (Item) -> Void
 
-    @ObservedObject private var navigator = KeyboardNavigator.shared
-    @State private var allowViewportSave = false
-    @State private var viewportSaveTask: Task<Void, Never>?
-    @State private var scrollPosition: ScrollPosition
+    @State private var scrollPosition = ScrollPosition()
     @State private var metrics = ListScrollMetrics()
 
     private let contentTopPadding: CGFloat = 6
@@ -197,22 +177,12 @@ private struct BrowserList<Item: Identifiable>: View where Item.ID == String {
     init(items: [Item], selectedID: Binding<Item.ID?>,
          title: @escaping (Item) -> String,
          detail: @escaping (Item) -> String,
-         scrollKey: String,
          onDoubleTap: @escaping (Item) -> Void) {
         self.items = items
         self._selectedID = selectedID
         self.title = title
         self.detail = detail
-        self.scrollKey = scrollKey
         self.onDoubleTap = onDoubleTap
-        let sessionOffset = ViewScrollStore.shared.offset(for: scrollKey)
-        let persisted = ViewPositionStore.lastViewport()
-        let restoreOffset = sessionOffset
-            ?? (persisted?.key == scrollKey ? persisted?.offset : nil)
-        _scrollPosition = State(initialValue: ScrollPosition(
-            idType: Never.self,
-            y: max(0, (restoreOffset ?? 0) - contentTopPadding)
-        ))
     }
 
     var body: some View {
@@ -228,7 +198,10 @@ private struct BrowserList<Item: Identifiable>: View where Item.ID == String {
                     )
                     .id(item.id)
                     .contentShape(Rectangle())
-                    .onTapGesture { selectedID = item.id }
+                    .onTapGesture {
+                        NavigationRouter.shared.setFocus(.browserList)
+                        selectedID = item.id
+                    }
                     .simultaneousGesture(TapGesture(count: 2).onEnded { onDoubleTap(item) })
                 }
             }
@@ -242,149 +215,102 @@ private struct BrowserList<Item: Identifiable>: View where Item.ID == String {
                               contentHeight: geometry.contentSize.height)
         } action: { _, new in
             metrics = new
-            scheduleViewportSave()
-        }
-        .task {
-            for _ in 0..<50 {
-                if metrics.viewportHeight > 0 { break }
-                try? await Task.sleep(for: .milliseconds(10))
-            }
-            try? await Task.sleep(for: .milliseconds(200))
-            allowViewportSave = true
-            saveViewportNow()
-        }
-        .onDisappear { saveSessionOffsetNow() }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
-            saveViewportNow()
-        }
-        .onChange(of: navigator.moveCount) { _, _ in
-            guard moveSelection() else { return }
-            revealSelection()
-        }
-        .onChange(of: navigator.clearSelectionCount) { _, _ in
-            if selectedID == nil {
-                NotificationCenter.default.post(name: .clearSearch, object: nil)
-            } else {
-                selectedID = nil
-            }
-        }
-        .onChange(of: navigator.selectFirstCount) { _, _ in
-            guard let first = items.first else { return }
-            selectedID = first.id
-            scrollPosition.scrollTo(edge: .top)
-        }
-        .onChange(of: navigator.scrollCount) { _, _ in
-            scroll(to: navigator.lastScrollCommand)
-        }
-        .onChange(of: navigator.activateCount) { _, _ in
-            activateSelection()
         }
         .background(Theme.contentBackground)
-    }
-
-    private func activateSelection() {
-        guard navigator.region == .content else { return }
-        guard let selectedID, let item = items.first(where: { $0.id == selectedID }) else { return }
-        onDoubleTap(item)
-    }
-
-    @discardableResult
-    private func moveSelection() -> Bool {
-        guard navigator.region == .content else { return false }
-        guard navigator.lastMove == .up || navigator.lastMove == .down else { return false }
-        guard !items.isEmpty else { return false }
-        let delta = navigator.lastMove == .up ? -1 : 1
-        let baseIndex: Int
-        if let selectedID,
-           let index = items.firstIndex(where: { $0.id == selectedID }),
-           isOnScreen(selectedID, index: index) {
-            baseIndex = index
-        } else if let topIndex = topVisibleIndex() {
-            baseIndex = topIndex
-        } else if let selectedID,
-                  let index = items.firstIndex(where: { $0.id == selectedID }) {
-            baseIndex = index
-        } else {
-            baseIndex = 0
+        .debugFrame("BrowserList")
+        .onReceive(NavigationRouter.shared.$arrow) { arrow in
+            guard let arrow, NavigationRouter.shared.focus == .browserList else { return }
+            moveSelection(arrow.direction)
         }
-        let nextID = items[min(max(baseIndex + delta, 0), items.count - 1)].id
-        guard nextID != selectedID else { return false }
-        selectedID = nextID
-        return true
-    }
-
-    private func revealSelection() {
-        guard let id = selectedID,
-              let index = items.firstIndex(where: { $0.id == id }) else { return }
-        let frame = browserRowFrame(at: index)
-        guard let target = ListScroll.revealTarget(for: frame, metrics: metrics, padding: 6) else { return }
-        withAnimation(.easeInOut(duration: 0.08)) {
-            scrollPosition.scrollTo(y: target)
+        .onReceive(NavigationRouter.shared.$scrollEvent) { event in
+            guard let event, NavigationRouter.shared.focus == .browserList else { return }
+            handleScroll(event.command)
         }
+        .onChange(of: selectedID) { _, _ in publishDebugState() }
+        .onChange(of: items.count) { _, _ in publishDebugState() }
+        .onAppear { publishDebugState() }
     }
 
-    private func scroll(to command: KeyboardNavigator.ScrollCommand) {
+    private func publishDebugState() {
+        var info = DebugState.shared.browser
+        info.items = items.count
+        info.selected = selectedID ?? "—"
+        DebugState.shared.browser = info
+    }
+
+    private func moveSelection(_ direction: NavigationDirection) {
+        guard direction == .up || direction == .down else {
+            if direction == .right {
+                NavigationRouter.shared.setFocus(.browserTracks)
+            }
+            return
+        }
         guard !items.isEmpty else { return }
-        switch command {
-        case .top:
-            scrollPosition.scrollTo(edge: .top)
-        case .bottom:
-            scrollPosition.scrollTo(edge: .bottom)
-        case .pageUp, .pageDown:
-            guard let index = topVisibleIndex() else { return }
-            let page = max(1, visibleBrowserRows - 1)
-            let target = index + (command == .pageUp ? -page : page)
-            let clamped = min(max(target, 0), items.count - 1)
-            let targetOffset = ListScroll.pageTarget(for: browserRowFrame(at: clamped),
-                                                     metrics: metrics,
-                                                     padding: 6)
-            scrollPosition.scrollTo(y: targetOffset)
+        let delta = direction == .up ? -1 : 1
+        let index: Int
+        if let currentID = selectedID,
+           let current = items.firstIndex(where: { $0.id == currentID }),
+           isOnScreen(index: current) {
+            index = min(max(current + delta, 0), items.count - 1)
+        } else if let top = topVisibleIndex() {
+            index = top
+        } else if let currentID = selectedID,
+                  let current = items.firstIndex(where: { $0.id == currentID }) {
+            index = min(max(current + delta, 0), items.count - 1)
+        } else {
+            index = 0
         }
+
+        selectedID = items[index].id
+        reveal(index: index)
     }
 
-    private func scheduleViewportSave() {
-        viewportSaveTask?.cancel()
-        viewportSaveTask = Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(300))
-            guard !Task.isCancelled else { return }
-            saveViewportNow()
-        }
-    }
-
-    private func saveViewportNow() {
-        guard allowViewportSave else { return }
-        ViewScrollStore.shared.setOffset(metrics.offset, for: scrollKey)
-        ViewPositionStore.setLastViewport(key: scrollKey, offset: metrics.offset)
-    }
-
-    private func saveSessionOffsetNow() {
-        viewportSaveTask?.cancel()
-        ViewScrollStore.shared.setOffset(metrics.offset, for: scrollKey)
-    }
-
-    private var visibleBrowserRows: Int {
-        max(1, Int(ceil(metrics.viewportHeight / 26)))
+    private func rowFrame(at index: Int) -> CGRect {
+        CGRect(x: 0,
+               y: contentTopPadding + CGFloat(index) * 26,
+               width: 1,
+               height: 26)
     }
 
     private func topVisibleIndex() -> Int? {
         for index in items.indices {
-            let frame = browserRowFrame(at: index)
-            if frame.maxY > metrics.offset + 0.5 {
+            if rowFrame(at: index).maxY > metrics.offset + 0.5 {
                 return index
             }
         }
         return nil
     }
 
-    private func isOnScreen(_ id: Item.ID, index: Int) -> Bool {
-        let frame = browserRowFrame(at: index)
+    private func isOnScreen(index: Int) -> Bool {
+        let frame = rowFrame(at: index)
         return frame.maxY > metrics.offset + 0.5
             && frame.minY < metrics.offset + metrics.viewportHeight - 0.5
     }
 
-    private func browserRowFrame(at index: Int) -> CGRect {
-        CGRect(x: 0, y: 6 + CGFloat(index) * 26, width: 1, height: 26)
+    private func reveal(index: Int) {
+        let frame = rowFrame(at: index)
+        guard let target = ListScroll.revealTarget(for: frame,
+                                                   metrics: metrics,
+                                                   padding: contentTopPadding) else { return }
+        scrollPosition.scrollTo(y: target)
     }
+
+    private func handleScroll(_ command: NavigationScrollCommand) {
+        switch command {
+        case .home:
+            scrollPosition.scrollTo(edge: .top)
+        case .end:
+            scrollPosition.scrollTo(edge: .bottom)
+        case .pageUp, .pageDown:
+            guard metrics.viewportHeight > 0 else { return }
+            let visibleRows = max(1, Int(ceil(metrics.viewportHeight / 26)))
+            let pageHeight = CGFloat(max(1, visibleRows - 1) * 26)
+            let delta = command == .pageUp ? -pageHeight : pageHeight
+            let target = min(max(metrics.offset + delta, 0), metrics.maxOffset)
+            scrollPosition.scrollTo(y: target)
+        }
+    }
+
 }
 
 private struct BrowserRow: View {
@@ -422,12 +348,16 @@ private struct BrowserAlbumPane: View {
     let subtitle: String
     let albums: [Album]
 
-    @EnvironmentObject private var player: PlayerState
     @AppStorage("albumSort") private var albumSort = GridSort.album.rawValue
     @AppStorage("albumSortDirection") private var albumSortDirection =
         GridSortDirection.ascending.rawValue
     @State private var selectedSongIDs: Set<UUID> = []
     @State private var selectionAnchor: UUID?
+    @State private var rowFrames: [UUID: CGRect] = [:]
+    @State private var scrollPosition = ScrollPosition()
+    @State private var metrics = ListScrollMetrics()
+
+    private var player: PlayerState { PlayerState.shared }
 
     init(title: String, subtitle: String, albums: [Album]) {
         self.title = title
@@ -450,36 +380,145 @@ private struct BrowserAlbumPane: View {
         VStack(spacing: 0) {
             header
             Hairline()
-            ScrollViewReader { _ in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 0) {
-                        ForEach(sortedAlbums) { album in
-                            BrowserAlbumSection(
-                                album: album,
-                                selectedSongIDs: $selectedSongIDs,
-                                selectedSongs: orderedSongs.filter { selectedSongIDs.contains($0.id) },
-                                onRowTap: { song in handleRowTap(song) }
-                            )
-                            Hairline()
-                        }
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    ForEach(sortedAlbums) { album in
+                        BrowserAlbumSection(
+                            album: album,
+                            selectedSongIDs: $selectedSongIDs,
+                            selectedSongs: orderedSongs.filter { selectedSongIDs.contains($0.id) },
+                            onRowTap: { song in handleRowTap(song) }
+                        )
+                        Hairline()
                     }
-                    .scrollTargetLayout()
-                    .padding(.bottom, 8)
-                    .onTapGesture { clearSelection() }
-                    .marqueeSelectable(selection: $selectedSongIDs, space: "browserTrackSpace")
                 }
+                .scrollTargetLayout()
+                .padding(.bottom, 8)
                 .onTapGesture { clearSelection() }
+                .marqueeSelectable(selection: $selectedSongIDs, space: "browserTrackSpace")
+                .onPreferenceChange(MarqueeFramesKey.self) { rowFrames = $0 }
+            }
+            .onTapGesture { clearSelection() }
+            .scrollPosition($scrollPosition)
+            .onScrollGeometryChange(for: ListScrollMetrics.self) { geometry in
+                ListScrollMetrics(offset: geometry.contentOffset.y,
+                                  viewportHeight: geometry.containerSize.height,
+                                  contentHeight: geometry.contentSize.height)
+            } action: { _, new in
+                metrics = new
+                publishDebugState()
             }
         }
+        .onReceive(NavigationRouter.shared.$arrow) { arrow in
+            guard let arrow, NavigationRouter.shared.focus == .browserTracks else { return }
+            moveSelection(arrow.direction)
+        }
+        .onReceive(NavigationRouter.shared.$scrollEvent) { event in
+            guard let event, NavigationRouter.shared.focus == .browserTracks else { return }
+            handleScroll(event.command)
+        }
+        .onChange(of: selectedSongIDs) { _, _ in publishDebugState() }
+        .onAppear { publishDebugState() }
+        .debugFrame("BrowserAlbumPane")
         .background(Theme.contentBackground)
     }
 
+    private func publishDebugState() {
+        var info = DebugState.shared.browser
+        info.title = title
+        info.albums = albums.count
+        info.selectedSongs = selectedSongIDs.count
+        info.offset = metrics.offset
+        info.viewport = metrics.viewportHeight
+        info.content = metrics.contentHeight
+        DebugState.shared.browser = info
+    }
+
     private func clearSelection() {
+        NavigationRouter.shared.setFocus(.browserTracks)
         selectedSongIDs.removeAll()
         selectionAnchor = nil
     }
 
+    private func moveSelection(_ direction: NavigationDirection) {
+        switch direction {
+        case .left:
+            NavigationRouter.shared.setFocus(.browserList)
+        case .up, .down:
+            let songs = orderedSongs
+            guard !songs.isEmpty else { return }
+            let delta = direction == .up ? -1 : 1
+            let currentID = selectionAnchor ?? selectedSongIDs.first
+
+            let index: Int
+            if let currentID,
+               let current = songs.firstIndex(where: { $0.id == currentID }),
+               isOnScreen(currentID) {
+                index = min(max(current + delta, 0), songs.count - 1)
+            } else if let top = topVisibleSongIndex() {
+                index = top
+            } else if let currentID,
+                      let current = songs.firstIndex(where: { $0.id == currentID }) {
+                index = min(max(current + delta, 0), songs.count - 1)
+            } else {
+                index = 0
+            }
+
+            let id = songs[index].id
+            selectedSongIDs = [id]
+            selectionAnchor = id
+            revealSelection()
+        case .right:
+            break
+        }
+    }
+
+    private func topVisibleSongIndex() -> Int? {
+        for index in orderedSongs.indices {
+            guard let frame = rowFrames[orderedSongs[index].id] else { continue }
+            if frame.maxY > metrics.offset + 0.5 {
+                return index
+            }
+        }
+        return nil
+    }
+
+    private func isOnScreen(_ id: UUID) -> Bool {
+        guard let frame = rowFrames[id] else { return false }
+        return frame.maxY > metrics.offset + 0.5
+            && frame.minY < metrics.offset + metrics.viewportHeight - 0.5
+    }
+
+    private func revealSelection() {
+        guard let id = selectionAnchor else { return }
+        guard let frame = rowFrames[id] else {
+            scrollPosition.scrollTo(id: id, anchor: .center)
+            return
+        }
+        guard let target = ListScroll.revealTarget(for: frame,
+                                                   metrics: metrics,
+                                                   padding: 6) else { return }
+        scrollPosition.scrollTo(y: target)
+    }
+
+    private func handleScroll(_ command: NavigationScrollCommand) {
+        switch command {
+        case .home:
+            scrollPosition.scrollTo(edge: .top)
+        case .end:
+            scrollPosition.scrollTo(edge: .bottom)
+        case .pageUp, .pageDown:
+            guard metrics.viewportHeight > 0 else { return }
+            let visibleRows = max(1, Int(ceil(metrics.viewportHeight / 24)))
+            let pageHeight = CGFloat(max(1, visibleRows - 1) * 24)
+            let delta = command == .pageUp ? -pageHeight : pageHeight
+            let target = min(max(metrics.offset + delta, 0), metrics.maxOffset)
+            scrollPosition.scrollTo(y: target)
+        }
+    }
+
     private func handleRowTap(_ song: Song) {
+        NavigationRouter.shared.setFocus(.browserTracks)
         let flags = NSEvent.modifierFlags
         let command = flags.contains(.command)
         let shift = flags.contains(.shift)
@@ -536,8 +575,10 @@ private struct BrowserAlbumSection: View {
     let selectedSongs: [Song]
     let onRowTap: (Song) -> Void
 
-    @EnvironmentObject private var player: PlayerState
+    @ObservedObject private var playback = PlaybackStatus.shared
     @State private var playHover = false
+
+    private var player: PlayerState { PlayerState.shared }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -551,9 +592,9 @@ private struct BrowserAlbumSection: View {
                 BrowserSongRow(
                     song: song,
                     isSelected: selected,
-                    isCurrent: player.currentSong?.id == song.id,
-                    isMissing: player.missingFileIDs.contains(song.id),
-                    isPlaying: player.isPlaying,
+                    isCurrent: playback.currentSongID == song.id,
+                    isMissing: playback.missingFileIDs.contains(song.id),
+                    isPlaying: playback.isPlaying,
                     previousSelected: previousSelected,
                     nextSelected: nextSelected
                 )
@@ -562,12 +603,14 @@ private struct BrowserAlbumSection: View {
                 .simultaneousGesture(TapGesture(count: 2).onEnded {
                     player.play(song, in: album.songs)
                 })
+                .id(song.id)
                 .songContextMenu(song, queue: album.songs, selection: contextSelection)
                 .selectionFrame(id: song.id, in: "browserTrackSpace")
                 .longPressArmable { dragPayload(for: song) }
             }
         }
         .padding(.bottom, 14)
+        .debugFrame("BrowserAlbumSection \(album.title)")
     }
 
     private var albumInfo: String {

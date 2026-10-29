@@ -21,6 +21,19 @@ struct MissingFileStreak {
     }
 }
 
+/// Lightweight playback projection for views that only need status changes.
+/// It deliberately excludes elapsed time so 5 Hz progress updates do not
+/// invalidate every list in the window.
+@MainActor
+final class PlaybackStatus: ObservableObject {
+    static let shared = PlaybackStatus()
+
+    @Published fileprivate(set) var currentSongID: UUID?
+    @Published fileprivate(set) var isPlaying = false
+    @Published fileprivate(set) var missingFileIDs: Set<UUID> = []
+    @Published fileprivate(set) var missingFilePauseMessage: String?
+}
+
 /// Shared playback state and audio engine.
 ///
 /// Tracks that come from the file-based library carry a `fileURL` and are played
@@ -64,6 +77,7 @@ final class PlayerState: ObservableObject {
 
     private var didAttemptQueueRestore = false
     private var queueChangeCancellables: Set<AnyCancellable> = []
+    private var playbackStatusCancellables: Set<AnyCancellable> = []
     private var lastPersistedElapsed: TimeInterval = 0
 
     private static let shuffleDefaultsKey = "player.shuffleEnabled"
@@ -133,7 +147,49 @@ final class PlayerState: ObservableObject {
             }
             .store(in: &queueChangeCancellables)
 
+        observePlaybackStatus()
         SystemNowPlaying.shared.attach(to: self)
+    }
+
+    /// Mirrors only the playback fields the lists need. `elapsed` stays on
+    /// `PlayerState` and is observed only by the transport UI.
+    private func observePlaybackStatus() {
+        PlaybackStatus.shared.currentSongID = currentSong?.id
+        PlaybackStatus.shared.isPlaying = isPlaying
+        PlaybackStatus.shared.missingFileIDs = missingFileIDs
+        PlaybackStatus.shared.missingFilePauseMessage = missingFilePauseMessage
+
+        Publishers.CombineLatest($queueEntries, $currentIndex)
+            .map { queue, index -> UUID? in
+                guard let index, queue.indices.contains(index) else { return nil }
+                return queue[index].song.id
+            }
+            .removeDuplicates()
+            .sink { id in
+                Task { @MainActor in PlaybackStatus.shared.currentSongID = id }
+            }
+            .store(in: &playbackStatusCancellables)
+
+        $isPlaying
+            .removeDuplicates()
+            .sink { playing in
+                Task { @MainActor in PlaybackStatus.shared.isPlaying = playing }
+            }
+            .store(in: &playbackStatusCancellables)
+
+        $missingFileIDs
+            .removeDuplicates()
+            .sink { ids in
+                Task { @MainActor in PlaybackStatus.shared.missingFileIDs = ids }
+            }
+            .store(in: &playbackStatusCancellables)
+
+        $missingFilePauseMessage
+            .removeDuplicates()
+            .sink { message in
+                Task { @MainActor in PlaybackStatus.shared.missingFilePauseMessage = message }
+            }
+            .store(in: &playbackStatusCancellables)
     }
 
     /// Song projection for UI and integrations that do not need queue-entry

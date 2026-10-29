@@ -4,11 +4,9 @@ struct SidebarView: View {
     @Binding var selection: SidebarSelection
     let width: CGFloat
 
-    @ObservedObject private var navigator = KeyboardNavigator.shared
     @ObservedObject private var library = Library.shared
     @ObservedObject private var drag = DragController.shared
     @ObservedObject private var importer = MediaImporter.shared
-    @EnvironmentObject private var player: PlayerState
     @AppStorage("albumSort") private var albumSort = GridSort.album.rawValue
     @AppStorage("albumSortDirection") private var albumSortDirection =
         GridSortDirection.ascending.rawValue
@@ -16,6 +14,8 @@ struct SidebarView: View {
 
     @State private var editingPlaylistID: UUID?
     @State private var creatingPlaylist = false
+
+    private var player: PlayerState { PlayerState.shared }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -166,14 +166,57 @@ struct SidebarView: View {
         .padding(.bottom, 10)
         .frame(width: width)
         .background(Theme.sidebarBackground)
-        .onHover { inside in
-            if inside { navigator.region = .sidebar }
+        .debugFrame("Sidebar")
+        .onReceive(NavigationRouter.shared.$arrow) { arrow in
+            guard let arrow, NavigationRouter.shared.focus == .sidebar else { return }
+            moveSelection(arrow.direction)
         }
-        .onChange(of: navigator.moveCount) { _, _ in
-            moveSelection()
+        .onChange(of: selection) { _, _ in
+            publishDebugState()
+        }
+        .onChange(of: library.playlists) { _, _ in
+            publishDebugState()
+        }
+        .onAppear {
+            publishDebugState()
         }
         .onPreferenceChange(PlaylistFramesKey.self) { frames in
             drag.playlistFrames = frames
+        }
+    }
+
+    private func publishDebugState() {
+        DebugState.shared.sidebar = SidebarDebugInfo(
+            selection: selection.persistenceValue,
+            playlists: library.playlists.count
+        )
+    }
+
+    private var flatSelections: [SidebarSelection] {
+        var items = LibrarySection.allCases.map { SidebarSelection.library($0) }
+        items.append(.starred)
+        items.append(contentsOf: library.playlists.map { .playlist($0.id) })
+        return items
+    }
+
+    private func moveSelection(_ direction: NavigationDirection) {
+        switch direction {
+        case .up, .down:
+            let items = flatSelections
+            guard !items.isEmpty else { return }
+            let delta = direction == .up ? -1 : 1
+            let index: Int
+            if let current = items.firstIndex(of: selection) {
+                index = min(max(current + delta, 0), items.count - 1)
+            } else {
+                index = delta > 0 ? 0 : items.count - 1
+            }
+            selection = items[index]
+            NavigationRouter.shared.setFocus(.sidebar)
+        case .right:
+            NavigationRouter.shared.setFocus(NavigationRouter.shared.focus(for: selection))
+        case .left:
+            break
         }
     }
 
@@ -208,22 +251,6 @@ struct SidebarView: View {
         return nil
     }
 
-    private var flatSelections: [SidebarSelection] {
-        LibrarySection.allCases.map { .library($0) } + [.starred] + library.playlists.map { .playlist($0.id) }
-    }
-
-    private func moveSelection() {
-        guard navigator.region == .sidebar else { return }
-        guard navigator.lastMove == .up || navigator.lastMove == .down else { return }
-        let items = flatSelections
-        guard !items.isEmpty else { return }
-        let delta = navigator.lastMove == .up ? -1 : 1
-        if let index = items.firstIndex(of: selection) {
-            selection = items[min(max(index + delta, 0), items.count - 1)]
-        } else if let first = items.first {
-            selection = first
-        }
-    }
 }
 
 private struct SidebarHeader: View {
@@ -253,7 +280,10 @@ private struct SidebarItem: View {
     @State private var hover = false
 
     var body: some View {
-        Button(action: action) {
+        Button {
+            NavigationRouter.shared.setFocus(.sidebar)
+            action()
+        } label: {
             HStack(spacing: 8) {
                 Image(systemName: icon)
                     .font(.system(size: 13, weight: .medium))

@@ -20,9 +20,9 @@ final class StatusBarCenter: ObservableObject {
 }
 
 struct StatusBarView: View {
-    @EnvironmentObject private var player: PlayerState
     @ObservedObject private var library = Library.shared
     @ObservedObject private var status = StatusBarCenter.shared
+    @ObservedObject private var playback = PlaybackStatus.shared
 
     private var summary: String {
         switch status.context {
@@ -90,8 +90,8 @@ struct StatusBarView: View {
 
             HStack(spacing: 12) {
                 Spacer()
-                if player.currentSong != nil {
-                    Image(systemName: player.isPlaying ? "play.fill" : "pause.fill")
+                if playback.currentSongID != nil {
+                    Image(systemName: playback.isPlaying ? "play.fill" : "pause.fill")
                         .font(.system(size: 9, weight: .semibold))
                         .foregroundColor(Theme.secondaryText)
                 }
@@ -100,5 +100,6 @@ struct StatusBarView: View {
         .padding(.horizontal, 12)
         .frame(maxWidth: .infinity, minHeight: 24, maxHeight: 24)
         .background(Theme.toolbarBottom)
+        .debugFrame("StatusBar")
     }
 }

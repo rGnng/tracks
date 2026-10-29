@@ -23,6 +23,7 @@ struct AudiaApp: App {
         Window("Tracks", id: "main") {
             ContentView()
                 .environmentObject(PlayerState.shared)
+                .environmentObject(DebugSettings.shared)
                 .accentColor(highlightColor)
         }
         .windowStyle(.hiddenTitleBar)
@@ -95,6 +96,8 @@ struct AudiaApp: App {
                     Text("Dark").tag("dark")
                 }
             }
+
+            DebugCommands()
         }
 
         Settings {
@@ -108,6 +111,13 @@ struct AudiaApp: App {
                 .accentColor(highlightColor)
         }
         .defaultSize(width: 540, height: 620)
+
+        Window("Debug", id: "debug") {
+            DebugPanel()
+                .environmentObject(DebugSettings.shared)
+        }
+        .defaultSize(width: 780, height: 760)
+        .windowResizability(.contentMinSize)
 
         Window("Set Up Tracks Library", id: "setup") {
             InternalLibrarySetupView()
@@ -161,7 +171,6 @@ private enum LibraryFolderPicker {
 }
 
 struct SettingsView: View {
-    @AppStorage("albumViewMode") private var albumViewMode = "grid"
     @AppStorage("albumSort") private var albumSort = GridSort.album.rawValue
     @AppStorage("albumSortDirection") private var albumSortDirection =
         GridSortDirection.ascending.rawValue
@@ -392,16 +401,6 @@ struct SettingsView: View {
     private var generalSettings: some View {
         VStack(alignment: .leading, spacing: 22) {
             SettingsCard(title: "Browsing") {
-                SettingsRow(title: "Album display as") {
-                    Picker("", selection: $albumViewMode) {
-                        Text("Grid").tag("grid")
-                        Text("List").tag("list")
-                    }
-                    .labelsHidden()
-                    .pickerStyle(.menu)
-                    .frame(width: 150)
-                }
-                SettingsDivider()
                 SettingsRow(title: "Albums sorted by") {
                     HStack(spacing: 8) {
                         Picker("", selection: $albumSort) {
@@ -1820,157 +1819,10 @@ enum KeyboardShortcuts {
             }
         }
 
-        guard modifiers.isEmpty, !isEditingText else { return event }
-
-        if window === WindowModeCenter.shared.mainWindow {
-            switch event.keyCode {
-            case 18: // 1
-                NavigationCenter.shared.sidebarSelection = .library(.recentlyAdded)
-                return nil
-            case 19: // 2
-                NavigationCenter.shared.sidebarSelection = .library(.albums)
-                return nil
-            case 20: // 3
-                NavigationCenter.shared.sidebarSelection = .library(.artists)
-                return nil
-            case 21: // 4
-                NavigationCenter.shared.sidebarSelection = .library(.songs)
-                return nil
-            case 23: // 5
-                NavigationCenter.shared.sidebarSelection = .library(.genres)
-                return nil
-            case 28: // 8
-                NavigationCenter.shared.sidebarSelection = .starred
-                return nil
-            case 53: // escape
-                KeyboardNavigator.shared.clearSelection()
-                return nil
-            default:
-                break
-            }
+        if NavigationRouter.shared.handle(event, in: window) {
+            return nil
         }
 
-        switch event.keyCode {
-        case 123: // left arrow
-            KeyboardNavigator.shared.send(.left)
-            return nil
-        case 124: // right arrow
-            KeyboardNavigator.shared.send(.right)
-            return nil
-        case 125: // down arrow
-            KeyboardNavigator.shared.send(.down)
-            return nil
-        case 126: // up arrow
-            KeyboardNavigator.shared.send(.up)
-            return nil
-        case 116: // page up
-            handleScroll(.pageUp, in: window, event: event)
-            return nil
-        case 121: // page down
-            handleScroll(.pageDown, in: window, event: event)
-            return nil
-        case 115: // home
-            handleScroll(.top, in: window, event: event)
-            return nil
-        case 119: // end
-            handleScroll(.bottom, in: window, event: event)
-            return nil
-        case 36, 76: // return / enter
-            KeyboardNavigator.shared.activate()
-            return nil
-        default:
-            return event
-        }
-    }
-
-    private static func handleScroll(_ command: KeyboardNavigator.ScrollCommand,
-                                     in window: NSWindow,
-                                     event: NSEvent) {
-        // The Library lists own their scroll view through SwiftUI. Direct
-        // NSScrollView scrolling there fought the view's layout and could snap
-        // it back to the previous focus row. Other windows still use the
-        // AppKit fallback below.
-        if window === WindowModeCenter.shared.mainWindow {
-            KeyboardNavigator.shared.sendScroll(command)
-            return
-        }
-        switch command {
-        case .pageUp:
-            scrollByPage(up: true, event: event)
-        case .pageDown:
-            scrollByPage(up: false, event: event)
-        case .top:
-            scrollToTop(event: event)
-        case .bottom:
-            scrollToBottom(event: event)
-        }
-    }
-
-    private static func scrollByPage(up: Bool, event: NSEvent) {
-        guard let scrollView = targetScrollView(for: event) else { return }
-        let clip = scrollView.contentView
-        let document = scrollView.documentView
-        let page = max(clip.bounds.height * 0.9, 40)
-        let direction: CGFloat = (document?.isFlipped ?? true) ? 1 : -1
-        scroll(scrollView, toY: clip.bounds.origin.y + (up ? -page : page) * direction)
-    }
-
-    private static func scrollToTop(event: NSEvent) {
-        guard let scrollView = targetScrollView(for: event),
-              let document = scrollView.documentView else { return }
-        let top = document.isFlipped ? 0 : max(document.bounds.height - scrollView.contentView.bounds.height, 0)
-        scroll(scrollView, toY: top)
-    }
-
-    private static func scrollToBottom(event: NSEvent) {
-        guard let scrollView = targetScrollView(for: event),
-              let document = scrollView.documentView else { return }
-        let bottom = document.isFlipped ? max(document.bounds.height - scrollView.contentView.bounds.height, 0) : 0
-        scroll(scrollView, toY: bottom)
-    }
-
-    private static func scroll(_ scrollView: NSScrollView, toY y: CGFloat) {
-        guard let document = scrollView.documentView else { return }
-        let clip = scrollView.contentView
-        let maxY = max(document.bounds.height - clip.bounds.height, 0)
-        let clamped = min(max(y, 0), maxY)
-        clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: clamped))
-        scrollView.reflectScrolledClipView(clip)
-    }
-
-    private static func targetScrollView(for event: NSEvent) -> NSScrollView? {
-        guard let window = event.window, let content = window.contentView else { return nil }
-        let point = content.convert(event.locationInWindow, from: nil)
-        if let hit = content.hitTest(point) {
-            var view: NSView? = hit
-            while let current = view {
-                if let scroll = current as? NSScrollView, !isTextFieldScrollView(scroll) {
-                    return scroll
-                }
-                view = current.superview
-            }
-        }
-        return largestScrollView(in: content)
-    }
-
-    private static func isTextFieldScrollView(_ scrollView: NSScrollView) -> Bool {
-        scrollView.documentView is NSTextView
-    }
-
-    private static func largestScrollView(in root: NSView) -> NSScrollView? {
-        var found: [NSScrollView] = []
-        func walk(_ view: NSView) {
-            if let scroll = view as? NSScrollView {
-                if !isTextFieldScrollView(scroll) { found.append(scroll) }
-                return
-            }
-            view.subviews.forEach(walk)
-        }
-        walk(root)
-        return found.max { lhs, rhs in
-            let a = lhs.contentView.bounds
-            let b = rhs.contentView.bounds
-            return a.width * a.height < b.width * b.height
-        }
+        return event
     }
 }

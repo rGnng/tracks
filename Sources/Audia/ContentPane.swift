@@ -5,15 +5,11 @@ struct ContentPane: View {
     let searchText: String
     @Binding var openAlbumID: UUID?
 
-    @AppStorage("albumViewMode") private var albumViewMode = "grid"
     @AppStorage("albumSort") private var albumSort = GridSort.album.rawValue
     @AppStorage("albumSortDirection") private var albumSortDirection =
         GridSortDirection.ascending.rawValue
     @ObservedObject private var library = Library.shared
     @ObservedObject private var navigation = NavigationCenter.shared
-    @State private var navigationDetail = false
-
-    private var isGrid: Bool { albumViewMode != "list" }
 
     private var sort: GridSort {
         GridSort(rawValue: albumSort) ?? .album
@@ -26,20 +22,6 @@ struct ContentPane: View {
     var body: some View {
         content
             .background(Theme.contentBackground)
-            .onHover { inside in
-                if inside { KeyboardNavigator.shared.region = .content }
-            }
-            .onChange(of: openAlbumID, initial: true) { _, id in
-                if id != nil { navigationDetail = true }
-            }
-            .onChange(of: selection) { _, newValue in
-                if newValue != .library(.albums) {
-                    navigationDetail = false
-                }
-            }
-            .onReceive(NotificationCenter.default.publisher(for: .goBackRequested)) { _ in
-                navigationDetail = false
-            }
     }
 
     // MARK: Content routing
@@ -48,21 +30,11 @@ struct ContentPane: View {
     private var content: some View {
         switch selection {
         case .library(.albums):
-            if isGrid || navigationDetail {
-                AlbumGrid(albums: sortedAlbums, openAlbumID: $openAlbumID, scrollKey: "albums")
-                    .id(selection)
-            } else {
-                AlbumList(albums: sortedAlbums, scrollKey: "albums")
-                    .id(selection)
-            }
+            AlbumGrid(albums: sortedAlbums, openAlbumID: $openAlbumID)
+                .id(selection)
         case .library(.recentlyAdded):
-            if isGrid || navigationDetail {
-                AlbumGrid(albums: recentAlbums, openAlbumID: $openAlbumID, scrollKey: "recentlyAdded")
-                    .id(selection)
-            } else {
-                AlbumList(albums: recentAlbums, scrollKey: "recentlyAdded")
-                    .id(selection)
-            }
+            AlbumGrid(albums: recentAlbums, openAlbumID: $openAlbumID)
+                .id(selection)
         case .library(.artists):
             ArtistsBrowser(artists: filteredArtists, initialArtistID: navigation.artistToOpen)
                 .id(selection)

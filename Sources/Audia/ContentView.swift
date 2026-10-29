@@ -2,13 +2,13 @@ import SwiftUI
 import AppKit
 
 struct ContentView: View {
-    @EnvironmentObject private var player: PlayerState
     @Environment(\.openWindow) private var openWindow
     @AppStorage("showStatusBar") private var showStatusBar = true
     @AppStorage("showStatusBarFullScreen") private var showStatusBarFullScreen = true
     @ObservedObject private var sidebar = SidebarVisibilityStore.shared
     @ObservedObject private var navigation = NavigationCenter.shared
     @ObservedObject private var library = Library.shared
+    @ObservedObject private var playback = PlaybackStatus.shared
     @ObservedObject private var windowMode = WindowModeCenter.shared
     @State private var selection: SidebarSelection =
         SidebarSelectionStore.load() ?? SidebarSelectionStore.fallback
@@ -16,6 +16,7 @@ struct ContentView: View {
     @State private var dragStartWidth: CGFloat?
     @State private var searchText = ""
     @State private var pendingAlbumID: UUID?
+    @State private var didOpenDebugWindow = false
 
     var body: some View {
         libraryView
@@ -27,9 +28,16 @@ struct ContentView: View {
                 DragPreviewOverlay()
                     .allowsHitTesting(false)
             }
+            .debugFrame("ContentView")
         .onAppear {
             PlayerState.shared.restorePersistedQueueIfNeeded()
             validateSelection()
+            NavigationRouter.shared.setFocus(NavigationRouter.shared.focus(for: selection))
+
+            if DebugSettings.shared.openWithApp, !didOpenDebugWindow {
+                didOpenDebugWindow = true
+                openWindow(id: "debug")
+            }
 
             // Invite the user to create the writable Internal Library. Doing it
             // from a window (and later via NSOpenPanel) is also what gives the
@@ -47,6 +55,7 @@ struct ContentView: View {
             searchText = ""
             pendingAlbumID = id
             selection = .library(.albums)
+            NavigationRouter.shared.setFocus(.albumGrid)
             navigation.albumToOpen = nil
         }
         .onChange(of: navigation.artistToOpen) { _, artist in
@@ -54,12 +63,14 @@ struct ContentView: View {
             selection = .library(.artists)
             searchText = ""
             pendingAlbumID = nil
+            NavigationRouter.shared.setFocus(.browserList)
         }
         .onChange(of: navigation.sidebarSelection) { _, requested in
             guard let requested else { return }
             selection = requested
             searchText = ""
             pendingAlbumID = nil
+            NavigationRouter.shared.setFocus(NavigationRouter.shared.focus(for: requested))
             navigation.sidebarSelection = nil
         }
         .onChange(of: selection) { _, newValue in
@@ -93,23 +104,23 @@ struct ContentView: View {
             openWindow(id: "setup")
         }
         .alert(
-            player.missingFilePauseMessage == nil ? "Library Opened" : "Playback Paused",
+            playback.missingFilePauseMessage == nil ? "Library Opened" : "Playback Paused",
             isPresented: Binding(
-                get: { library.openWarning != nil || player.missingFilePauseMessage != nil },
+                get: { library.openWarning != nil || playback.missingFilePauseMessage != nil },
                 set: {
                     if !$0 {
                         library.clearOpenWarning()
-                        player.dismissMissingFilePauseNotice()
+                        PlayerState.shared.dismissMissingFilePauseNotice()
                     }
                 }
             )
         ) {
             Button("OK") {
                 library.clearOpenWarning()
-                player.dismissMissingFilePauseNotice()
+                PlayerState.shared.dismissMissingFilePauseNotice()
             }
         } message: {
-            Text(player.missingFilePauseMessage ?? library.openWarning ?? "")
+            Text(playback.missingFilePauseMessage ?? library.openWarning ?? "")
         }
     }
 

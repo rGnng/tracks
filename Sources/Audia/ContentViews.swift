@@ -13,68 +13,43 @@ private struct AlbumCardFramesKey: PreferenceKey {
 struct AlbumGrid: View {
     let albums: [Album]
     @Binding var openAlbumID: UUID?
-    let scrollKey: String
 
-    @EnvironmentObject private var player: PlayerState
-    @ObservedObject private var navigator = KeyboardNavigator.shared
+    @ObservedObject private var debug = DebugSettings.shared
     @Environment(\.openWindow) private var openWindow
     @State private var selectedIDs: Set<UUID> = []
     @State private var selectionAnchor: UUID?
     @State private var expandedAlbum: Album?
     @State private var columnCount = 5
     @State private var gridCardWidth: CGFloat = 0
+    @State private var gridWidth: CGFloat = 0
     @State private var cardFrames: [UUID: CGRect] = [:]
+    @State private var albumIndexByID: [UUID: Int] = [:]
+    @State private var pendingLocateRequest: AlbumLocateRequest?
     @State private var marqueeStart: CGPoint?
     @State private var marqueeCurrent: CGPoint?
     @State private var marqueeBaseSelection: Set<UUID> = []
     @State private var gridGlobalOrigin: CGPoint = .zero
-    @State private var revealTargetID: UUID?
-    @State private var allowViewportSave = false
-    @State private var viewportSaveTask: Task<Void, Never>?
-    @State private var scrollPosition: ScrollPosition
+    @State private var scrollPosition = ScrollPosition()
     @State private var metrics = ListScrollMetrics()
 
     private let columns = [GridItem(.adaptive(minimum: 158, maximum: 240), spacing: 22)]
     private let contentTopPadding: CGFloat = 22
 
-    init(albums: [Album], openAlbumID: Binding<UUID?>, scrollKey: String) {
-        self.albums = albums
-        self._openAlbumID = openAlbumID
-        self.scrollKey = scrollKey
-        let validIDs = Set(albums.map(\.id))
-        let sessionFocus = ViewFocusStore.shared.focusID(for: scrollKey).flatMap(UUID.init)
-        let sessionSelection = ViewFocusStore.shared.selectionIDs(for: scrollKey).compactMap(UUID.init)
-        let focus = sessionFocus.flatMap { validIDs.contains($0) ? $0 : nil }
-        let selection = Set(sessionSelection.filter { validIDs.contains($0) })
-        let restoredSelection = selection.isEmpty ? (focus.map { [$0] } ?? []) : selection
-        let restoredFocus = focus ?? restoredSelection.first
-        let sessionOffset = ViewScrollStore.shared.offset(for: scrollKey)
-        let persisted = ViewPositionStore.lastViewport()
-        let restoreOffset = sessionOffset
-            ?? (persisted?.key == scrollKey ? persisted?.offset : nil)
-
-        _scrollPosition = State(initialValue: ScrollPosition(
-            idType: Never.self,
-            y: max(0, (restoreOffset ?? 0) - contentTopPadding)
-        ))
-        _selectedIDs = State(initialValue: restoredSelection)
-        _selectionAnchor = State(initialValue: restoredFocus)
-    }
+    private var player: PlayerState { PlayerState.shared }
 
     var body: some View {
         ZStack {
-            // Keep the grid mounted while an album is open so its exact scroll
-            // offset survives. Rebuilding the grid on return used to re-run the
-            // "scroll selected album to center" logic and jump even when the
-            // album was already visible.
+            // Keep the grid mounted while an album is open so opening a detail
+            // and coming back does not rebuild or reposition the parent grid.
             grid
+                .debugFrame("AlbumGrid")
                 .opacity(expandedAlbum == nil ? 1 : 0)
                 .allowsHitTesting(expandedAlbum == nil)
                 .accessibilityHidden(expandedAlbum != nil)
 
             if let album = expandedAlbum {
                 AlbumDetailView(album: album) {
-                    expandedAlbum = nil
+                    closeAlbum()
                 }
                 .id(album.id)
                 .background(Theme.contentBackground)
@@ -83,20 +58,41 @@ struct AlbumGrid: View {
         }
         .background(Theme.contentBackground)
         .onReceive(NotificationCenter.default.publisher(for: .goBackRequested)) { _ in
-            if expandedAlbum != nil { expandedAlbum = nil }
+            if expandedAlbum != nil { closeAlbum() }
         }
         .onChange(of: openAlbumID, initial: true) { _, id in
             guard let id else { return }
             revealAlbum(id: id, in: albums)
         }
-        .onAppear { updateStatusBar() }
+        .onAppear {
+            updateStatusBar()
+            rebuildAlbumIndex()
+            publishDebugState()
+            if let request = DebugState.shared.albumLocateRequest {
+                pendingLocateRequest = request
+            }
+            attemptPendingLocate()
+        }
         .onChange(of: selectedIDs) { _, _ in
             updateStatusBar()
-            persistFocus()
+            publishDebugState()
         }
-        .onChange(of: selectionAnchor) { _, _ in persistFocus() }
         .onChange(of: expandedAlbum) { _, _ in updateStatusBar() }
+        .onReceive(NavigationRouter.shared.$arrow) { arrow in
+            guard let arrow, NavigationRouter.shared.focus == .albumGrid else { return }
+            moveSelection(arrow.direction)
+        }
+        .onReceive(NavigationRouter.shared.$scrollEvent) { event in
+            guard let event, NavigationRouter.shared.focus == .albumGrid else { return }
+            handleScroll(event.command)
+        }
+        .onReceive(DebugState.shared.$albumLocateRequest) { request in
+            guard let request else { return }
+            pendingLocateRequest = request
+            attemptPendingLocate()
+        }
         .onChange(of: albums) { _, newAlbums in
+            rebuildAlbumIndex()
             // If the target album was hidden by the previous search results,
             // open it as soon as the unfiltered album list arrives.
             if let id = openAlbumID {
@@ -108,28 +104,26 @@ struct AlbumGrid: View {
                 self.selectionAnchor = nil
             }
             if let expandedAlbum, !valid.contains(expandedAlbum.id) {
-                self.expandedAlbum = nil
+                closeAlbum()
             }
             updateStatusBar()
+            publishDebugState()
+            attemptPendingLocate()
         }
-    }
-
-    private func persistFocus() {
-        ViewFocusStore.shared.set(selection: Set(selectedIDs.map(\.uuidString)),
-                                  focus: (selectionAnchor ?? selectedIDs.first)?.uuidString,
-                                  for: scrollKey)
     }
 
     private func revealAlbum(id: UUID, in albums: [Album]) {
         guard let album = albums.first(where: { $0.id == id }) else { return }
         selectedIDs = [album.id]
         selectionAnchor = album.id
-        // An album opened from another view (for example Go to Album from a
-        // song table) must be brought to the first visible row. Opening an
-        // album from this grid leaves the current relative position alone.
-        revealTargetID = album.id
         expandedAlbum = album
         openAlbumID = nil
+        NavigationRouter.shared.setFocus(.albumDetail)
+    }
+
+    private func closeAlbum() {
+        expandedAlbum = nil
+        NavigationRouter.shared.setFocus(.albumGrid)
     }
 
     /// While an album is expanded, AlbumDetailView owns the status bar context
@@ -153,6 +147,7 @@ struct AlbumGrid: View {
                                 player.play(album.songs)
                             }
                             .id(album.id)
+                            .debugFrame("AlbumCard \(album.title) [\(album.id.uuidString.prefix(4))]")
                             .background(
                                 GeometryReader { proxy in
                                     Color.clear.preference(
@@ -188,14 +183,24 @@ struct AlbumGrid: View {
                             .longPressArmable { dragPayload(for: album) }
                         }
                     }
-                    .scrollTargetLayout()
                     .padding(contentTopPadding)
+                    .overlay {
+                        if debug.showAlbumGridLayout {
+                            AlbumGridLayoutOverlay(
+                                columns: columnCount,
+                                cardWidth: gridCardWidth,
+                                cardHeight: gridCardHeight,
+                                rowSpacing: 26,
+                                padding: contentTopPadding
+                            )
+                        }
+                    }
                     .background(
                         GeometryReader { geo in
                             Color.clear
-                                .onAppear { columnCount = columns(for: geo.size.width) }
+                                .onAppear { updateGridMetrics(width: geo.size.width) }
                                 .onChange(of: geo.size.width) { _, width in
-                                    columnCount = columns(for: width)
+                                    updateGridMetrics(width: width)
                                 }
                         }
                     )
@@ -207,7 +212,11 @@ struct AlbumGrid: View {
                         .onTapGesture { clearSelection() }
                 )
                 .coordinateSpace(name: "albumGridSpace")
-                .onPreferenceChange(AlbumCardFramesKey.self) { cardFrames = $0 }
+                .onPreferenceChange(AlbumCardFramesKey.self) {
+                    cardFrames = $0
+                    publishDebugState()
+                    updateLocatorRenderedFrameIfNeeded()
+                }
                 .overlay(
                     GeometryReader { proxy in
                         Color.clear
@@ -228,122 +237,14 @@ struct AlbumGrid: View {
                                   contentHeight: geometry.contentSize.height)
             } action: { _, new in
                 metrics = new
-                scheduleViewportSave()
-            }
-            .task {
-                for _ in 0..<50 {
-                    if metrics.viewportHeight > 0 { break }
-                    try? await Task.sleep(for: .milliseconds(10))
-                }
-                try? await Task.sleep(for: .milliseconds(200))
-                allowViewportSave = true
-                saveViewportNow()
-                performRevealTarget()
-            }
-            .onDisappear { saveSessionOffsetNow() }
-            .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
-                saveViewportNow()
-            }
-            .onChange(of: revealTargetID) { _, _ in
-                guard allowViewportSave else { return }
-                performRevealTarget()
-            }
-            .onChange(of: navigator.clearSelectionCount) { _, _ in
-                guard expandedAlbum == nil else { return }
-                if selectedIDs.isEmpty {
-                    NotificationCenter.default.post(name: .clearSearch, object: nil)
-                } else {
-                    clearSelection()
-                }
-            }
-            .onChange(of: navigator.selectFirstCount) { _, _ in
-                guard expandedAlbum == nil, let first = albums.first else { return }
-                selectedIDs = [first.id]
-                selectionAnchor = first.id
-                scrollPosition.scrollTo(edge: .top)
-            }
-            .onChange(of: navigator.moveCount) { _, _ in
-                guard expandedAlbum == nil else { return }
-                moveSelection()
-                revealSelection()
-            }
-            .onChange(of: navigator.scrollCount) { _, _ in
-                guard expandedAlbum == nil else { return }
-                scroll(to: navigator.lastScrollCommand)
-            }
-            .onChange(of: navigator.activateCount) { _, _ in
-                activateSelection()
+                publishDebugState()
+                attemptPendingLocate()
             }
         }
-    }
-
-    private func performRevealTarget() {
-        guard let id = revealTargetID,
-              let index = albums.firstIndex(where: { $0.id == id }) else { return }
-        let frame = cardFrames[id] ?? gridFrame(at: index)
-        if let target = ListScroll.ensureVisibleTarget(for: frame,
-                                                       metrics: metrics,
-                                                       padding: 22) {
-            scrollPosition.scrollTo(y: target)
-        }
-        revealTargetID = nil
-    }
-
-    private func revealSelection() {
-        guard let id = selectionAnchor,
-              let index = albums.firstIndex(where: { $0.id == id }) else { return }
-        let frame = cardFrames[id] ?? gridFrame(at: index)
-        let target = ListScroll.revealTarget(for: frame, metrics: metrics, padding: 22)
-        guard let target else { return }
-        withAnimation(.easeInOut(duration: 0.08)) {
-            scrollPosition.scrollTo(y: target)
-        }
-    }
-
-    private func scroll(to command: KeyboardNavigator.ScrollCommand) {
-        guard !albums.isEmpty else { return }
-        switch command {
-        case .top:
-            scrollPosition.scrollTo(edge: .top)
-        case .bottom:
-            scrollPosition.scrollTo(edge: .bottom)
-        case .pageUp, .pageDown:
-            guard let index = topVisibleAlbumIndex() else { return }
-            let columns = max(columnCount, 1)
-            let visibleRows = visibleGridRows
-            let rows = max(1, visibleRows - 1)
-            let target = index + (command == .pageUp ? -rows : rows) * columns
-            let clamped = min(max(target, 0), albums.count - 1)
-            let targetOffset = ListScroll.pageTarget(for: gridFrame(at: clamped),
-                                                     metrics: metrics,
-                                                     padding: 22)
-            scrollPosition.scrollTo(y: targetOffset)
-        }
-    }
-
-    private func scheduleViewportSave() {
-        viewportSaveTask?.cancel()
-        viewportSaveTask = Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(300))
-            guard !Task.isCancelled else { return }
-            saveViewportNow()
-        }
-    }
-
-    private func saveViewportNow() {
-        guard allowViewportSave else { return }
-        ViewScrollStore.shared.setOffset(metrics.offset, for: scrollKey)
-        ViewPositionStore.setLastViewport(key: scrollKey, offset: metrics.offset)
-    }
-
-    private func saveSessionOffsetNow() {
-        viewportSaveTask?.cancel()
-        ViewScrollStore.shared.setOffset(metrics.offset, for: scrollKey)
     }
 
     private var currentGridSampleFrame: CGRect? {
-        for index in albums.indices {
-            guard let frame = cardFrames[albums[index].id] else { continue }
+        for frame in cardFrames.values {
             if frame.maxY > metrics.offset, frame.minY < metrics.offset + metrics.viewportHeight {
                 return frame
             }
@@ -352,10 +253,60 @@ struct AlbumGrid: View {
     }
 
     private func updateGridMetrics(width: CGFloat) {
+        gridWidth = width
         let cols = columns(for: width)
         columnCount = cols
         let available = width - 44 - CGFloat(max(cols - 1, 0)) * 22
         gridCardWidth = max(available / CGFloat(max(cols, 1)), 1)
+        publishDebugState()
+        attemptPendingLocate()
+    }
+
+    private func publishDebugState() {
+        let selectedIndex = selectionAnchor.flatMap { albumIndexByID[$0] } ?? -1
+        let selectedID = (selectionAnchor ?? selectedIDs.first)?.uuidString ?? "—"
+        let firstAlbumGap = albums.first.flatMap { album in
+            cardFrames[album.id].map { frame in
+                let gap = frame.minY - metrics.offset
+                return abs(gap) < 0.05 ? 0 : gap
+            }
+        }
+        let visibleDeltas = visibleFrameDeltas(for: gridLayout)
+        let scrollID = scrollPosition.viewID.map { String(describing: $0) } ?? "nil"
+        let scrollPoint = scrollPosition.point.map {
+            String(format: "%.1f, %.1f", $0.x, $0.y)
+        } ?? "nil"
+        let scrollEdge = scrollPosition.edge.map { String(describing: $0) } ?? "nil"
+        DebugState.shared.albumGrid = AlbumGridDebugInfo(
+            width: gridWidth,
+            columns: columnCount,
+            cardWidth: gridCardWidth,
+            cardHeight: gridCardHeight,
+            rowHeight: gridCardHeight + 26,
+            total: albums.count,
+            selected: selectedIDs.count,
+            selectedIndex: selectedIndex,
+            selectedID: selectedID,
+            firstAlbumGap: firstAlbumGap,
+            minVisibleDelta: visibleDeltas?.min,
+            maxVisibleDelta: visibleDeltas?.max,
+            scrollID: scrollID,
+            scrollPoint: scrollPoint,
+            scrollEdge: scrollEdge,
+            scrollPositionedByUser: scrollPosition.isPositionedByUser,
+            offset: metrics.offset,
+            viewport: metrics.viewportHeight,
+            content: metrics.contentHeight
+        )
+    }
+
+    private func rebuildAlbumIndex() {
+        var map: [UUID: Int] = [:]
+        map.reserveCapacity(albums.count)
+        for (index, album) in albums.enumerated() {
+            map[album.id] = index
+        }
+        albumIndexByID = map
     }
 
     private var gridCardHeight: CGFloat {
@@ -364,9 +315,20 @@ struct AlbumGrid: View {
         return width + textHeight
     }
 
-    private var visibleGridRows: Int {
-        let rowHeight = gridCardHeight + 26
-        return max(1, Int(ceil(metrics.viewportHeight / rowHeight)))
+    private var gridLayout: AlbumGridLayout {
+        AlbumGridLayout(count: albums.count,
+                        columns: max(columnCount, 1),
+                        cardWidth: gridCardWidth > 0 ? gridCardWidth : 182,
+                        cardHeight: gridCardHeight,
+                        columnSpacing: 22,
+                        rowSpacing: 26,
+                        padding: contentTopPadding)
+    }
+
+    private func gridFrame(at index: Int) -> CGRect {
+        let id = albums[index].id
+        if let frame = cardFrames[id] { return frame }
+        return gridLayout.frame(at: index) ?? .zero
     }
 
     private func topVisibleAlbumIndex() -> Int? {
@@ -385,18 +347,188 @@ struct AlbumGrid: View {
             && frame.minY < metrics.offset + metrics.viewportHeight - 0.5
     }
 
-    private func gridFrame(at index: Int) -> CGRect {
-        let id = albums[index].id
-        if let frame = cardFrames[id] { return frame }
-        let cols = max(columnCount, 1)
-        let width = gridCardWidth > 0 ? gridCardWidth : 182
-        let height = gridCardHeight
-        let row = index / cols
-        let column = index % cols
-        return CGRect(x: 22 + CGFloat(column) * (width + 22),
-                      y: 22 + CGFloat(row) * (height + 26),
-                      width: width,
-                      height: height)
+    private func moveSelection(_ direction: NavigationDirection) {
+        guard expandedAlbum == nil, !albums.isEmpty else { return }
+        let columns = max(columnCount, 1)
+        let delta: Int
+        switch direction {
+        case .left: delta = -1
+        case .right: delta = 1
+        case .up: delta = -columns
+        case .down: delta = columns
+        }
+
+        let currentID = selectionAnchor ?? selectedIDs.first
+        let index: Int
+        if let currentID,
+           let current = albums.firstIndex(where: { $0.id == currentID }),
+           isOnScreen(currentID, index: current) {
+            index = min(max(current + delta, 0), albums.count - 1)
+        } else if let top = topVisibleAlbumIndex() {
+            index = top
+        } else if let currentID,
+                  let current = albums.firstIndex(where: { $0.id == currentID }) {
+            index = min(max(current + delta, 0), albums.count - 1)
+        } else {
+            index = 0
+        }
+
+        let album = albums[index]
+        selectedIDs = [album.id]
+        selectionAnchor = album.id
+        revealSelection()
+    }
+
+    private func revealSelection() {
+        guard let id = selectionAnchor,
+              let index = albums.firstIndex(where: { $0.id == id }) else { return }
+        let frame = cardFrames[id] ?? gridFrame(at: index)
+        guard let target = ListScroll.revealTarget(for: frame,
+                                                   metrics: metrics,
+                                                   padding: contentTopPadding) else { return }
+        scrollPosition.scrollTo(y: target)
+    }
+
+    private func handleScroll(_ command: NavigationScrollCommand) {
+        guard expandedAlbum == nil else { return }
+        switch command {
+        case .home:
+            scrollPosition.scrollTo(edge: .top)
+        case .end:
+            scrollPosition.scrollTo(edge: .bottom)
+        case .pageUp, .pageDown:
+            guard metrics.viewportHeight > 0 else { return }
+            let rowHeight = gridCardHeight + 26
+            let visibleRows = max(1, Int(ceil(metrics.viewportHeight / rowHeight)))
+            let pageHeight = CGFloat(max(1, visibleRows - 1)) * rowHeight
+            let delta = command == .pageUp ? -pageHeight : pageHeight
+            let target = min(max(metrics.offset + delta, 0), metrics.maxOffset)
+            scrollPosition.scrollTo(y: target)
+        }
+    }
+
+    private func attemptPendingLocate() {
+        guard let request = pendingLocateRequest else { return }
+        guard !albums.isEmpty else {
+            DebugState.shared.albumLocator = AlbumLocatorDebugInfo(
+                status: "waiting for albums",
+                requestedID: request.albumID.uuidString
+            )
+            return
+        }
+        guard let index = albumIndexByID[request.albumID] else {
+            DebugState.shared.albumLocator = AlbumLocatorDebugInfo(
+                status: "not found",
+                requestedID: request.albumID.uuidString,
+                offset: metrics.offset,
+                viewport: metrics.viewportHeight,
+                content: metrics.contentHeight
+            )
+            finishPendingLocate(request)
+            return
+        }
+        guard gridWidth > 0, gridCardWidth > 0, columnCount > 0,
+              metrics.viewportHeight > 0, metrics.contentHeight > 0 else {
+            DebugState.shared.albumLocator = AlbumLocatorDebugInfo(
+                status: "waiting for layout",
+                requestedID: request.albumID.uuidString,
+                foundIndex: index,
+                columns: columnCount,
+                cardWidth: gridCardWidth,
+                cardHeight: gridCardHeight,
+                rowHeight: gridCardHeight + 26,
+                offset: metrics.offset,
+                viewport: metrics.viewportHeight,
+                content: metrics.contentHeight
+            )
+            return
+        }
+
+        let layout = gridLayout
+        guard let computed = layout.frame(at: index) else {
+            finishPendingLocate(request)
+            return
+        }
+        let actual = cardFrames[request.albumID]
+        let delta = actual.map { frameDelta(computed, $0) }
+        let visibleDeltas = visibleFrameDeltas(for: layout)
+        let target = ListScroll.ensureVisibleTarget(for: computed,
+                                                    metrics: metrics,
+                                                    padding: contentTopPadding)
+
+        if expandedAlbum != nil {
+            expandedAlbum = nil
+        }
+        selectedIDs = [request.albumID]
+        selectionAnchor = request.albumID
+        NavigationRouter.shared.setFocus(.albumGrid)
+        if let target {
+            scrollPosition.scrollTo(y: target)
+        }
+
+        DebugState.shared.albumLocator = AlbumLocatorDebugInfo(
+            status: target == nil ? "already visible" : "scrolled",
+            requestedID: request.albumID.uuidString,
+            foundIndex: index,
+            columns: layout.columns,
+            cardWidth: layout.cardWidth,
+            cardHeight: layout.cardHeight,
+            rowHeight: layout.rowHeight,
+            computedFrame: computed,
+            actualFrame: actual,
+            frameDelta: delta,
+            minVisibleFrameDelta: visibleDeltas?.min,
+            maxVisibleFrameDelta: visibleDeltas?.max,
+            offset: metrics.offset,
+            viewport: metrics.viewportHeight,
+            content: metrics.contentHeight,
+            targetOffset: target
+        )
+
+        finishPendingLocate(request)
+    }
+
+    private func finishPendingLocate(_ request: AlbumLocateRequest) {
+        pendingLocateRequest = nil
+        if DebugState.shared.albumLocateRequest?.id == request.id {
+            DebugState.shared.albumLocateRequest = nil
+        }
+    }
+
+    private func frameDelta(_ computed: CGRect, _ actual: CGRect) -> CGFloat {
+        max(max(abs(computed.minX - actual.minX), abs(computed.minY - actual.minY)),
+            max(abs(computed.width - actual.width), abs(computed.height - actual.height)))
+    }
+
+    private func visibleFrameDeltas(for layout: AlbumGridLayout) -> (min: CGFloat, max: CGFloat)? {
+        var minimum: CGFloat?
+        var maximum: CGFloat?
+        for (id, actual) in cardFrames {
+            guard actual.maxY > metrics.offset + 0.5,
+                  actual.minY < metrics.offset + metrics.viewportHeight - 0.5 else { continue }
+            guard let index = albumIndexByID[id],
+                  let computed = layout.frame(at: index) else { continue }
+            let delta = frameDelta(computed, actual)
+            minimum = min(minimum ?? delta, delta)
+            maximum = max(maximum ?? delta, delta)
+        }
+        guard let minimum, let maximum else { return nil }
+        return (minimum, maximum)
+    }
+
+    private func updateLocatorRenderedFrameIfNeeded() {
+        var info = DebugState.shared.albumLocator
+        guard info.actualFrame == nil,
+              let id = UUID(uuidString: info.requestedID),
+              let actual = cardFrames[id],
+              let index = albumIndexByID[id],
+              let computed = gridLayout.frame(at: index) else { return }
+        info.actualFrame = actual
+        info.frameDelta = frameDelta(computed, actual)
+        let deltas = visibleFrameDeltas(for: gridLayout)
+        info.minVisibleFrameDelta = deltas?.min
+        info.maxVisibleFrameDelta = deltas?.max
+        DebugState.shared.albumLocator = info
     }
 
     private func contextAlbums(for album: Album) -> [Album] {
@@ -429,6 +561,7 @@ struct AlbumGrid: View {
     }
 
     private func handleCardTap(_ album: Album) {
+        NavigationRouter.shared.setFocus(.albumGrid)
         let flags = NSEvent.modifierFlags
         let command = flags.contains(.command)
         let shift = flags.contains(.shift)
@@ -455,55 +588,9 @@ struct AlbumGrid: View {
     }
 
     private func clearSelection() {
+        NavigationRouter.shared.setFocus(.albumGrid)
         selectedIDs.removeAll()
         selectionAnchor = nil
-    }
-
-    private func activateSelection() {
-        guard navigator.region == .content, expandedAlbum == nil else { return }
-        let targetID = selectionAnchor ?? selectedIDs.first
-        guard let targetID, let album = albums.first(where: { $0.id == targetID }) else { return }
-        expandedAlbum = album
-    }
-
-    private func moveSelection() {
-        guard navigator.region == .content, expandedAlbum == nil, !albums.isEmpty else {
-            return
-        }
-        let delta: Int
-        switch navigator.lastMove {
-        case .left: delta = -1
-        case .right: delta = 1
-        case .up: delta = -columnCount
-        case .down: delta = columnCount
-        }
-        let currentID = selectionAnchor ?? selectedIDs.first
-        // Keyboard navigation starts from what is on screen. If the stored
-        // focus was left far above/below after scrolling, using it here would
-        // snap the grid back to that old row on the first arrow key.
-        let baseID: UUID?
-        if let currentID,
-           let index = albums.firstIndex(where: { $0.id == currentID }),
-           isOnScreen(currentID, index: index) {
-            baseID = currentID
-        } else if let topIndex = topVisibleAlbumIndex() {
-            baseID = albums[topIndex].id
-        } else {
-            baseID = currentID
-        }
-        if let baseID, let index = albums.firstIndex(where: { $0.id == baseID }) {
-            let next = min(max(index + delta, 0), albums.count - 1)
-            selectedIDs = [albums[next].id]
-            selectionAnchor = albums[next].id
-        } else {
-            let nextID = albums.first?.id
-            if let nextID {
-                selectedIDs = [nextID]
-            } else {
-                selectedIDs = []
-            }
-            selectionAnchor = nextID
-        }
     }
 
     private var marqueeGesture: some Gesture {
@@ -656,8 +743,7 @@ private struct AlbumDetailView: View {
     let album: Album
     let onClose: () -> Void
 
-    @EnvironmentObject private var player: PlayerState
-    @ObservedObject private var navigator = KeyboardNavigator.shared
+    @ObservedObject private var playback = PlaybackStatus.shared
     @State private var selectedSongIDs: Set<UUID> = []
     @State private var selectionAnchor: UUID?
     @State private var trackFrames: [UUID: CGRect] = [:]
@@ -665,6 +751,7 @@ private struct AlbumDetailView: View {
     @State private var metrics = ListScrollMetrics()
 
     private var isMultiDisc: Bool { album.isMultiDisc }
+    private var player: PlayerState { PlayerState.shared }
 
     var body: some View {
         ScrollView {
@@ -730,9 +817,9 @@ private struct AlbumDetailView: View {
                                     albumArtist: album.artist,
                                     isMultiDisc: isMultiDisc,
                                     isSelected: selected,
-                                    isCurrent: player.currentSong?.id == song.id,
-                                    isMissing: player.missingFileIDs.contains(song.id),
-                                    isPlaying: player.isPlaying,
+                                    isCurrent: playback.currentSongID == song.id,
+                                    isMissing: playback.missingFileIDs.contains(song.id),
+                                    isPlaying: playback.isPlaying,
                                     previousSelected: previousSelected,
                                     nextSelected: nextSelected
                                 )
@@ -774,53 +861,53 @@ private struct AlbumDetailView: View {
                               contentHeight: geometry.contentSize.height)
         } action: { _, new in
             metrics = new
+            publishDebugState()
         }
-        .onChange(of: navigator.moveCount) { _, _ in
-            moveSelection()
-            revealSelection()
+        .debugFrame("AlbumDetail")
+        .onReceive(NavigationRouter.shared.$arrow) { arrow in
+            guard let arrow, NavigationRouter.shared.focus == .albumDetail else { return }
+            moveSelection(arrow.direction)
         }
-        .onChange(of: navigator.clearSelectionCount) { _, _ in
-            if selectedSongIDs.isEmpty {
-                NotificationCenter.default.post(name: .clearSearch, object: nil)
-            } else {
-                clearSelection()
-            }
-        }
-        .onChange(of: navigator.selectFirstCount) { _, _ in
-            guard let first = album.songs.first else { return }
-            selectedSongIDs = [first.id]
-            selectionAnchor = first.id
-            scrollPosition.scrollTo(edge: .top)
-        }
-        .onChange(of: navigator.scrollCount) { _, _ in
-            scroll(to: navigator.lastScrollCommand)
+        .onReceive(NavigationRouter.shared.$scrollEvent) { event in
+            guard let event, NavigationRouter.shared.focus == .albumDetail else { return }
+            handleScroll(event.command)
         }
         .onChange(of: selectedSongIDs) { _, _ in
             updateStatusBar()
-        }
-        .onChange(of: navigator.activateCount) { _, _ in
-            activateSelection()
+            publishDebugState()
         }
         .onAppear {
+            NavigationRouter.shared.setFocus(.albumDetail)
             updateStatusBar()
+            publishDebugState()
             guard selectedSongIDs.isEmpty,
-                  let current = player.currentSong,
-                  album.songs.contains(where: { $0.id == current.id }) else { return }
-            selectedSongIDs = [current.id]
-            selectionAnchor = current.id
+                  let currentID = playback.currentSongID,
+                  album.songs.contains(where: { $0.id == currentID }) else { return }
+            selectedSongIDs = [currentID]
+            selectionAnchor = currentID
             DispatchQueue.main.async {
-                withAnimation(.easeInOut(duration: 0.08)) {
-                    if trackFrames[current.id] == nil {
-                        scrollPosition.scrollTo(id: current.id, anchor: .center)
-                    } else {
-                        revealSelection()
-                    }
-                }
+                scrollPosition.scrollTo(id: currentID, anchor: .center)
             }
         }
     }
 
+    private func publishDebugState() {
+        let selectedIndex = selectionAnchor.flatMap { id in
+            album.songs.firstIndex(where: { $0.id == id })
+        } ?? -1
+        DebugState.shared.albumDetail = AlbumDetailDebugInfo(
+            album: album.title,
+            songs: album.songs.count,
+            selected: selectedSongIDs.count,
+            selectedIndex: selectedIndex,
+            offset: metrics.offset,
+            viewport: metrics.viewportHeight,
+            content: metrics.contentHeight
+        )
+    }
+
     private func handleRowTap(_ song: Song) {
+        NavigationRouter.shared.setFocus(.albumDetail)
         let flags = NSEvent.modifierFlags
         let command = flags.contains(.command)
         let shift = flags.contains(.shift)
@@ -846,8 +933,80 @@ private struct AlbumDetailView: View {
     }
 
     private func clearSelection() {
+        NavigationRouter.shared.setFocus(.albumDetail)
         selectedSongIDs.removeAll()
         selectionAnchor = nil
+    }
+
+    private func moveSelection(_ direction: NavigationDirection) {
+        guard direction == .up || direction == .down else { return }
+        let songs = album.songs
+        guard !songs.isEmpty else { return }
+        let delta = direction == .up ? -1 : 1
+        let currentID = selectionAnchor ?? selectedSongIDs.first
+
+        let index: Int
+        if let currentID,
+           let current = songs.firstIndex(where: { $0.id == currentID }),
+           isOnScreen(currentID, index: current) {
+            index = min(max(current + delta, 0), songs.count - 1)
+        } else if let top = topVisibleSongIndex() {
+            index = top
+        } else if let currentID,
+                  let current = songs.firstIndex(where: { $0.id == currentID }) {
+            index = min(max(current + delta, 0), songs.count - 1)
+        } else {
+            index = 0
+        }
+
+        let id = songs[index].id
+        selectedSongIDs = [id]
+        selectionAnchor = id
+        revealSelection()
+    }
+
+    private func topVisibleSongIndex() -> Int? {
+        for index in album.songs.indices {
+            guard let frame = trackFrames[album.songs[index].id] else { continue }
+            if frame.maxY > metrics.offset + 0.5 {
+                return index
+            }
+        }
+        return nil
+    }
+
+    private func isOnScreen(_ id: UUID, index: Int) -> Bool {
+        guard let frame = trackFrames[id] else { return false }
+        return frame.maxY > metrics.offset + 0.5
+            && frame.minY < metrics.offset + metrics.viewportHeight - 0.5
+    }
+
+    private func revealSelection() {
+        guard let id = selectionAnchor else { return }
+        guard let frame = trackFrames[id] else {
+            scrollPosition.scrollTo(id: id, anchor: .center)
+            return
+        }
+        guard let target = ListScroll.revealTarget(for: frame,
+                                                   metrics: metrics,
+                                                   padding: 22) else { return }
+        scrollPosition.scrollTo(y: target)
+    }
+
+    private func handleScroll(_ command: NavigationScrollCommand) {
+        switch command {
+        case .home:
+            scrollPosition.scrollTo(edge: .top)
+        case .end:
+            scrollPosition.scrollTo(edge: .bottom)
+        case .pageUp, .pageDown:
+            guard metrics.viewportHeight > 0 else { return }
+            let visibleRows = max(1, Int(ceil(metrics.viewportHeight / 28)))
+            let pageHeight = CGFloat(max(1, visibleRows - 1) * 28)
+            let delta = command == .pageUp ? -pageHeight : pageHeight
+            let target = min(max(metrics.offset + delta, 0), metrics.maxOffset)
+            scrollPosition.scrollTo(y: target)
+        }
     }
 
     private func dragPayload(for song: Song) -> DragController.Payload? {
@@ -886,99 +1045,7 @@ private struct AlbumDetailView: View {
         }
     }
 
-    private func activateSelection() {
-        guard navigator.region == .content else { return }
-        let targetID = selectionAnchor ?? selectedSongIDs.first
-        guard let targetID, let song = album.songs.first(where: { $0.id == targetID }) else { return }
-        player.play(song, in: album.songs)
-    }
 
-    private func moveSelection() {
-        guard navigator.region == .content else { return }
-        guard navigator.lastMove == .up || navigator.lastMove == .down else { return }
-        let songs = album.songs
-        guard !songs.isEmpty else { return }
-        let delta = navigator.lastMove == .up ? -1 : 1
-        let currentID = selectionAnchor ?? selectedSongIDs.first
-        let baseID: UUID?
-        if let currentID,
-           let index = songs.firstIndex(where: { $0.id == currentID }),
-           isOnScreen(currentID, index: index) {
-            baseID = currentID
-        } else if let topIndex = topVisibleSongIndex() {
-            baseID = songs[topIndex].id
-        } else {
-            baseID = currentID
-        }
-        if let baseID, let index = songs.firstIndex(where: { $0.id == baseID }) {
-            let next = songs[min(max(index + delta, 0), songs.count - 1)].id
-            selectedSongIDs = [next]
-            selectionAnchor = next
-        } else {
-            let next = songs.first?.id
-            if let next {
-                selectedSongIDs = [next]
-            } else {
-                selectedSongIDs = []
-            }
-            selectionAnchor = next
-        }
-    }
-
-    private var visibleDetailRows: Int {
-        max(1, Int(ceil(metrics.viewportHeight / 28)))
-    }
-
-    private func topVisibleSongIndex() -> Int? {
-        for index in album.songs.indices {
-            guard let frame = trackFrames[album.songs[index].id] else { continue }
-            if frame.maxY > metrics.offset + 0.5 {
-                return index
-            }
-        }
-        return nil
-    }
-
-    private func isOnScreen(_ id: UUID, index: Int) -> Bool {
-        guard let frame = trackFrames[id] else { return false }
-        return frame.maxY > metrics.offset + 0.5
-            && frame.minY < metrics.offset + metrics.viewportHeight - 0.5
-    }
-
-    private func revealSelection() {
-        guard let id = selectionAnchor else { return }
-        guard let frame = trackFrames[id] else {
-            scrollPosition.scrollTo(id: id, anchor: .center)
-            return
-        }
-        let target = ListScroll.revealTarget(for: frame, metrics: metrics, padding: 22)
-        guard let target else { return }
-        withAnimation(.easeInOut(duration: 0.08)) {
-            scrollPosition.scrollTo(y: target)
-        }
-    }
-
-    private func scroll(to command: KeyboardNavigator.ScrollCommand) {
-        guard !album.songs.isEmpty else { return }
-        switch command {
-        case .top:
-            scrollPosition.scrollTo(edge: .top)
-        case .bottom:
-            scrollPosition.scrollTo(edge: .bottom)
-        case .pageUp, .pageDown:
-            guard let index = topVisibleSongIndex() else { return }
-            let page = max(1, visibleDetailRows - 1)
-            let target = index + (command == .pageUp ? -page : page)
-            let clamped = min(max(target, 0), album.songs.count - 1)
-            let targetSong = album.songs[clamped]
-            guard let frame = trackFrames[targetSong.id] else {
-                scrollPosition.scrollTo(id: targetSong.id, anchor: .top)
-                return
-            }
-            let targetOffset = ListScroll.pageTarget(for: frame, metrics: metrics, padding: 22)
-            scrollPosition.scrollTo(y: targetOffset)
-        }
-    }
 }
 
 // MARK: - Album action buttons (Play / Shuffle)
@@ -1096,446 +1163,6 @@ private struct AlbumTrackRow: View {
 
 // MARK: - Album list (compact rows)
 
-struct AlbumList: View {
-    let albums: [Album]
-    let scrollKey: String
-
-    @EnvironmentObject private var player: PlayerState
-    @ObservedObject private var navigator = KeyboardNavigator.shared
-    @Environment(\.openWindow) private var openWindow
-    @State private var selectedIDs: Set<UUID> = []
-    @State private var selectionAnchor: UUID?
-    @State private var rowFrames: [UUID: CGRect] = [:]
-    @State private var marqueeStart: CGPoint?
-    @State private var marqueeCurrent: CGPoint?
-    @State private var marqueeBaseSelection: Set<UUID> = []
-    @State private var listGlobalOrigin: CGPoint = .zero
-    @State private var allowViewportSave = false
-    @State private var viewportSaveTask: Task<Void, Never>?
-    @State private var scrollPosition: ScrollPosition
-    @State private var metrics = ListScrollMetrics()
-
-    private let contentTopPadding: CGFloat = 6
-
-    init(albums: [Album], scrollKey: String) {
-        self.albums = albums
-        self.scrollKey = scrollKey
-        let validIDs = Set(albums.map(\.id))
-        let sessionFocus = ViewFocusStore.shared.focusID(for: scrollKey).flatMap(UUID.init)
-        let sessionSelection = ViewFocusStore.shared.selectionIDs(for: scrollKey).compactMap(UUID.init)
-        let focus = sessionFocus.flatMap { validIDs.contains($0) ? $0 : nil }
-        let selection = Set(sessionSelection.filter { validIDs.contains($0) })
-        let restoredSelection = selection.isEmpty ? (focus.map { [$0] } ?? []) : selection
-        let restoredFocus = focus ?? restoredSelection.first
-        let sessionOffset = ViewScrollStore.shared.offset(for: scrollKey)
-        let persisted = ViewPositionStore.lastViewport()
-        let restoreOffset = sessionOffset
-            ?? (persisted?.key == scrollKey ? persisted?.offset : nil)
-
-        _scrollPosition = State(initialValue: ScrollPosition(
-            idType: Never.self,
-            y: max(0, (restoreOffset ?? 0) - contentTopPadding)
-        ))
-        _selectedIDs = State(initialValue: restoredSelection)
-        _selectionAnchor = State(initialValue: restoredFocus)
-    }
-
-    var body: some View {
-        GeometryReader { viewport in
-            ScrollView {
-                ZStack(alignment: .topLeading) {
-                    LazyVStack(spacing: 0) {
-                        ForEach(Array(albums.enumerated()), id: \.element.id) { index, album in
-                            let selected = selectedIDs.contains(album.id)
-                            HStack(spacing: 10) {
-                                AlbumArtwork(artwork: album.artwork)
-                                    .frame(width: 34, height: 34)
-                                    .clipShape(RoundedRectangle(cornerRadius: 3))
-                                VStack(alignment: .leading, spacing: 1) {
-                                    Text(album.title)
-                                        .font(.system(size: 13))
-                                        .foregroundColor(selected ? Theme.highlightForeground : Theme.primaryText)
-                                        .lineLimit(1)
-                                    ArtistLinkText(name: album.artist, fontSize: 11, isSelected: selected)
-                                }
-                                Spacer()
-                                if !album.year.isEmpty {
-                                    Text(album.year)
-                                        .font(.system(size: 11))
-                                        .foregroundColor(selected ? Theme.highlightForeground.opacity(0.85) : Theme.secondaryText)
-                                }
-                            }
-                            .padding(.horizontal, 14)
-                            .frame(height: 44)
-                            .background(rowBackground(index: index, selected: selected))
-                            .background(
-                                GeometryReader { proxy in
-                                    Color.clear.preference(
-                                        key: AlbumCardFramesKey.self,
-                                        value: [album.id: proxy.frame(in: .named("albumListSpace"))]
-                                    )
-                                }
-                            )
-                            .contentShape(Rectangle())
-                            .gesture(
-                                TapGesture().onEnded {
-                                    handleRowTap(album)
-                                }
-                            )
-                            .id(album.id)
-                            .contextMenu {
-                                Button("Play") { player.play(contextSongs(for: album)) }
-                                Button("Shuffle") { player.playShuffled(contextSongs(for: album)) }
-                                Divider()
-                                AddToPlaylistMenu(songs: contextSongs(for: album))
-                                Button("Play Next") { player.playNext(contextSongs(for: album)) }
-                                Button("Play Later") { player.playLater(contextSongs(for: album)) }
-                                Divider()
-                                Button("Get Info…") {
-                                    InfoCenter.shared.target = .album(album.id)
-                                    openWindow(id: "get-info")
-                                }
-                                Divider()
-                                Button("Delete…") {
-                                    LibraryDeletion.confirmDelete(albums: contextAlbums(for: album))
-                                }
-                                .disabled(!LibraryDeletion.canDelete(albums: contextAlbums(for: album)))
-                            }
-                            .longPressArmable { dragPayload(for: album) }
-                        }
-                    }
-                    .scrollTargetLayout()
-                    .padding(.vertical, contentTopPadding)
-                }
-                .frame(minHeight: viewport.size.height, alignment: .top)
-                .background(
-                    Color.clear
-                        .contentShape(Rectangle())
-                        .onTapGesture { clearSelection() }
-                )
-                .coordinateSpace(name: "albumListSpace")
-                .onPreferenceChange(AlbumCardFramesKey.self) { rowFrames = $0 }
-                .overlay(
-                    GeometryReader { proxy in
-                        Color.clear
-                            .onAppear { listGlobalOrigin = proxy.frame(in: .global).origin }
-                            .onChange(of: proxy.frame(in: .global).origin) { _, origin in
-                                listGlobalOrigin = origin
-                            }
-                    }
-                    .allowsHitTesting(false)
-                )
-                .overlay { marqueeOverlay }
-                .simultaneousGesture(marqueeGesture)
-            }
-            .scrollPosition($scrollPosition)
-            .onScrollGeometryChange(for: ListScrollMetrics.self) { geometry in
-                ListScrollMetrics(offset: geometry.contentOffset.y,
-                                  viewportHeight: geometry.containerSize.height,
-                                  contentHeight: geometry.contentSize.height)
-            } action: { _, new in
-                metrics = new
-                scheduleViewportSave()
-            }
-            .task {
-                for _ in 0..<50 {
-                    if metrics.viewportHeight > 0 { break }
-                    try? await Task.sleep(for: .milliseconds(10))
-                }
-                try? await Task.sleep(for: .milliseconds(200))
-                allowViewportSave = true
-                saveViewportNow()
-            }
-            .onDisappear { saveSessionOffsetNow() }
-            .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
-                saveViewportNow()
-            }
-            .onChange(of: navigator.moveCount) { _, _ in
-                moveSelection()
-                revealSelection()
-            }
-            .onChange(of: navigator.clearSelectionCount) { _, _ in
-                if selectedIDs.isEmpty {
-                    NotificationCenter.default.post(name: .clearSearch, object: nil)
-                } else {
-                    clearSelection()
-                }
-            }
-            .onChange(of: navigator.selectFirstCount) { _, _ in
-                guard let first = albums.first else { return }
-                selectedIDs = [first.id]
-                selectionAnchor = first.id
-                scrollPosition.scrollTo(edge: .top)
-            }
-            .onChange(of: navigator.scrollCount) { _, _ in
-                scroll(to: navigator.lastScrollCommand)
-            }
-            .onChange(of: navigator.activateCount) { _, _ in
-                activateSelection()
-            }
-        }
-        .background(Theme.contentBackground)
-        .onAppear { updateStatusBar() }
-        .onChange(of: selectedIDs) { _, _ in
-            updateStatusBar()
-            persistFocus()
-        }
-        .onChange(of: selectionAnchor) { _, _ in persistFocus() }
-        .onChange(of: albums) { _, newAlbums in
-            let valid = Set(newAlbums.map(\.id))
-            selectedIDs.formIntersection(valid)
-            if let selectionAnchor, !valid.contains(selectionAnchor) {
-                self.selectionAnchor = nil
-            }
-            updateStatusBar()
-        }
-    }
-
-    private func persistFocus() {
-        ViewFocusStore.shared.set(selection: Set(selectedIDs.map(\.uuidString)),
-                                  focus: (selectionAnchor ?? selectedIDs.first)?.uuidString,
-                                  for: scrollKey)
-    }
-
-    private func contextAlbums(for album: Album) -> [Album] {
-        guard selectedIDs.contains(album.id), selectedIDs.count > 1 else { return [album] }
-        return albums.filter { selectedIDs.contains($0.id) }
-    }
-
-    private func contextSongs(for album: Album) -> [Song] {
-        contextAlbums(for: album).flatMap(\.songs)
-    }
-
-    private func dragPayload(for album: Album) -> DragController.Payload? {
-        let targets = contextAlbums(for: album)
-        let songs = targets.flatMap(\.songs)
-        guard !songs.isEmpty else { return nil }
-        if targets.count > 1 {
-            return .init(songs: songs,
-                         title: "\(targets.count) albums",
-                         subtitle: "\(songs.count) songs",
-                         artwork: nil)
-        }
-        return .init(songs: songs,
-                     title: album.title,
-                     subtitle: "\(songs.count) songs",
-                     artwork: album.artwork)
-    }
-
-    private func handleRowTap(_ album: Album) {
-        let flags = NSEvent.modifierFlags
-        let command = flags.contains(.command)
-        let shift = flags.contains(.shift)
-
-        if shift,
-           let anchor = selectionAnchor,
-           let from = albums.firstIndex(where: { $0.id == anchor }),
-           let to = albums.firstIndex(where: { $0.id == album.id }) {
-            let range = from <= to ? from...to : to...from
-            let ids = Set(range.map { albums[$0].id })
-            selectedIDs = command ? selectedIDs.union(ids) : ids
-        } else if command {
-            if selectedIDs.contains(album.id) {
-                selectedIDs.remove(album.id)
-            } else {
-                selectedIDs.insert(album.id)
-            }
-            selectionAnchor = selectedIDs.isEmpty ? nil : album.id
-        } else {
-            selectedIDs = [album.id]
-            selectionAnchor = album.id
-        }
-    }
-
-    private func clearSelection() {
-        selectedIDs.removeAll()
-        selectionAnchor = nil
-    }
-
-    private var marqueeGesture: some Gesture {
-        DragGesture(minimumDistance: 4, coordinateSpace: .named("albumListSpace"))
-            .onChanged { value in
-                if DragController.shared.isArmed {
-                    DragController.shared.isMarqueeActive = false
-                    marqueeStart = nil
-                    marqueeCurrent = nil
-                    if DragController.shared.payload == nil {
-                        DragController.shared.beginArmed()
-                    }
-                    let globalLocation = CGPoint(x: value.location.x + listGlobalOrigin.x,
-                                                 y: value.location.y + listGlobalOrigin.y)
-                    DragController.shared.update(location: globalLocation)
-                    return
-                }
-                DragController.shared.isMarqueeActive = true
-                if marqueeStart == nil {
-                    marqueeStart = value.startLocation
-                    marqueeBaseSelection = selectedIDs
-                }
-                marqueeCurrent = value.location
-                updateMarqueeSelection()
-            }
-            .onEnded { _ in
-                if DragController.shared.payload != nil {
-                    DragController.shared.finish()
-                }
-                DragController.shared.isMarqueeActive = false
-                marqueeStart = nil
-                marqueeCurrent = nil
-            }
-    }
-
-    private var marqueeOverlay: some View {
-        Group {
-            if let start = marqueeStart, let current = marqueeCurrent {
-                let rect = marqueeRect(start, current)
-                Rectangle()
-                    .fill(Theme.selectionFill.opacity(0.14))
-                    .overlay(
-                        Rectangle().strokeBorder(Theme.selectionFill.opacity(0.80), lineWidth: 1)
-                    )
-                    .frame(width: rect.width, height: rect.height)
-                    .position(x: rect.midX, y: rect.midY)
-                    .allowsHitTesting(false)
-            }
-        }
-    }
-
-    private func marqueeRect(_ a: CGPoint, _ b: CGPoint) -> CGRect {
-        CGRect(x: min(a.x, b.x),
-               y: min(a.y, b.y),
-               width: abs(a.x - b.x),
-               height: abs(a.y - b.y))
-    }
-
-    private func updateMarqueeSelection() {
-        guard let start = marqueeStart, let current = marqueeCurrent else { return }
-        let rect = marqueeRect(start, current)
-        let hits = Set(rowFrames.filter { $0.value.intersects(rect) }.keys)
-        let additive = NSEvent.modifierFlags.contains(.command)
-            || NSEvent.modifierFlags.contains(.shift)
-        selectedIDs = additive ? marqueeBaseSelection.union(hits) : hits
-    }
-
-    private func updateStatusBar() {
-        if !selectedIDs.isEmpty {
-            StatusBarCenter.shared.context = .albums(Array(selectedIDs))
-        } else {
-            StatusBarCenter.shared.context = .library
-        }
-    }
-
-    private func activateSelection() {
-        guard navigator.region == .content else { return }
-        let targetID = selectionAnchor ?? selectedIDs.first
-        guard let targetID, let album = albums.first(where: { $0.id == targetID }) else { return }
-        player.play(album.songs)
-    }
-
-    private func moveSelection() {
-        guard navigator.region == .content else { return }
-        guard navigator.lastMove == .up || navigator.lastMove == .down else { return }
-        guard !albums.isEmpty else { return }
-        let delta = navigator.lastMove == .up ? -1 : 1
-        let currentID = selectionAnchor ?? selectedIDs.first
-        let baseID: UUID?
-        if let currentID,
-           let index = albums.firstIndex(where: { $0.id == currentID }),
-           isOnScreen(currentID, index: index) {
-            baseID = currentID
-        } else if let topIndex = topVisibleAlbumIndex() {
-            baseID = albums[topIndex].id
-        } else {
-            baseID = currentID
-        }
-        if let baseID, let index = albums.firstIndex(where: { $0.id == baseID }) {
-            let next = albums[min(max(index + delta, 0), albums.count - 1)].id
-            selectedIDs = [next]
-            selectionAnchor = next
-        } else {
-            let next = albums.first?.id
-            if let next {
-                selectedIDs = [next]
-            } else {
-                selectedIDs = []
-            }
-            selectionAnchor = next
-        }
-    }
-
-    private func revealSelection() {
-        guard let id = selectionAnchor,
-              let index = albums.firstIndex(where: { $0.id == id }) else { return }
-        let frame = rowFrames[id] ?? listRowFrame(at: index)
-        guard let target = ListScroll.revealTarget(for: frame, metrics: metrics, padding: 6) else { return }
-        withAnimation(.easeInOut(duration: 0.08)) {
-            scrollPosition.scrollTo(y: target)
-        }
-    }
-
-    private func scroll(to command: KeyboardNavigator.ScrollCommand) {
-        guard !albums.isEmpty else { return }
-        switch command {
-        case .top:
-            scrollPosition.scrollTo(edge: .top)
-        case .bottom:
-            scrollPosition.scrollTo(edge: .bottom)
-        case .pageUp, .pageDown:
-            guard let index = topVisibleAlbumIndex() else { return }
-            let page = max(1, visibleListRows - 1)
-            let target = index + (command == .pageUp ? -page : page)
-            let clamped = min(max(target, 0), albums.count - 1)
-            let frame = rowFrames[albums[clamped].id] ?? listRowFrame(at: clamped)
-            let targetOffset = ListScroll.pageTarget(for: frame, metrics: metrics, padding: 6)
-            scrollPosition.scrollTo(y: targetOffset)
-        }
-    }
-
-    private func scheduleViewportSave() {
-        viewportSaveTask?.cancel()
-        viewportSaveTask = Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(300))
-            guard !Task.isCancelled else { return }
-            saveViewportNow()
-        }
-    }
-
-    private func saveViewportNow() {
-        guard allowViewportSave else { return }
-        ViewScrollStore.shared.setOffset(metrics.offset, for: scrollKey)
-        ViewPositionStore.setLastViewport(key: scrollKey, offset: metrics.offset)
-    }
-
-    private func saveSessionOffsetNow() {
-        viewportSaveTask?.cancel()
-        ViewScrollStore.shared.setOffset(metrics.offset, for: scrollKey)
-    }
-
-    private var visibleListRows: Int {
-        max(1, Int(ceil(metrics.viewportHeight / 44)))
-    }
-
-    private func topVisibleAlbumIndex() -> Int? {
-        for index in albums.indices {
-            let frame = rowFrames[albums[index].id] ?? listRowFrame(at: index)
-            if frame.maxY > metrics.offset + 0.5 {
-                return index
-            }
-        }
-        return nil
-    }
-
-    private func isOnScreen(_ id: UUID, index: Int) -> Bool {
-        let frame = rowFrames[id] ?? listRowFrame(at: index)
-        return frame.maxY > metrics.offset + 0.5
-            && frame.minY < metrics.offset + metrics.viewportHeight - 0.5
-    }
-
-    private func listRowFrame(at index: Int) -> CGRect {
-        CGRect(x: 0, y: 6 + CGFloat(index) * 44, width: 1, height: 44)
-    }
-}
-
 func rowBackground(index: Int, selected: Bool) -> Color {
     if selected { return Theme.selectionFill }
     return index.isMultiple(of: 2) ? Theme.contentBackground : Theme.rowAlternate
@@ -1565,10 +1192,6 @@ enum SongTableContext: Hashable {
         case .starred: return "starred"
         case .playlist(let id): return "playlist.\(id.uuidString)"
         }
-    }
-
-    var scrollPositionKey: String {
-        "songTable.\(sortStorageKey)"
     }
 
     var playlistID: UUID? {
@@ -1629,18 +1252,15 @@ struct SongTable: View {
     let context: SongTableContext
     let playlistInfo: [UUID: PlaylistItemInfo]
 
-    @EnvironmentObject private var player: PlayerState
-    @ObservedObject private var navigator = KeyboardNavigator.shared
+    @ObservedObject private var playback = PlaybackStatus.shared
     @Environment(\.openWindow) private var openWindow
     @State private var selectedIDs: Set<UUID> = []
     @State private var selectionAnchor: UUID?
     @AppStorage private var sortKeyRaw: String
     @AppStorage private var sortAscending: Bool
     @State private var sortedSongs: [Song] = []
-    @State private var allowViewportSave = false
-    @State private var viewportSaveTask: Task<Void, Never>?
-    @State private var rowFrames: [UUID: CGRect] = [:]
-    @State private var scrollPosition: ScrollPosition
+    @State private var rowIndexByID: [UUID: Int] = [:]
+    @State private var scrollPosition = ScrollPosition()
     @State private var metrics = ListScrollMetrics()
 
     @AppStorage private var nameWidth: Double
@@ -1675,6 +1295,8 @@ struct SongTable: View {
     private let starWidth: CGFloat = 28
     private let contentTopPadding: CGFloat = 6
 
+    private var player: PlayerState { PlayerState.shared }
+
     init(songs: [Song], context: SongTableContext,
          playlistInfo: [UUID: PlaylistItemInfo] = [:]) {
         self.songs = songs
@@ -1707,31 +1329,7 @@ struct SongTable: View {
         _columnOrderCSV = AppStorage(wrappedValue: newDefault, orderKey)
         _sortKeyRaw = AppStorage(wrappedValue: SongSortKey.name.rawValue, "\(sortPrefix).sortKey")
         _sortAscending = AppStorage(wrappedValue: true, "\(sortPrefix).sortAscending")
-        let initialKey = SongSortStore.key(for: context)
-        let initialAscending = SongSortStore.ascending(for: context)
-        let initialSorted = songsSorted(songs,
-                                        by: initialKey,
-                                        ascending: initialAscending,
-                                        playlistInfo: playlistInfo)
-        _sortedSongs = State(initialValue: initialSorted)
-        let validIDs = Set(songs.map(\.id))
-        let sessionFocus = ViewFocusStore.shared.focusID(for: context.scrollPositionKey).flatMap(UUID.init)
-        let sessionSelection = ViewFocusStore.shared.selectionIDs(for: context.scrollPositionKey).compactMap(UUID.init)
-        let focus = sessionFocus.flatMap { validIDs.contains($0) ? $0 : nil }
-        let selection = Set(sessionSelection.filter { validIDs.contains($0) })
-        let restoredSelection = selection.isEmpty ? (focus.map { [$0] } ?? []) : selection
-        let restoredFocus = focus ?? restoredSelection.first
-        let sessionOffset = ViewScrollStore.shared.offset(for: context.scrollPositionKey)
-        let persisted = ViewPositionStore.lastViewport()
-        let restoreOffset = sessionOffset
-            ?? (persisted?.key == context.scrollPositionKey ? persisted?.offset : nil)
-
-        _scrollPosition = State(initialValue: ScrollPosition(
-            idType: Never.self,
-            y: max(0, (restoreOffset ?? 0) - contentTopPadding)
-        ))
-        _selectedIDs = State(initialValue: restoredSelection)
-        _selectionAnchor = State(initialValue: restoredFocus)
+        _sortedSongs = State(initialValue: songs)
     }
 
     // MARK: Column metadata
@@ -1834,8 +1432,15 @@ struct SongTable: View {
     private var sorted: [Song] { sortedSongs }
 
     private func rebuildSorted() {
-        sortedSongs = songsSorted(songs, by: sortKey, ascending: ascending,
+        let rebuilt = songsSorted(songs, by: sortKey, ascending: ascending,
                                   playlistInfo: playlistInfo)
+        var indexes: [UUID: Int] = [:]
+        indexes.reserveCapacity(rebuilt.count)
+        for (index, song) in rebuilt.enumerated() {
+            indexes[song.id] = index
+        }
+        sortedSongs = rebuilt
+        rowIndexByID = indexes
     }
 
     var body: some View {
@@ -1854,11 +1459,23 @@ struct SongTable: View {
             }
         }
         .background(Theme.contentBackground)
+        .debugFrame("SongTable")
+        .task {
+            rebuildSorted()
+            publishDebugState()
+        }
+        .onReceive(NavigationRouter.shared.$arrow) { arrow in
+            guard let arrow, NavigationRouter.shared.focus == .songTable else { return }
+            moveSelection(arrow.direction)
+        }
+        .onReceive(NavigationRouter.shared.$scrollEvent) { event in
+            guard let event, NavigationRouter.shared.focus == .songTable else { return }
+            handleScroll(event.command)
+        }
         .onChange(of: selectedIDs) { _, _ in
             updateStatusBar()
-            persistFocus()
+            publishDebugState()
         }
-        .onChange(of: selectionAnchor) { _, _ in persistFocus() }
         .onChange(of: songs) { _, newSongs in
             let valid = Set(newSongs.map(\.id))
             selectedIDs.formIntersection(valid)
@@ -1867,16 +1484,27 @@ struct SongTable: View {
             }
             rebuildSorted()
             updateStatusBar()
+            publishDebugState()
         }
         .onChange(of: playlistInfo) { _, _ in
             rebuildSorted()
+            publishDebugState()
         }
     }
 
-    private func persistFocus() {
-        ViewFocusStore.shared.set(selection: Set(selectedIDs.map(\.uuidString)),
-                                  focus: (selectionAnchor ?? selectedIDs.first)?.uuidString,
-                                  for: context.scrollPositionKey)
+    private func publishDebugState() {
+        let selectedIndex = selectionAnchor.flatMap { id in
+            rowIndexByID[id]
+        } ?? -1
+        DebugState.shared.songTable = SongTableDebugInfo(
+            context: context.storageKey,
+            rows: sorted.count,
+            selected: selectedIDs.count,
+            selectedIndex: selectedIndex,
+            offset: metrics.offset,
+            viewport: metrics.viewportHeight,
+            content: metrics.contentHeight
+        )
     }
 
     private func updateStatusBar() {
@@ -2100,8 +1728,8 @@ struct SongTable: View {
     private var list: some View {
         ScrollView {
             LazyVStack(spacing: 0) {
-                ForEach(Array(sorted.enumerated()), id: \.element.id) { index, song in
-                    rowView(song, index: index)
+                ForEach(sorted, id: \.id) { song in
+                    rowView(song, index: rowIndexByID[song.id] ?? 0)
                         .id(song.id)
                 }
             }
@@ -2109,7 +1737,6 @@ struct SongTable: View {
             .padding(.vertical, contentTopPadding)
             .onTapGesture { clearSelection() }
             .marqueeSelectable(selection: $selectedIDs, space: "songTableSpace")
-            .onPreferenceChange(MarqueeFramesKey.self) { rowFrames = $0 }
         }
         .scrollPosition($scrollPosition)
         .onScrollGeometryChange(for: ListScrollMetrics.self) { geometry in
@@ -2118,43 +1745,7 @@ struct SongTable: View {
                               contentHeight: geometry.contentSize.height)
         } action: { _, new in
             metrics = new
-            scheduleViewportSave()
-        }
-        .task {
-            for _ in 0..<50 {
-                if metrics.viewportHeight > 0 { break }
-                try? await Task.sleep(for: .milliseconds(10))
-            }
-            try? await Task.sleep(for: .milliseconds(200))
-            allowViewportSave = true
-            saveViewportNow()
-        }
-        .onDisappear { saveSessionOffsetNow() }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
-            saveViewportNow()
-        }
-        .onChange(of: navigator.moveCount) { _, _ in
-            moveSelection()
-            revealSelection()
-        }
-        .onChange(of: navigator.clearSelectionCount) { _, _ in
-            if selectedIDs.isEmpty {
-                NotificationCenter.default.post(name: .clearSearch, object: nil)
-            } else {
-                clearSelection()
-            }
-        }
-        .onChange(of: navigator.selectFirstCount) { _, _ in
-            guard let first = sorted.first else { return }
-            selectedIDs = [first.id]
-            selectionAnchor = first.id
-            scrollPosition.scrollTo(edge: .top)
-        }
-        .onChange(of: navigator.scrollCount) { _, _ in
-            scroll(to: navigator.lastScrollCommand)
-        }
-        .onChange(of: navigator.activateCount) { _, _ in
-            activateSelection()
+            publishDebugState()
         }
         .onTapGesture { clearSelection() }
     }
@@ -2263,13 +1854,13 @@ struct SongTable: View {
     @ViewBuilder
     private func statusCell(_ song: Song, selected: Bool) -> some View {
         Group {
-            if player.missingFileIDs.contains(song.id) {
+            if playback.missingFileIDs.contains(song.id) {
                 Image(systemName: "exclamationmark.circle.fill")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(selected ? Theme.highlightForeground : .orange)
                     .help("File is currently missing; it was not removed from the library")
-            } else if player.currentSong?.id == song.id {
-                Image(systemName: player.isPlaying ? "play.fill" : "pause.fill")
+            } else if playback.currentSongID == song.id {
+                Image(systemName: playback.isPlaying ? "play.fill" : "pause.fill")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundColor(selected ? Theme.highlightForeground : Theme.highlight)
             } else {
@@ -2333,6 +1924,7 @@ struct SongTable: View {
     }
 
     private func handleRowTap(_ song: Song) {
+        NavigationRouter.shared.setFocus(.songTable)
         let flags = NSEvent.modifierFlags
         let command = flags.contains(.command)
         let shift = flags.contains(.shift)
@@ -2358,105 +1950,41 @@ struct SongTable: View {
     }
 
     private func clearSelection() {
+        NavigationRouter.shared.setFocus(.songTable)
         selectedIDs.removeAll()
         selectionAnchor = nil
     }
 
-    private func moveSelection() {
-        guard navigator.region == .content else { return }
-        guard navigator.lastMove == .up || navigator.lastMove == .down else { return }
+    private func moveSelection(_ direction: NavigationDirection) {
+        guard direction == .up || direction == .down else { return }
         let items = sorted
         guard !items.isEmpty else { return }
-        let delta = navigator.lastMove == .up ? -1 : 1
+        let delta = direction == .up ? -1 : 1
         let currentID = selectionAnchor ?? selectedIDs.first
-        let baseID: UUID?
+
+        let index: Int
         if let currentID,
-           let index = items.firstIndex(where: { $0.id == currentID }),
-           isOnScreen(currentID, index: index) {
-            baseID = currentID
-        } else if let topIndex = topVisibleSongIndex() {
-            baseID = items[topIndex].id
+           let current = items.firstIndex(where: { $0.id == currentID }),
+           isOnScreen(currentID, index: current) {
+            index = min(max(current + delta, 0), items.count - 1)
+        } else if let top = topVisibleSongIndex() {
+            index = top
+        } else if let currentID,
+                  let current = items.firstIndex(where: { $0.id == currentID }) {
+            index = min(max(current + delta, 0), items.count - 1)
         } else {
-            baseID = currentID
+            index = 0
         }
-        if let baseID, let index = items.firstIndex(where: { $0.id == baseID }) {
-            let next = items[min(max(index + delta, 0), items.count - 1)].id
-            selectedIDs = [next]
-            selectionAnchor = next
-        } else {
-            let next = items.first?.id
-            if let next {
-                selectedIDs = [next]
-            } else {
-                selectedIDs = []
-            }
-            selectionAnchor = next
-        }
-    }
 
-    private func activateSelection() {
-        guard navigator.region == .content else { return }
-        let targetID = selectionAnchor ?? selectedIDs.first
-        guard let targetID, let song = sorted.first(where: { $0.id == targetID }) else { return }
-        player.play(song, in: sorted)
-    }
-
-    private func revealSelection() {
-        guard let id = selectionAnchor,
-              let index = sorted.firstIndex(where: { $0.id == id }) else { return }
-        let frame = rowFrames[id] ?? songRowFrame(at: index)
-        guard let target = ListScroll.revealTarget(for: frame, metrics: metrics, padding: 6) else { return }
-        withAnimation(.easeInOut(duration: 0.08)) {
-            scrollPosition.scrollTo(y: target)
-        }
-    }
-
-    private func scroll(to command: KeyboardNavigator.ScrollCommand) {
-        guard !sorted.isEmpty else { return }
-        switch command {
-        case .top:
-            scrollPosition.scrollTo(edge: .top)
-        case .bottom:
-            scrollPosition.scrollTo(edge: .bottom)
-        case .pageUp, .pageDown:
-            guard let index = topVisibleSongIndex() else { return }
-            let page = max(1, visibleTableRows - 1)
-            let target = index + (command == .pageUp ? -page : page)
-            let clamped = min(max(target, 0), sorted.count - 1)
-            let frame = rowFrames[sorted[clamped].id] ?? songRowFrame(at: clamped)
-            let targetOffset = ListScroll.pageTarget(for: frame, metrics: metrics, padding: 6)
-            scrollPosition.scrollTo(y: targetOffset)
-        }
-    }
-
-    private func scheduleViewportSave() {
-        viewportSaveTask?.cancel()
-        viewportSaveTask = Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(300))
-            guard !Task.isCancelled else { return }
-            saveViewportNow()
-        }
-    }
-
-    private func saveViewportNow() {
-        guard allowViewportSave else { return }
-        ViewScrollStore.shared.setOffset(metrics.offset, for: context.scrollPositionKey)
-        ViewPositionStore.setLastViewport(key: context.scrollPositionKey, offset: metrics.offset)
-    }
-
-    private func saveSessionOffsetNow() {
-        viewportSaveTask?.cancel()
-        ViewScrollStore.shared.setOffset(metrics.offset, for: context.scrollPositionKey)
-    }
-
-    private var visibleTableRows: Int {
-        max(1, Int(ceil(metrics.viewportHeight / 26)))
+        let id = items[index].id
+        selectedIDs = [id]
+        selectionAnchor = id
+        revealSelection()
     }
 
     private func topVisibleSongIndex() -> Int? {
         for index in sorted.indices {
-            let frame = rowFrames[sorted[index].id] ?? songRowFrame(at: index)
-            if frame.maxY > metrics.offset + 0.5 {
+            if songRowFrame(at: index).maxY > metrics.offset + 0.5 {
                 return index
             }
         }
@@ -2464,13 +1992,39 @@ struct SongTable: View {
     }
 
     private func isOnScreen(_ id: UUID, index: Int) -> Bool {
-        let frame = rowFrames[id] ?? songRowFrame(at: index)
+        let frame = songRowFrame(at: index)
         return frame.maxY > metrics.offset + 0.5
             && frame.minY < metrics.offset + metrics.viewportHeight - 0.5
     }
 
     private func songRowFrame(at index: Int) -> CGRect {
         CGRect(x: 0, y: 6 + CGFloat(index) * 26, width: 1, height: 26)
+    }
+
+    private func revealSelection() {
+        guard let id = selectionAnchor,
+              let index = sorted.firstIndex(where: { $0.id == id }) else { return }
+        let frame = songRowFrame(at: index)
+        guard let target = ListScroll.revealTarget(for: frame,
+                                                   metrics: metrics,
+                                                   padding: 6) else { return }
+        scrollPosition.scrollTo(y: target)
+    }
+
+    private func handleScroll(_ command: NavigationScrollCommand) {
+        switch command {
+        case .home:
+            scrollPosition.scrollTo(edge: .top)
+        case .end:
+            scrollPosition.scrollTo(edge: .bottom)
+        case .pageUp, .pageDown:
+            guard metrics.viewportHeight > 0 else { return }
+            let visibleRows = max(1, Int(ceil(metrics.viewportHeight / 26)))
+            let pageHeight = CGFloat(max(1, visibleRows - 1) * 26)
+            let delta = command == .pageUp ? -pageHeight : pageHeight
+            let target = min(max(metrics.offset + delta, 0), metrics.maxOffset)
+            scrollPosition.scrollTo(y: target)
+        }
     }
 
     private func setSort(_ key: SongSortKey) {
@@ -2481,6 +2035,7 @@ struct SongTable: View {
             sortAscending = true
         }
         rebuildSorted()
+        publishDebugState()
     }
 }
 
