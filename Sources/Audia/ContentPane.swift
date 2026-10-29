@@ -189,12 +189,16 @@ func albumsSorted(_ albums: [Album],
 }
 
 func recentAlbumsSorted(_ albums: [Album]) -> [Album] {
-    albums.sorted {
-        let a = $0.addedAt
-        let b = $1.addedAt
-        if abs(a - b) < 0.5 {
-            return $0.title.localizedStandardCompare($1.title) == .orderedAscending
+    // `Album.addedAt` walks every song in the album. Sorting recomputes it on
+    // every comparison, which is expensive enough to stall playback-driven
+    // view updates; cache it once per album instead.
+    albums
+        .map { ($0, $0.addedAt) }
+        .sorted { lhs, rhs in
+            if abs(lhs.1 - rhs.1) < 0.5 {
+                return lhs.0.title.localizedStandardCompare(rhs.0.title) == .orderedAscending
+            }
+            return lhs.1 > rhs.1
         }
-        return a > b
-    }
+        .map(\.0)
 }

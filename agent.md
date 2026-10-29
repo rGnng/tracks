@@ -142,7 +142,7 @@ Sources/Audia/
   ContextMenus.swift         Shared album/song context menus
   KeyboardShortcut.swift     Standard AppKit shortcut recorder, matching, persistence
   SystemWideShortcuts.swift  Carbon system-wide hot keys for show/hide and current-song star
-  TrayController.swift       Menu-bar opticaldisc.fill icon, transient track/star popup
+  TrayController.swift       Menu-bar icon/cover flip, inline track and star strip
   LibraryFocusSink.swift     Initial first responder for the Library window
   SettingsFocusSink.swift    Invisible initial first responder for Settings
   GetInfo.swift              Details/Artwork/File inspector and tag editing
@@ -230,6 +230,9 @@ Important schema decisions:
   shows an empty year field for unknown years; clearing a known year removes it
   from the database and the managed tag fields.
 - `Album.addedAt` is `max(song.dateAdded)` and drives the Recently Added order.
+  The order is computed by caching `addedAt` once per album before sorting;
+  recomputing it inside the comparator made every playback-driven view update
+  re-walk all songs.
 - WAL is used while running. On normal termination, `closeForTermination()`
   checkpoints and switches the journal back to DELETE so `library.sqlite` is
   self-contained.
@@ -470,19 +473,29 @@ Important schema decisions:
   longer switches from MiniPlayer/Settings/Get Info to the Library.
 - The show/hide player shortcut now calls `NSApp.hide(nil)` when hiding and
   `NSApp.unhide(nil)` before showing, so focus returns to the previously active
-  application. Tray popups are suppressed while `NSApp.isHidden`, otherwise an
-  app-owned panel can cause AppKit to unhide the Library window.
+  application. The tray card is part of the menu bar, so it does not unhide the
+  Library window.
 - The Window menu is pruned after launch and after menu additions. SwiftUI's
   scene entries for Tracks, Get Info, and Set Up Tracks Library are removed;
   only the explicit Library/MiniPlayer commands remain.
-- System tray (menu bar) is off by default. `TrayController` uses the SF Symbol
-  `opticaldisc.fill`. Optional track-change and
-  current-song star popups default to track-change off, star on, and
-  `onlyWhenLibraryNotFocused` on. The compact popup has artwork, title + star,
-  artist/album, and an upward triangle. Its duration is configurable through
-  `tray.popupDurationMs` and defaults to 1500 ms. “Library not focused” means
-  the main Library window is not the key window; MiniPlayer therefore still
-  allows a popup.
+- System tray (menu bar) is off by default. `TrayController` starts as a
+  24-point status item with `opticaldisc.fill`. On a song change or current-song
+  star/unstar it flips the icon around its vertical axis to the album cover
+  while expanding the item leftwards to 120 points; the cover stays left-aligned
+  and the prepared title, artist/album, and star are revealed as the width grows.
+  Text truncates with an ellipsis. After `tray.popupDurationMs` (default 1500 ms)
+  the width shrinks back to the icon while the cover flips left back to the disc.
+  All width, flip, and layout motion uses a circular ease-in-out curve.
+- Track-change and star/unstar strips are enabled independently
+  (`tray.trackChange`, `tray.starChange`); both default on. Existing installs are
+  migrated once through `tray.infostripMigration`. The old
+  `tray.onlyWhenLibraryNotFocused` gate is ignored. The status item keeps its
+  normal menu click behavior because the SwiftUI host returns `nil` from
+  `hitTest`.
+- Album covers are prefetched when the current song changes, center-cropped,
+  bilinearly downsampled to 64 px, and kept in a 32-entry in-memory
+  `NSCache`. The flip waits for that image so it never shows a blank back side;
+  if an album has no artwork, its generated color gradient is shown instead.
 
 ## 7. Artwork cache and Settings
 

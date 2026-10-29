@@ -177,10 +177,8 @@ struct SettingsView: View {
     @AppStorage(TrayController.DefaultsKey.enabled) private var trayEnabled = false
     @AppStorage(TrayController.DefaultsKey.trackChange) private var trayTrackChange = false
     @AppStorage(TrayController.DefaultsKey.starChange) private var trayStarChange = true
-    @AppStorage(TrayController.DefaultsKey.onlyWhenLibraryNotFocused)
-    private var trayOnlyWhenLibraryNotFocused = true
-    @AppStorage(TrayController.DefaultsKey.popupDurationMs)
-    private var trayPopupDurationMs = 1500
+    @AppStorage(TrayController.DefaultsKey.displayDurationMs)
+    private var trayDisplayDurationMs = 1500
     @State private var shortcutBindings = KeyboardShortcutStore.loadBindings()
     @State private var showRawShortcutValues = false
     @State private var selectedInAppBindingID: UUID?
@@ -719,7 +717,7 @@ struct SettingsView: View {
     private var traySettings: some View {
         SettingsCard(title: "System Tray") {
             SettingsRow(title: "Show icon",
-                        subtitle: "Shows a disc icon in the menu bar. Popups appear below the icon.") {
+                        subtitle: "Shows a disc in the menu bar. On song or star changes it flips to the album cover and expands to show the track.") {
                 Toggle("", isOn: $trayEnabled)
                     .labelsHidden()
                     .toggleStyle(.switch)
@@ -728,43 +726,35 @@ struct SettingsView: View {
 
             if trayEnabled {
                 SettingsDivider()
-                SettingsRow(title: "Track change") {
+                SettingsRow(title: "Show on song change") {
                     Toggle("", isOn: $trayTrackChange)
                         .labelsHidden()
                         .toggleStyle(.switch)
                         .controlSize(.small)
                 }
                 SettingsDivider()
-                SettingsRow(title: "Add or remove current song from Stared playlist") {
+                SettingsRow(title: "Show on star/unstar") {
                     Toggle("", isOn: $trayStarChange)
                         .labelsHidden()
                         .toggleStyle(.switch)
                         .controlSize(.small)
                 }
                 SettingsDivider()
-                SettingsRow(title: "Only display popup when Library window is not focused") {
-                    Toggle("", isOn: $trayOnlyWhenLibraryNotFocused)
-                        .labelsHidden()
-                        .toggleStyle(.switch)
-                        .controlSize(.small)
-                }
-                SettingsDivider()
-                SettingsRow(title: "Popup duration") {
-                    Stepper("\(trayPopupDurationMs) ms",
-                            value: $trayPopupDurationMs,
+                SettingsRow(title: "Display duration") {
+                    Stepper("\(trayDisplayDurationMs) ms",
+                            value: $trayDisplayDurationMs,
                             in: 300...10000,
                             step: 100)
                         .controlSize(.small)
                 }
-                SettingsFootnote("Default: 1500 ms. Popups are suppressed while the Library window is focused.")
+                SettingsFootnote("How long the track information stays visible after the card finishes opening. Default: 1500 ms.")
             }
         }
         .onChange(of: trayEnabled) { _, _ in TrayController.shared.refresh() }
         .onChange(of: trayTrackChange) { _, _ in TrayController.shared.refresh() }
         .onChange(of: trayStarChange) { _, _ in TrayController.shared.refresh() }
-        .onChange(of: trayOnlyWhenLibraryNotFocused) { _, _ in TrayController.shared.refresh() }
-        .onChange(of: trayPopupDurationMs) { _, value in
-            trayPopupDurationMs = min(max(value, 300), 10000)
+        .onChange(of: trayDisplayDurationMs) { _, value in
+            trayDisplayDurationMs = min(max(value, 300), 10000)
         }
     }
 
