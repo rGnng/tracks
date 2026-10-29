@@ -140,50 +140,66 @@ struct AlbumGrid: View {
         }
     }
 
+    private var rowCount: Int {
+        guard columnCount > 0 else { return 0 }
+        return (albums.count + columnCount - 1) / columnCount
+    }
+
+    private func isLastRow(_ index: Int) -> Bool {
+        guard rowCount > 0 else { return true }
+        return index >= (rowCount - 1) * max(columnCount, 1)
+    }
+
+    @ViewBuilder
+    private func albumCard(_ album: Album) -> some View {
+        AlbumCard(album: album, isSelected: selectedIDs.contains(album.id)) {
+            player.play(album.songs)
+        }
+        .id(album.id)
+        .debugFrame("AlbumCard \(album.title) [\(album.id.uuidString.prefix(4))]")
+        .background(
+            GeometryReader { proxy in
+                Color.clear.preference(
+                    key: AlbumCardFramesKey.self,
+                    value: [album.id: proxy.frame(in: .named("albumGridSpace"))]
+                )
+            }
+        )
+        .contentShape(Rectangle())
+        .gesture(
+            TapGesture().onEnded {
+                handleCardTap(album)
+            }
+        )
+        .contextMenu {
+            Button("Play") { player.play(contextSongs(for: album)) }
+            Button("Shuffle") { player.playShuffled(contextSongs(for: album)) }
+            Divider()
+            AddToPlaylistMenu(songs: contextSongs(for: album))
+            Button("Play Next") { player.playNext(contextSongs(for: album)) }
+            Button("Play Later") { player.playLater(contextSongs(for: album)) }
+            Divider()
+            Button("Get Info…") {
+                InfoCenter.shared.target = .album(album.id)
+                openWindow(id: "get-info")
+            }
+            Divider()
+            Button("Delete…") {
+                LibraryDeletion.confirmDelete(albums: contextAlbums(for: album))
+            }
+            .disabled(!LibraryDeletion.canDelete(albums: contextAlbums(for: album)))
+        }
+        .longPressArmable { dragPayload(for: album) }
+    }
+
     private var grid: some View {
         GeometryReader { viewport in
             ScrollView {
                 ZStack(alignment: .topLeading) {
-                    LazyVGrid(columns: columns, alignment: .leading, spacing: 26) {
-                        ForEach(albums) { album in
-                            AlbumCard(album: album, isSelected: selectedIDs.contains(album.id)) {
-                                player.play(album.songs)
-                            }
-                            .id(album.id)
-                            .debugFrame("AlbumCard \(album.title) [\(album.id.uuidString.prefix(4))]")
-                            .background(
-                                GeometryReader { proxy in
-                                    Color.clear.preference(
-                                        key: AlbumCardFramesKey.self,
-                                        value: [album.id: proxy.frame(in: .named("albumGridSpace"))]
-                                    )
-                                }
-                            )
-                            .contentShape(Rectangle())
-                            .gesture(
-                                TapGesture().onEnded {
-                                    handleCardTap(album)
-                                }
-                            )
-                            .contextMenu {
-                                Button("Play") { player.play(contextSongs(for: album)) }
-                                Button("Shuffle") { player.playShuffled(contextSongs(for: album)) }
-                                Divider()
-                                AddToPlaylistMenu(songs: contextSongs(for: album))
-                                Button("Play Next") { player.playNext(contextSongs(for: album)) }
-                                Button("Play Later") { player.playLater(contextSongs(for: album)) }
-                                Divider()
-                                Button("Get Info…") {
-                                    InfoCenter.shared.target = .album(album.id)
-                                    openWindow(id: "get-info")
-                                }
-                                Divider()
-                                Button("Delete…") {
-                                    LibraryDeletion.confirmDelete(albums: contextAlbums(for: album))
-                                }
-                                .disabled(!LibraryDeletion.canDelete(albums: contextAlbums(for: album)))
-                            }
-                            .longPressArmable { dragPayload(for: album) }
+                    LazyVGrid(columns: columns, alignment: .leading, spacing: 0) {
+                        ForEach(Array(albums.enumerated()), id: \.element.id) { index, album in
+                            albumCard(album)
+                                .padding(.bottom, isLastRow(index) ? 0 : 26)
                         }
                     }
                     .padding(contentTopPadding)
