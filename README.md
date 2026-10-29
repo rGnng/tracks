@@ -100,8 +100,8 @@ queue, and history live on this Mac.
   italic placeholders; submitting an empty mixed field preserves the underlying
   value. Read-only fields remain selectable and copyable.
 - Multi-disc albums are ordered by disc then track. Album detail shows the
-  effective disc count and `disc-track` labels, and Get Info infers the total
-  from the highest disc number when the total-disc tag is missing.
+  effective disc count and `disc-track` labels. Get Info keeps the stored disc
+  values as-is so saving does not fill intentionally empty total-disc tags.
 - **Delete** is available only for Internal Library files, requires
   confirmation, and moves files to the macOS Trash before removing their index
   rows.

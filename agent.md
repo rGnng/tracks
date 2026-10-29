@@ -410,8 +410,8 @@ Important schema decisions:
 - Multi-disc albums are detected from their disc numbers even when the
   total-disc tag is missing. Album songs load disc-first and track-second,
   album detail shows the effective disc count and labels rows `disc-track`
-  (for example `1-01`), and Get Info infers the missing total from the highest
-  disc number.
+  (for example `1-01`). Get Info keeps the stored disc values as-is; it must not
+  infer a total because saving would overwrite intentionally empty tags.
 - Opening an album detail from the current grid keeps the mounted grid's scroll
   offset unchanged, so returning leaves the clicked album where it was.
   `Go to Album` from another view scrolls the target album row to the first

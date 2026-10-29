@@ -516,15 +516,7 @@ struct GetInfoView: View {
                 return total > 0 ? String(total) : ""
             })
             disc = uniform(.disc, songs.map { $0.discNumber > 0 ? String($0.discNumber) : "" })
-            let inferredDiscTotal = max(songs.map(\.discTotal).max() ?? 0,
-                                        songs.map(\.discNumber).max() ?? 0)
-            discTotal = uniform(.discTotal,
-                                songs.map { $0.discTotal > 0 ? String($0.discTotal) : "" })
-            let displayedDiscTotal = max(Int(discTotal) ?? 0, inferredDiscTotal)
-            if displayedDiscTotal > 1 {
-                discTotal = String(displayedDiscTotal)
-                mixedFields.remove(.discTotal)
-            }
+            discTotal = uniform(.discTotal, songs.map { $0.discTotal > 0 ? String($0.discTotal) : "" })
             comments = uniform(.comments, songs.map(\.comments))
 
             plays = songs.reduce(0) { $0 + $1.plays }
@@ -556,8 +548,7 @@ struct GetInfoView: View {
             let fallbackTotal = song.trackTotal > 0 ? song.trackTotal : result.album.songs.count
             trackTotal = fallbackTotal > 0 ? String(fallbackTotal) : ""
             disc = song.discNumber > 0 ? String(song.discNumber) : ""
-            let displayedDiscTotal = max(song.discTotal, result.album.effectiveDiscTotal)
-            discTotal = displayedDiscTotal > 1 ? String(displayedDiscTotal) : ""
+            discTotal = song.discTotal > 0 ? String(song.discTotal) : ""
             comments = song.comments
 
             plays = song.plays
