@@ -125,6 +125,24 @@ extension Album {
     var addedAt: TimeInterval {
         songs.map(\.dateAdded).max() ?? 0
     }
+
+    /// Disc numbers present in the album, ignoring unknown/zero values.
+    var discNumbers: Set<Int> {
+        Set(songs.map(\.discNumber).filter { $0 > 0 })
+    }
+
+    /// An album is multi-disc when more than one disc number is present, or
+    /// when any track explicitly declares a total greater than one. The total
+    /// disc tag is optional; a missing total must not hide a multi-disc album.
+    var isMultiDisc: Bool {
+        (discNumbers.max() ?? 0) > 1 || songs.contains { $0.discTotal > 1 }
+    }
+
+    /// Best available disc count: the highest explicit total, or the highest
+    /// disc number when totals are missing.
+    var effectiveDiscTotal: Int {
+        max(discNumbers.max() ?? 0, songs.map(\.discTotal).max() ?? 0)
+    }
 }
 
 struct PlaylistItemInfo: Hashable {

@@ -6,13 +6,17 @@ final class CatalogAndMPDTests: XCTestCase {
     private func makeSong(title: String,
                           artist: String,
                           album: String,
-                          dateAdded: TimeInterval = 0) -> Song {
+                          dateAdded: TimeInterval = 0,
+                          discNumber: Int = 0,
+                          discTotal: Int = 0) -> Song {
         Song(title: title,
              artist: artist,
              album: album,
              genre: "",
              duration: 1,
              trackNumber: 1,
+             discNumber: discNumber,
+             discTotal: discTotal,
              plays: 0,
              dateAdded: dateAdded)
     }
@@ -53,6 +57,22 @@ final class CatalogAndMPDTests: XCTestCase {
         XCTAssertEqual(catalog.song(withID: songA.id)?.album.id, albumA.id)
         XCTAssertEqual(catalog.song(withID: songB.id)?.album.id, albumB.id)
         XCTAssertEqual(catalog.album(withID: albumB.id)?.id, albumB.id)
+    }
+
+    func testAlbumDetectsMultiDiscFromTotalWhenNumbersAreMissing() {
+        let song = makeSong(title: "Song", artist: "Artist", album: "Album",
+                            discNumber: 1, discTotal: 2)
+        let album = Album(title: "Album", artist: "Artist", genre: "",
+                          artwork: Artwork(colors: []), songs: [song])
+        XCTAssertTrue(album.isMultiDisc)
+        XCTAssertEqual(album.effectiveDiscTotal, 2)
+
+        let single = makeSong(title: "Single", artist: "Artist", album: "Single",
+                              discNumber: 1, discTotal: 0)
+        let singleAlbum = Album(title: "Single", artist: "Artist", genre: "",
+                                artwork: Artwork(colors: []), songs: [single])
+        XCTAssertFalse(singleAlbum.isMultiDisc)
+        XCTAssertEqual(singleAlbum.effectiveDiscTotal, 1)
     }
 
     func testRecentAlbumsSortedUsesNewestAndTitleTieBreak() {

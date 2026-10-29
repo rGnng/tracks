@@ -664,6 +664,8 @@ private struct AlbumDetailView: View {
     @State private var scrollPosition = ScrollPosition()
     @State private var metrics = ListScrollMetrics()
 
+    private var isMultiDisc: Bool { album.isMultiDisc }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
@@ -726,6 +728,7 @@ private struct AlbumDetailView: View {
                                 AlbumTrackRow(
                                     song: song,
                                     albumArtist: album.artist,
+                                    isMultiDisc: isMultiDisc,
                                     isSelected: selected,
                                     isCurrent: player.currentSong?.id == song.id,
                                     isMissing: player.missingFileIDs.contains(song.id),
@@ -868,6 +871,9 @@ private struct AlbumDetailView: View {
         var parts: [String] = []
         if !album.genre.isEmpty { parts.append(album.genre) }
         if !album.year.isEmpty { parts.append(album.year) }
+        if isMultiDisc {
+            parts.append("\(album.effectiveDiscTotal) discs")
+        }
         parts.append("\(album.songs.count) songs")
         return parts.joined(separator: " · ")
     }
@@ -1012,6 +1018,7 @@ struct AlbumActionButton: View {
 private struct AlbumTrackRow: View {
     let song: Song
     let albumArtist: String
+    let isMultiDisc: Bool
     let isSelected: Bool
     let isCurrent: Bool
     let isMissing: Bool
@@ -1020,6 +1027,13 @@ private struct AlbumTrackRow: View {
     let nextSelected: Bool
 
     @State private var hover = false
+
+    private var trackLabel: String {
+        guard isMultiDisc, song.discNumber > 0, song.trackNumber > 0 else {
+            return song.trackNumberLabel
+        }
+        return "\(song.discNumber)-\(String(format: "%02d", song.trackNumber))"
+    }
 
     var body: some View {
         HStack(spacing: 0) {
@@ -1033,12 +1047,12 @@ private struct AlbumTrackRow: View {
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundColor(isSelected ? Theme.highlightForeground : Theme.highlight)
                 } else {
-                    Text(song.trackNumberLabel)
+                    Text(trackLabel)
                         .font(.system(size: 12))
                         .foregroundColor(isSelected ? Theme.highlightForeground.opacity(0.85) : Theme.secondaryText)
                 }
             }
-            .frame(width: 30, alignment: .leading)
+            .frame(width: isMultiDisc ? 40 : 30, alignment: .leading)
 
             HStack(spacing: 6) {
                 Text(song.title)

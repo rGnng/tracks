@@ -99,6 +99,9 @@ queue, and history live on this Mac.
 - **Get Info** has Details, Artwork, and File tabs. Mixed-value fields use
   italic placeholders; submitting an empty mixed field preserves the underlying
   value. Read-only fields remain selectable and copyable.
+- Multi-disc albums are ordered by disc then track. Album detail shows the
+  effective disc count and `disc-track` labels, and Get Info infers the total
+  from the highest disc number when the total-disc tag is missing.
 - **Delete** is available only for Internal Library files, requires
   confirmation, and moves files to the macOS Trash before removing their index
   rows.

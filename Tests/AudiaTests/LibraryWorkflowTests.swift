@@ -332,6 +332,38 @@ final class LibraryWorkflowTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: movedTrack.path))
     }
 
+    @MainActor
+    func testMultiDiscAlbumSortsByDiscWhenTotalIsMissing() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        let database = LibraryDatabase(path: fixture.appendingPathComponent("library.sqlite").path)
+        defer { database.closeForTermination() }
+        let library = database.ensureLibrary(path: fixture.path,
+                                             kind: .external,
+                                             name: "Multi Disc Test")
+        let discOne = makeTrack(path: fixture.appendingPathComponent("disc1.wav").path,
+                                title: "Disc 1",
+                                album: "Multi Disc",
+                                track: 1,
+                                discNumber: 1,
+                                discTotal: 0)
+        let discTwo = makeTrack(path: fixture.appendingPathComponent("disc2.wav").path,
+                                title: "Disc 2",
+                                album: "Multi Disc",
+                                track: 1,
+                                discNumber: 2,
+                                discTotal: 0)
+
+        _ = database.sync(tracks: [discTwo, discOne],
+                          internalMusicRoot: nil,
+                          libraries: [library])
+        let album = try XCTUnwrap(database.loadLibrary().albums.first { $0.title == "Multi Disc" })
+
+        XCTAssertEqual(album.songs.map(\.title), ["Disc 1", "Disc 2"])
+        XCTAssertTrue(album.isMultiDisc)
+        XCTAssertEqual(album.effectiveDiscTotal, 2)
+    }
+
     func testQuickScanAddsOnlyNewFilesAndFullScanReparsesChanges() async throws {
         let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture) }
@@ -474,7 +506,12 @@ final class LibraryWorkflowTests: XCTestCase {
         return fixture
     }
 
-    private func makeTrack(path: String, title: String, album: String = "Test Album") -> ScannedTrack {
+    private func makeTrack(path: String,
+                           title: String,
+                           album: String = "Test Album",
+                           track: Int = 1,
+                           discNumber: Int = 1,
+                           discTotal: Int = 1) -> ScannedTrack {
         let values = try? URL(fileURLWithPath: path)
             .resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
         return ScannedTrack(path: path,
@@ -484,10 +521,10 @@ final class LibraryWorkflowTests: XCTestCase {
                             album: album,
                             genre: "Test",
                             year: "2026",
-                            track: 1,
+                            track: track,
                             trackTotal: 1,
-                            discNumber: 1,
-                            discTotal: 1,
+                            discNumber: discNumber,
+                            discTotal: discTotal,
                             comments: "",
                             duration: 1,
                             artwork: nil,

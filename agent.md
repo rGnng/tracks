@@ -407,6 +407,11 @@ Important schema decisions:
   current viewport. Viewport persistence saves the exact scroll offset, not a
   top item. Album-grid item frames are computed from the uniform grid layout
   when the SwiftUI preference frames are unavailable after a long scroll jump.
+- Multi-disc albums are detected from their disc numbers even when the
+  total-disc tag is missing. Album songs load disc-first and track-second,
+  album detail shows the effective disc count and labels rows `disc-track`
+  (for example `1-01`), and Get Info infers the missing total from the highest
+  disc number.
 - Opening an album detail from the current grid keeps the mounted grid's scroll
   offset unchanged, so returning leaves the clicked album where it was.
   `Go to Album` from another view scrolls the target album row to the first

@@ -847,7 +847,9 @@ final class LibraryDatabase {
             JOIN artists sar ON sar.id = s.artist_id
             LEFT JOIN libraries l ON l.id = s.library_id
             WHERE s.library_id IS NULL OR COALESCE(l.enabled, 1) = 1
-            ORDER BY a.title COLLATE NOCASE, s.track, s.title
+            ORDER BY a.title COLLATE NOCASE,
+                     CASE WHEN s.disc = 0 THEN 1 ELSE s.disc END,
+                     s.track, s.title
             """) {
             while sqlite3_step(stmt) == SQLITE_ROW {
                 let idString = text(stmt, 0) ?? UUID().uuidString
