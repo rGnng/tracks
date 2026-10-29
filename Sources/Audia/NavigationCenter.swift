@@ -16,7 +16,6 @@ final class NavigationCenter: ObservableObject {
     func openAlbum(_ albumID: UUID) {
         albumToOpen = albumID
         WindowModeCenter.shared.setMode(.library)
-        WindowModeCenter.shared.showWindow()
     }
 
     /// Opens the album containing the currently playing song.

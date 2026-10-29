@@ -52,13 +52,11 @@ struct AudiaApp: App {
             CommandGroup(before: .windowSize) {
                 Button("Library") {
                     WindowModeCenter.shared.setMode(.library)
-                    WindowModeCenter.shared.showWindow()
                 }
                 .keyboardShortcut("1", modifiers: .command)
 
                 Button("MiniPlayer") {
                     WindowModeCenter.shared.setMode(.miniPlayer)
-                    WindowModeCenter.shared.showWindow()
                 }
                 .keyboardShortcut("2", modifiers: .command)
 
@@ -1787,7 +1785,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if !flag {
             WindowModeCenter.shared.setMode(.library)
-            WindowModeCenter.shared.showWindow()
         }
         return true
     }

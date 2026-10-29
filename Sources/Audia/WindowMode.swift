@@ -33,6 +33,9 @@ final class WindowModeCenter: ObservableObject {
     @Published private(set) var mode: Mode = .library
     @Published private(set) var isFullScreen = false
     @Published private(set) var miniQueueExpanded = false
+    private var isFullScreenTransitioning = false
+    private var pendingMode: Mode?
+    private var fullScreenExitTimeout: DispatchWorkItem?
     @Published private(set) var miniQueueHeight: CGFloat = MiniPlayerMetrics.defaultQueueHeight
 
     // Keep both windows alive after their last visible state so global
@@ -48,6 +51,19 @@ final class WindowModeCenter: ObservableObject {
     var isLibraryWindowVisible: Bool {
         guard mode == .library, let window else { return false }
         return window.isVisible && !window.isMiniaturized
+    }
+
+    /// True while the active window is full screen or entering/leaving full
+    /// screen. Hiding the app in any of these states leaves an ownerless Space
+    /// behind, so the show/hide shortcut ignores it.
+    var isActiveWindowFullScreen: Bool {
+        switch mode {
+        case .library:
+            return isFullScreen || isFullScreenTransitioning
+                || (window?.styleMask.contains(.fullScreen) ?? false)
+        case .miniPlayer:
+            return miniWindow?.styleMask.contains(.fullScreen) ?? false
+        }
     }
 
     private var libraryFrame: NSRect?
@@ -86,8 +102,11 @@ final class WindowModeCenter: ObservableObject {
 
     private func miniWindowBecameKey() {
         guard mode != .miniPlayer else { return }
-        if let window, window.isVisible, !window.isMiniaturized,
-           !window.styleMask.contains(.fullScreen) {
+        if let window,
+           window.styleMask.contains(.fullScreen) || isFullScreen {
+            return
+        }
+        if let window, window.isVisible, !window.isMiniaturized {
             libraryFrame = window.frame
             UserDefaults.standard.set(NSStringFromRect(window.frame),
                                       forKey: Self.libraryFrameKey)
@@ -102,18 +121,47 @@ final class WindowModeCenter: ObservableObject {
         self.window = window
         isFullScreen = window.styleMask.contains(.fullScreen)
         NotificationCenter.default.addObserver(
+            forName: NSWindow.willEnterFullScreenNotification,
+            object: window,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.isFullScreenTransitioning = true }
+        }
+        NotificationCenter.default.addObserver(
             forName: NSWindow.didEnterFullScreenNotification,
             object: window,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in self?.isFullScreen = true }
+            Task { @MainActor in
+                guard let self else { return }
+                self.isFullScreen = true
+                self.isFullScreenTransitioning = false
+                // A mode switch requested during the enter animation still
+                // needs to leave the full-screen Space before showing mini.
+                if self.pendingMode == .miniPlayer {
+                    self.scheduleFullScreenExitTimeout()
+                    window.toggleFullScreen(nil)
+                }
+            }
+        }
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.willExitFullScreenNotification,
+            object: window,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.isFullScreenTransitioning = true }
         }
         NotificationCenter.default.addObserver(
             forName: NSWindow.didExitFullScreenNotification,
             object: window,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in self?.isFullScreen = false }
+            Task { @MainActor in
+                guard let self else { return }
+                self.isFullScreen = false
+                self.isFullScreenTransitioning = false
+                self.finishPendingModeAfterFullScreenExit()
+            }
         }
         NotificationCenter.default.addObserver(
             forName: NSWindow.didBecomeKeyNotification,
@@ -144,6 +192,11 @@ final class WindowModeCenter: ObservableObject {
     }
 
     func hideWindow() {
+        // macOS treats a full-screen window as its own Space. Hiding the app
+        // while that Space is active leaves an ownerless black Space and makes
+        // unhide restore the wrong state. Match the system Command-H behavior
+        // and ignore hide requests during full screen.
+        guard !isActiveWindowFullScreen else { return }
         // Hide the whole application, like Command-H. This deactivates Tracks
         // and returns focus to the previous app instead of leaving an empty
         // active app with its player window merely ordered out.
@@ -157,6 +210,7 @@ final class WindowModeCenter: ObservableObject {
             return
         }
         if !NSApp.isHidden, current.isVisible, !current.isMiniaturized {
+            guard !isActiveWindowFullScreen else { return }
             hideWindow()
         } else {
             showWindow()
@@ -164,22 +218,84 @@ final class WindowModeCenter: ObservableObject {
     }
 
     func setMode(_ newMode: Mode) {
-        guard newMode != mode else { return }
+        if newMode == .library {
+            pendingMode = nil
+            fullScreenExitTimeout?.cancel()
+            fullScreenExitTimeout = nil
+        } else if pendingMode == .miniPlayer {
+            return
+        }
+
+        guard newMode != mode else {
+            if newMode == .miniPlayer {
+                showMiniPlayerWindow()
+            } else if pendingMode == nil, !isFullScreenTransitioning {
+                showLibraryWindow()
+            }
+            return
+        }
 
         if newMode == .miniPlayer {
-            if let window, !window.styleMask.contains(.fullScreen) {
-                libraryFrame = window.frame
-                UserDefaults.standard.set(NSStringFromRect(window.frame), forKey: Self.libraryFrameKey)
+            guard let window else {
+                mode = .miniPlayer
+                miniQueueExpanded = false
+                showMiniPlayerWindow()
+                return
             }
+
+            let fullScreen = window.styleMask.contains(.fullScreen) || isFullScreen
+            if fullScreen || isFullScreenTransitioning {
+                pendingMode = .miniPlayer
+                scheduleFullScreenExitTimeout()
+                if fullScreen {
+                    window.toggleFullScreen(nil)
+                }
+                // If the window is still entering full screen, didEnter will
+                // exit it and the didExit notification will finish the switch.
+                return
+            }
+
+            libraryFrame = window.frame
+            UserDefaults.standard.set(NSStringFromRect(window.frame),
+                                      forKey: Self.libraryFrameKey)
             mode = .miniPlayer
             miniQueueExpanded = false
             showMiniPlayerWindow()
-        } else {
-            mode = .library
-            miniQueueExpanded = false
-            miniWindow?.orderOut(nil)
-            showLibraryWindow()
+            return
         }
+
+        mode = .library
+        miniQueueExpanded = false
+        miniWindow?.orderOut(nil)
+        showLibraryWindow()
+    }
+
+    private func scheduleFullScreenExitTimeout() {
+        fullScreenExitTimeout?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.pendingMode == .miniPlayer else { return }
+            self.pendingMode = nil
+            self.fullScreenExitTimeout = nil
+            self.isFullScreenTransitioning = false
+            self.isFullScreen = self.window?.styleMask.contains(.fullScreen) ?? false
+        }
+        fullScreenExitTimeout = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0, execute: work)
+    }
+
+    private func finishPendingModeAfterFullScreenExit() {
+        guard pendingMode == .miniPlayer else { return }
+        pendingMode = nil
+        fullScreenExitTimeout?.cancel()
+        fullScreenExitTimeout = nil
+        guard let window, !window.styleMask.contains(.fullScreen) else { return }
+
+        libraryFrame = window.frame
+        UserDefaults.standard.set(NSStringFromRect(window.frame),
+                                  forKey: Self.libraryFrameKey)
+        mode = .miniPlayer
+        miniQueueExpanded = false
+        showMiniPlayerWindow()
     }
 
     func closeMiniPlayer() {
@@ -234,7 +350,7 @@ final class WindowModeCenter: ObservableObject {
         mini.title = "Tracks MiniPlayer"
         mini.tabbingMode = .disallowed
         mini.acceptsMouseMovedEvents = true
-        mini.collectionBehavior = [.fullScreenAuxiliary]
+        mini.collectionBehavior = [.managed, .fullScreenNone]
         mini.animationBehavior = .none
         mini.delegate = miniResizeDelegate
         miniResizeDelegate.owner = self

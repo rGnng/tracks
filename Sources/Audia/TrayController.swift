@@ -21,7 +21,7 @@ final class TrayStatusModel: ObservableObject {
 /// the icon to the current album cover while expanding the status item leftwards
 /// to reveal the track details.
 @MainActor
-final class TrayController: NSObject {
+final class TrayController: NSObject, NSMenuItemValidation {
     static let shared = TrayController()
 
     enum DefaultsKey {
@@ -175,6 +175,13 @@ final class TrayController: NSObject {
 
     @objc private func hideTracks() {
         WindowModeCenter.shared.hideWindow()
+    }
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(hideTracks) {
+            return !WindowModeCenter.shared.isActiveWindowFullScreen
+        }
+        return true
     }
 
     @objc private func quitTracks() {

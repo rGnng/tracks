@@ -329,12 +329,18 @@ Important schema decisions:
     window; middle `42`; bottom `30`. The queue panel has its own adjustable
     height (`140...500`, screen permitting). Height is `width + 72`
     (`+ queueHeight` while the queue is open). Window shortcuts are Command-1 /
-    Command-2. Both call `WindowModeCenter.setMode()`/`showWindow()`, and the
-    windows are mutually exclusive: opening one orders the other out. Closing
-    MiniPlayer (red light or Command-W via `performClose`) restores Library.
-    The main window is retained strongly; `showWindow()` deminiaturizes, orders
-    it front, activates the app, and gives it focus. The system-wide F17
-    shortcut toggles the currently active mode. MiniPlayer has no separate “return to Library”
+    Command-2. Both call `WindowModeCenter.setMode()`, which also shows the
+    target window; the windows are mutually exclusive: opening one orders the
+    other out. Closing MiniPlayer (red light or Command-W via `performClose`)
+    restores Library. The main window is retained strongly; `showWindow()`
+    deminiaturizes, orders it front, activates the app, and gives it focus.
+    MiniPlayer uses `.managed, .fullScreenNone` and never joins a full-screen
+    Space. Switching to MiniPlayer from a full-screen Library first exits full
+    screen and waits for `didExitFullScreen`; the MiniPlayer then appears on the
+    normal desktop. Returning to Library shows the windowed Library, not
+    full screen. The system-wide F17 shortcut toggles the currently active mode,
+    but is ignored while the Library is full screen or entering/leaving it;
+    the tray Hide Tracks item is disabled in the same state. MiniPlayer has no separate “return to Library”
     button; the close control is the return path.
   - `LibraryFocusSink` is the main window's initial first responder and is
     re-focused when `.libraryWindowDidShow` is posted by `showLibraryWindow`.
