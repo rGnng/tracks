@@ -175,22 +175,45 @@ final class PlayerState: ObservableObject {
         if nextQueueID == 0 { nextQueueID = 1 }
     }
 
-    private func allocateQueueID() -> UInt32 {
-        let occupied = Set(queueEntries.map(\.id)).union(baseQueueEntries.map(\.id))
+    private func occupiedQueueIDs() -> Set<UInt32> {
+        var occupied = Set(queueEntries.lazy.map(\.id))
+        occupied.formUnion(baseQueueEntries.lazy.map(\.id))
+        return occupied
+    }
+
+    private func allocateQueueID(occupied: inout Set<UInt32>) -> UInt32 {
         while occupied.contains(nextQueueID) {
             advanceQueueID()
         }
         let id = nextQueueID
         advanceQueueID()
+        occupied.insert(id)
         return id
+    }
+
+    private func allocateQueueID() -> UInt32 {
+        var occupied = occupiedQueueIDs()
+        return allocateQueueID(occupied: &occupied)
     }
 
     private func makeQueueEntry(_ song: Song) -> QueueEntry {
         QueueEntry(id: allocateQueueID(), song: song)
     }
 
+    /// Allocates IDs for a whole batch with one occupied-ID set. Building the
+    /// set inside every allocation made Play/Shuffle on the full library
+    /// O(n²): with a restored 20k-entry queue it rebuilt a ~41k-entry set
+    /// 20k times.
     private func makeQueueEntries(_ songs: [Song]) -> [QueueEntry] {
-        songs.map(makeQueueEntry)
+        guard !songs.isEmpty else { return [] }
+        var occupied = occupiedQueueIDs()
+        var entries: [QueueEntry] = []
+        entries.reserveCapacity(songs.count)
+        for song in songs {
+            entries.append(QueueEntry(id: allocateQueueID(occupied: &occupied),
+                                      song: song))
+        }
+        return entries
     }
 
     private func raiseNextQueueID(above entries: [QueueEntry]) {

@@ -426,6 +426,10 @@ Important schema decisions:
 - Queue entry IDs and `nextQueueID` persist across relaunch in
   `player_queue`. Removing an entry never reuses its ID; adding the same song
   creates a new entry. Empty/finished/cleared queues delete the row.
+- Bulk queue construction (`makeQueueEntries`) must build the occupied-ID set
+  once and reuse it. Rebuilding `queueEntries` + `baseQueueEntries` IDs per
+  allocation is O(n²); with a restored 20k-entry queue, full-library Play or
+  Shuffle stalled for tens of seconds before this was fixed.
 - Sidebar **Albums** and **Recently Added** have Play and Shuffle context menus.
   Albums uses the full library sorted by the current album sort; Recently Added
   uses the same order as its content view.
