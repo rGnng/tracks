@@ -3,6 +3,7 @@ import AppKit
 
 extension Notification.Name {
     static let libraryWindowDidShow = Notification.Name("tracks.libraryWindowDidShow")
+    static let focusContent = Notification.Name("tracks.focusContent")
 }
 
 /// Keeps the Library window from auto-focusing the search field when it is
@@ -21,6 +22,7 @@ final class LibraryFocusSinkView: NSView {
     private var keyObserver: NSObjectProtocol?
     private var closeObserver: NSObjectProtocol?
     private var showObserver: NSObjectProtocol?
+    private var contentFocusObserver: NSObjectProtocol?
     private var needsInitialFocus = true
 
     override var acceptsFirstResponder: Bool { true }
@@ -28,12 +30,13 @@ final class LibraryFocusSinkView: NSView {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
 
-        for observer in [keyObserver, closeObserver, showObserver].compactMap({ $0 }) {
+        for observer in [keyObserver, closeObserver, showObserver, contentFocusObserver].compactMap({ $0 }) {
             NotificationCenter.default.removeObserver(observer)
         }
         keyObserver = nil
         closeObserver = nil
         showObserver = nil
+        contentFocusObserver = nil
 
         guard let window else { return }
         window.initialFirstResponder = self
@@ -70,6 +73,18 @@ final class LibraryFocusSinkView: NSView {
         showObserver = NotificationCenter.default.addObserver(
             forName: .libraryWindowDidShow,
             object: window,
+            queue: .main
+        ) { [weak self, weak window] _ in
+            Task { @MainActor in
+                guard let self, let window else { return }
+                self.needsInitialFocus = false
+                window.makeFirstResponder(self)
+            }
+        }
+
+        contentFocusObserver = NotificationCenter.default.addObserver(
+            forName: .focusContent,
+            object: nil,
             queue: .main
         ) { [weak self, weak window] _ in
             Task { @MainActor in

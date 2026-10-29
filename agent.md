@@ -370,6 +370,10 @@ Important schema decisions:
   empty. There is no center-on-selection restore.
 - Escape clears the current list's selection (album grid/list, song table,
   album-detail tracks, artist/genre browser) without moving the viewport.
+- In the search field, Return moves focus to the content and selects the first
+  result when the query is non-empty; Escape clears the query and moves focus
+  to the content. Focus returns to `LibraryFocusSinkView` so arrows/Home/End
+  immediately operate on the list.
 - Home/End/Page Up/Page Down are routed through `KeyboardNavigator` to the
   mounted SwiftUI list. The lists use `ScrollPosition` plus
   `onScrollGeometryChange`, not `ScrollViewReader`, so they always know the

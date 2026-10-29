@@ -251,6 +251,12 @@ struct AlbumGrid: View {
                 guard expandedAlbum == nil else { return }
                 clearSelection()
             }
+            .onChange(of: navigator.selectFirstCount) { _, _ in
+                guard expandedAlbum == nil, let first = albums.first else { return }
+                selectedIDs = [first.id]
+                selectionAnchor = first.id
+                scrollPosition.scrollTo(edge: .top)
+            }
             .onChange(of: navigator.moveCount) { _, _ in
                 guard expandedAlbum == nil else { return }
                 moveSelection()
@@ -768,6 +774,12 @@ private struct AlbumDetailView: View {
         .onChange(of: navigator.clearSelectionCount) { _, _ in
             clearSelection()
         }
+        .onChange(of: navigator.selectFirstCount) { _, _ in
+            guard let first = album.songs.first else { return }
+            selectedSongIDs = [first.id]
+            selectionAnchor = first.id
+            scrollPosition.scrollTo(edge: .top)
+        }
         .onChange(of: navigator.scrollCount) { _, _ in
             scroll(to: navigator.lastScrollCommand)
         }
@@ -1220,6 +1232,12 @@ struct AlbumList: View {
             }
             .onChange(of: navigator.clearSelectionCount) { _, _ in
                 clearSelection()
+            }
+            .onChange(of: navigator.selectFirstCount) { _, _ in
+                guard let first = albums.first else { return }
+                selectedIDs = [first.id]
+                selectionAnchor = first.id
+                scrollPosition.scrollTo(edge: .top)
             }
             .onChange(of: navigator.scrollCount) { _, _ in
                 scroll(to: navigator.lastScrollCommand)
@@ -2093,6 +2111,12 @@ struct SongTable: View {
         }
         .onChange(of: navigator.clearSelectionCount) { _, _ in
             clearSelection()
+        }
+        .onChange(of: navigator.selectFirstCount) { _, _ in
+            guard let first = sorted.first else { return }
+            selectedIDs = [first.id]
+            selectionAnchor = first.id
+            scrollPosition.scrollTo(edge: .top)
         }
         .onChange(of: navigator.scrollCount) { _, _ in
             scroll(to: navigator.lastScrollCommand)

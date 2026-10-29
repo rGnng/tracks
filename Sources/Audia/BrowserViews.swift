@@ -263,6 +263,11 @@ private struct BrowserList<Item: Identifiable>: View where Item.ID == String {
         .onChange(of: navigator.clearSelectionCount) { _, _ in
             selectedID = nil
         }
+        .onChange(of: navigator.selectFirstCount) { _, _ in
+            guard let first = items.first else { return }
+            selectedID = first.id
+            scrollPosition.scrollTo(edge: .top)
+        }
         .onChange(of: navigator.scrollCount) { _, _ in
             scroll(to: navigator.lastScrollCommand)
         }

@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import UniformTypeIdentifiers
 
 private enum ToolbarButtonMetrics {
@@ -1038,6 +1039,19 @@ struct SearchField: View {
                 .textFieldStyle(.plain)
                 .font(.system(size: 12))
                 .focused($focused)
+                .onSubmit {
+                    guard focused else { return }
+                    let hasQuery = !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    focusContent()
+                    if hasQuery {
+                        KeyboardNavigator.shared.selectFirst()
+                    }
+                }
+                .onExitCommand {
+                    guard focused else { return }
+                    text = ""
+                    focusContent()
+                }
                 .onReceive(NotificationCenter.default.publisher(for: .focusSearch)) { _ in
                     focused = true
                 }
@@ -1062,5 +1076,13 @@ struct SearchField: View {
                 )
                 .shadow(color: .black.opacity(0.12), radius: 1, y: 0.5)
         )
+    }
+
+    private func focusContent() {
+        focused = false
+        KeyboardNavigator.shared.region = .content
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: .focusContent, object: nil)
+        }
     }
 }
