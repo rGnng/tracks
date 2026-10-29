@@ -300,7 +300,7 @@ struct DebugPanel: View {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text("Debug")
                         .font(.system(size: 13, weight: .semibold))
-                    Text("⌥⌘D")
+                    Text("⌃⌥⌘D")
                         .font(.system(size: 9.5))
                         .foregroundColor(.secondary)
                     Spacer()
@@ -611,7 +611,7 @@ struct DebugCommands: Commands {
             Button("Debug Panel") {
                 openWindow(id: "debug")
             }
-            .keyboardShortcut("d", modifiers: [.command, .option])
+            .keyboardShortcut("d", modifiers: [.command, .option, .control])
         }
     }
 }

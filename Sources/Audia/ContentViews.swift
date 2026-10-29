@@ -503,7 +503,7 @@ struct AlbumGrid: View {
             )
             return
         }
-        guard let index = albumIndexByID[request.albumID] else {
+        guard let index = albums.firstIndex(where: { $0.id == request.albumID }) else {
             DebugState.shared.albumLocator = AlbumLocatorDebugInfo(
                 status: "not found",
                 requestedID: request.albumID.uuidString,

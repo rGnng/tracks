@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SRC="$DIR/audiactl.swift"
+BIN="$DIR/.build/audiactl"
+
+if [[ ! -x "$BIN" || "$SRC" -nt "$BIN" ]]; then
+    mkdir -p "$DIR/.build"
+    swiftc -O "$SRC" -o "$BIN"
+fi
+
+exec "$BIN" "$@"
