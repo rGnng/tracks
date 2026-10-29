@@ -223,37 +223,60 @@ private func printMetrics(section: String?) {
         fail("Debug window not found")
     }
 
-    let nodes = textNodes(in: debugWindow)
-    let titleDepth = nodes
-        .filter { sectionTitles.contains($0.value) }
-        .map(\.depth)
-        .max()
-    let metricDepth = titleDepth ?? nodes.map(\.depth).max() ?? 0
-    let values = nodes.filter { $0.depth == metricDepth }.map(\.value)
-
+    let nodes = textNodes(in: debugWindow).map(\.value)
     var currentSection = "General"
     var currentFiltered = section == nil || section == "General"
+    var printedSection: String?
     var i = 0
-    while i < values.count {
-        let value = values[i]
+
+    while i < nodes.count {
+        let value = nodes[i]
+
         if sectionTitles.contains(value) {
             currentSection = value
             currentFiltered = section == nil || section == value
-            if currentFiltered && section == nil {
+            if currentFiltered && section == nil && printedSection != value {
                 print("\n[\(value)]")
+                printedSection = value
             }
             i += 1
             continue
         }
-        if metricLabels.contains(value), i + 1 < values.count {
-            let next = values[i + 1]
-            if currentFiltered {
-                print("\(currentSection).\(value) = \(next)")
-            }
-            i += 2
+
+        guard metricLabels.contains(value) else {
+            i += 1
             continue
         }
-        i += 1
+
+        // SwiftUI accessibility exposes duplicated label nodes. Skip all
+        // leading copies of the label before collecting its value nodes.
+        var next = i + 1
+        while next < nodes.count, nodes[next] == value {
+            next += 1
+        }
+
+        guard next < nodes.count,
+              !sectionTitles.contains(nodes[next]),
+              !metricLabels.contains(nodes[next]) else {
+            i = next
+            continue
+        }
+
+        // A metric can also be exposed twice (stale and current). The last
+        // value is the one currently rendered.
+        var lastValue = nodes[next]
+        var end = next + 1
+        while end < nodes.count,
+              !sectionTitles.contains(nodes[end]),
+              !metricLabels.contains(nodes[end]) {
+            lastValue = nodes[end]
+            end += 1
+        }
+
+        if currentFiltered {
+            print("\(currentSection).\(value) = \(lastValue)")
+        }
+        i = end
     }
 }
 
