@@ -174,6 +174,8 @@ private struct BrowserList<Item: Identifiable>: View where Item.ID == String {
 
     @State private var scrollPosition = ScrollPosition()
     @State private var metrics = ListScrollMetrics()
+    @State private var pendingRestoreOffset: CGFloat?
+    @State private var pendingRestoreItemCount: Int?
 
     private let contentTopPadding: CGFloat = 6
 
@@ -189,11 +191,8 @@ private struct BrowserList<Item: Identifiable>: View where Item.ID == String {
         self.viewKey = viewKey
         self.onDoubleTap = onDoubleTap
         let stored = SessionViewState.shared.browserState(for: viewKey)
-        let saved = stored?.itemCount == items.count ? stored : nil
-        _scrollPosition = State(initialValue: ScrollPosition(
-            idType: Never.self,
-            y: max(0, saved?.offset ?? 0)
-        ))
+        _pendingRestoreOffset = State(initialValue: stored?.offset)
+        _pendingRestoreItemCount = State(initialValue: stored?.itemCount)
     }
 
     var body: some View {
@@ -225,7 +224,11 @@ private struct BrowserList<Item: Identifiable>: View where Item.ID == String {
                               contentHeight: geometry.contentSize.height)
         } action: { _, new in
             metrics = new
+            SessionViewState.shared.setActiveView(key: viewKey,
+                                                  offset: new.offset,
+                                                  itemCount: items.count)
             publishDebugState()
+            attemptPendingRestore()
         }
         .background(Theme.contentBackground)
         .debugFrame("BrowserList")
@@ -238,8 +241,17 @@ private struct BrowserList<Item: Identifiable>: View where Item.ID == String {
             handleScroll(event.command)
         }
         .onChange(of: selectedID) { _, _ in publishDebugState() }
-        .onChange(of: items.count) { _, _ in publishDebugState() }
-        .onAppear { publishDebugState() }
+        .onChange(of: items.count) { _, _ in
+            publishDebugState()
+            attemptPendingRestore()
+        }
+        .onAppear {
+            publishDebugState()
+            SessionViewState.shared.setActiveView(key: viewKey,
+                                                  offset: metrics.offset,
+                                                  itemCount: items.count)
+            attemptPendingRestore()
+        }
         .onDisappear {
             guard metrics.viewportHeight > 0 else { return }
             SessionViewState.shared.saveBrowser(
@@ -258,6 +270,30 @@ private struct BrowserList<Item: Identifiable>: View where Item.ID == String {
         info.listViewport = metrics.viewportHeight
         info.listContent = metrics.contentHeight
         DebugState.shared.browser = info
+    }
+
+    private func attemptPendingRestore() {
+        guard let offset = pendingRestoreOffset,
+              let expectedCount = pendingRestoreItemCount else { return }
+        guard !items.isEmpty else { return }
+        guard items.count == expectedCount else {
+            pendingRestoreOffset = nil
+            pendingRestoreItemCount = nil
+            return
+        }
+        guard offset > 0.5 else {
+            pendingRestoreOffset = nil
+            pendingRestoreItemCount = nil
+            return
+        }
+        guard metrics.viewportHeight > 0,
+              metrics.contentHeight >= offset + metrics.viewportHeight - 0.5 else {
+            return
+        }
+
+        pendingRestoreOffset = nil
+        pendingRestoreItemCount = nil
+        scrollPosition.scrollTo(y: offset)
     }
 
     private func moveSelection(_ direction: NavigationDirection) {

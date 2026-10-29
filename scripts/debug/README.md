@@ -71,6 +71,24 @@ AlbumGrid.selected = 0
 Navigation.focus = albumGrid
 ```
 
+## Launch viewport checks
+
+The active viewport is persisted at graceful quit under
+`tracks.lastViewport.{key,offset,itemCount}` and restored after the view has
+loaded. Selections are not restored.
+
+```bash
+scripts/debug/audiactl key 21              # Songs
+scripts/debug/audiactl key 121             # Page Down
+scripts/debug/audiactl metrics SongTable   # note offset
+osascript -e 'tell application id "com.audia.tracks" to quit'
+open build/Tracks.app
+scripts/debug/audiactl metrics SongTable   # offset should match
+```
+
+Use a graceful quit; force-killing the process skips `applicationWillTerminate`
+and therefore does not persist the active viewport.
+
 ## Album index mapping
 
 With `--db` omitted, the CLI checks:

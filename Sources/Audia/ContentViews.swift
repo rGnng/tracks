@@ -26,6 +26,8 @@ struct AlbumGrid: View {
     @State private var cardFrames: [UUID: CGRect] = [:]
     @State private var albumIndexByID: [UUID: Int] = [:]
     @State private var pendingLocateRequest: AlbumLocateRequest?
+    @State private var pendingRestoreOffset: CGFloat?
+    @State private var pendingRestoreItemCount: Int?
     @State private var lastRevealSource = "—"
     @State private var lastRevealTarget: CGFloat?
     @State private var lastRevealOffsetBefore: CGFloat = 0
@@ -48,11 +50,8 @@ struct AlbumGrid: View {
         let stored = openAlbumID.wrappedValue == nil
             ? SessionViewState.shared.albumState(for: viewKey)
             : nil
-        let saved = stored?.itemCount == albums.count ? stored : nil
-        _scrollPosition = State(initialValue: ScrollPosition(
-            idType: Never.self,
-            y: max(0, saved?.offset ?? 0)
-        ))
+        _pendingRestoreOffset = State(initialValue: stored?.offset)
+        _pendingRestoreItemCount = State(initialValue: stored?.itemCount)
     }
 
     private var player: PlayerState { PlayerState.shared }
@@ -98,6 +97,10 @@ struct AlbumGrid: View {
             if let request = DebugState.shared.albumLocateRequest {
                 pendingLocateRequest = request
             }
+            SessionViewState.shared.setActiveView(key: viewKey,
+                                                  offset: metrics.offset,
+                                                  itemCount: albums.count)
+            attemptPendingRestore()
             attemptPendingLocate()
         }
         .onDisappear {
@@ -143,6 +146,7 @@ struct AlbumGrid: View {
             }
             updateStatusBar()
             publishDebugState()
+            attemptPendingRestore()
             attemptPendingLocate()
         }
     }
@@ -293,7 +297,11 @@ struct AlbumGrid: View {
                                   contentHeight: geometry.contentSize.height)
             } action: { _, new in
                 metrics = new
+                SessionViewState.shared.setActiveView(key: viewKey,
+                                                      offset: new.offset,
+                                                      itemCount: albums.count)
                 publishDebugState()
+                attemptPendingRestore()
                 attemptPendingLocate()
             }
         }
@@ -315,6 +323,7 @@ struct AlbumGrid: View {
         let available = width - 44 - CGFloat(max(cols - 1, 0)) * 22
         gridCardWidth = max(available / CGFloat(max(cols, 1)), 1)
         publishDebugState()
+        attemptPendingRestore()
         attemptPendingLocate()
     }
 
@@ -492,6 +501,31 @@ struct AlbumGrid: View {
             let target = min(max(metrics.offset + delta, 0), metrics.maxOffset)
             scrollPosition.scrollTo(y: target)
         }
+    }
+
+    private func attemptPendingRestore() {
+        guard let offset = pendingRestoreOffset,
+              let expectedCount = pendingRestoreItemCount else { return }
+        guard !albums.isEmpty else { return }
+        guard albums.count == expectedCount else {
+            pendingRestoreOffset = nil
+            pendingRestoreItemCount = nil
+            return
+        }
+        guard offset > 0.5 else {
+            pendingRestoreOffset = nil
+            pendingRestoreItemCount = nil
+            return
+        }
+        guard gridWidth > 0,
+              metrics.viewportHeight > 0,
+              metrics.contentHeight >= offset + metrics.viewportHeight - 0.5 else {
+            return
+        }
+
+        pendingRestoreOffset = nil
+        pendingRestoreItemCount = nil
+        scrollPosition.scrollTo(y: offset)
     }
 
     private func attemptPendingLocate() {
@@ -1357,6 +1391,8 @@ struct SongTable: View {
     @State private var rowIndexByID: [UUID: Int] = [:]
     @State private var scrollPosition = ScrollPosition()
     @State private var metrics = ListScrollMetrics()
+    @State private var pendingRestoreOffset: CGFloat?
+    @State private var pendingRestoreItemCount: Int?
 
     @AppStorage private var nameWidth: Double
     @AppStorage private var trackWidth: Double
@@ -1445,11 +1481,8 @@ struct SongTable: View {
         _rowIndexByID = State(initialValue: initialIndexes)
 
         let stored = SessionViewState.shared.songState(for: context.viewStateKey)
-        let saved = stored?.itemCount == songs.count ? stored : nil
-        _scrollPosition = State(initialValue: ScrollPosition(
-            idType: Never.self,
-            y: max(0, saved?.offset ?? 0)
-        ))
+        _pendingRestoreOffset = State(initialValue: stored?.offset)
+        _pendingRestoreItemCount = State(initialValue: stored?.itemCount)
     }
 
     // MARK: Column metadata
@@ -1589,6 +1622,10 @@ struct SongTable: View {
             }
             updateStatusBar()
             publishDebugState()
+            SessionViewState.shared.setActiveView(key: context.viewStateKey,
+                                                  offset: metrics.offset,
+                                                  itemCount: songs.count)
+            attemptPendingRestore()
         }
         .onReceive(NavigationRouter.shared.arrowEvents) { arrow in
             guard NavigationRouter.shared.focus == .songTable else { return }
@@ -1611,6 +1648,7 @@ struct SongTable: View {
             rebuildSorted()
             updateStatusBar()
             publishDebugState()
+            attemptPendingRestore()
         }
         .onChange(of: playlistInfo) { _, _ in
             rebuildSorted()
@@ -1640,6 +1678,30 @@ struct SongTable: View {
             viewport: metrics.viewportHeight,
             content: metrics.contentHeight
         )
+    }
+
+    private func attemptPendingRestore() {
+        guard let offset = pendingRestoreOffset,
+              let expectedCount = pendingRestoreItemCount else { return }
+        guard !songs.isEmpty else { return }
+        guard songs.count == expectedCount else {
+            pendingRestoreOffset = nil
+            pendingRestoreItemCount = nil
+            return
+        }
+        guard offset > 0.5 else {
+            pendingRestoreOffset = nil
+            pendingRestoreItemCount = nil
+            return
+        }
+        guard metrics.viewportHeight > 0,
+              metrics.contentHeight >= offset + metrics.viewportHeight - 0.5 else {
+            return
+        }
+
+        pendingRestoreOffset = nil
+        pendingRestoreItemCount = nil
+        scrollPosition.scrollTo(y: offset)
     }
 
     private func updateStatusBar() {
@@ -1879,7 +1941,11 @@ struct SongTable: View {
                               contentHeight: geometry.contentSize.height)
         } action: { _, new in
             metrics = new
+            SessionViewState.shared.setActiveView(key: context.viewStateKey,
+                                                  offset: new.offset,
+                                                  itemCount: songs.count)
             publishDebugState()
+            attemptPendingRestore()
         }
         .onTapGesture { clearSelection() }
     }

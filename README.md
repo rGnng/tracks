@@ -23,9 +23,9 @@ queue, and history live on this Mac.
   drawing is reserved for places where the stock control would get in the way.
 - **Local first.** Everything is stored in SQLite plus a disk artwork cache.
   External libraries are indexed in place and never modified.
-- **Keyboard and pointer are peers.** Every main list supports arrows, Page
-  Up/Down, Home/End, Return, Escape, and in-app section shortcuts. The mouse
-  adds marquee selection, item dragging, and direct manipulation.
+- **Keyboard and pointer are peers.** Main lists support arrows, Page Up/Down,
+  Home/End, in-app section shortcuts, and native text editing/commands. The
+  mouse adds marquee selection, item dragging, and direct manipulation.
 - **Restrained motion.** Animations are short and functional: the menu-bar card
   flip, the MiniPlayer chrome, album-detail transitions, and list reveals.
 - **Non-destructive management.** Missing tracks are reviewed, not silently
@@ -116,24 +116,20 @@ queue, and history live on this Mac.
 
 - While the Library window is focused, `1`–`5` select Recently Added, Albums,
   Artists, Songs, and Genres; `8` selects Stared.
-- Arrow keys move the focused item. Page Up/Down move by a viewport. Home/End
-  jump to the exact content edges while preserving the grid's 22pt and the
-  list's 6pt content padding, so the last row and its caption are never clipped.
-- Return/Enter activates the focused item: it opens album detail in the grid,
-  plays the album in list view, or plays the selected track. Command-F focuses
-  search; Command-1/2 switch between Library and MiniPlayer.
+- Arrow keys move the focused item. Page Up/Down and Home/End scroll the focused
+  viewport without changing the selection. Page navigation keeps one row of
+  overlap; Home/End preserve the grid's 22pt and list's 6pt content padding.
+- Left/Right move between split regions where one exists: Sidebar to content,
+  and Artists/Genres list to the track pane. Command-F focuses search; Command-1/2
+  switch between Library and MiniPlayer.
 - Keyboard selection scrolls only enough to reveal the item completely, not to
-  center it. If a saved focus item is off-screen, arrow navigation starts from
-  the first item actually visible.
+  center it. If the previous selection is off-screen after manual scrolling,
+  arrow navigation starts from the first item actually visible.
 
 ### Search and Escape
 
-- Return in the search field moves focus to the content and selects the first
-  result when the query is non-empty.
+- Return in the search field moves focus to the content.
 - Escape in the search field clears the query and moves focus to the content.
-- Escape in a list clears the current selection. Pressing Escape again, when
-  nothing is selected, clears the search query. Neither action moves the
-  viewport.
 
 ### Selection and drag
 
@@ -146,20 +142,24 @@ queue, and history live on this Mac.
 - Drag albums or songs onto a playlist in the sidebar to add them. Drag outside
   the window to start a native file drag: Finder copies the files, and text
   editors receive absolute paths.
-- Album-grid hit testing is recomputed from the uniform grid layout when SwiftUI
-  preference frames are unavailable after a long scroll jump, so marquee
-  selection keeps working after fast scrolling.
+- Album-grid hit testing and navigation use the deterministic `AlbumGridLayout`
+  frame model. Cached rendered frames are debug-only and cannot move the
+  viewport or selection after a lazy-grid jump.
 
 ### Remembered place
 
-- Within one app session, visiting a view again restores its selected items and
-  exact scroll offset.
-- Across relaunches, only the last active view restores its scroll offset.
-  Selection is session-only: a fresh launch starts with no selected album or
-  song, so an old focus item is not pulled back into view.
+- Within one app session, visiting a view again restores its exact scroll offset.
+  Selections are not restored, so a changed list cannot resurrect a stale item.
+- Across relaunches, only the viewport of the view that was active at a graceful
+  quit is restored. Selection is never restored. The offset is applied after the
+  list has loaded and is ignored when the list item count changed.
+- Restored offsets use raw content coordinates and preserve the grid's 22pt and
+  list's 6pt top padding. No rendered frames or viewport anchors are stored.
+  The saved viewport covers the main list area; album detail and the
+  Artists/Genres right-hand pane are not persisted.
 - Album detail keeps the underlying grid mounted while open. Returning leaves
-  the clicked album exactly where it was. **Go to Album** from another view
-  scrolls that album row to the top instead.
+  the clicked album where it was. **Go to Album** opens that album detail; it no
+  longer scrolls the parent grid to the album.
 
 ### Windows and chrome
 
@@ -275,6 +275,20 @@ configured app bundle.
 
 Requires Xcode 16+ and Swift 6 on macOS 15+.
 
+### Debugging
+
+- Debug panel shortcut: `Control-Option-Command-D`. Plain `Option-Command-D`
+  belongs to the system Dock.
+- `scripts/debug/audiactl` is the reusable Accessibility test CLI. It can read
+  Debug metrics, locate album UUIDs, send keys, resize windows, drag selections
+  and map album indices. See `scripts/debug/README.md`.
+
+```bash
+scripts/debug/audiactl metrics AlbumGrid
+scripts/debug/audiactl locate 893CF518-EC57-46F1-716E-4CD3F8AB048F
+scripts/debug/audiactl album-at-index 1438
+```
+
 ## App icon
 
 The icon source files live in `design/`. Regenerate the `.icns` from the
@@ -323,10 +337,12 @@ Sources/Audia/
   Metadata and artwork  FLACLibrary, ArtworkCache, MediaImporter, TagWriter,
                         GetInfo
   Playback              PlayerState, AudioDevices, SystemVolume, SystemNowPlaying
-  Input and navigation  DragController, KeyboardNavigator, KeyboardShortcut,
-                        SystemWideShortcuts, NavigationCenter
+  Input and navigation  DragController, NavigationRouter, NavigationCenter,
+                        KeyboardShortcut, SystemWideShortcuts
+  View state and layout SessionViewState, AlbumGridLayout, ListScroll
   Focus and integration LibraryFocusSink, SettingsFocusSink, TrayController,
                         MPDServer
+  Debug                 DebugSupport, scripts/debug/audiactl
   MiniPlayer            MiniPlayerView, WindowMode
   Theme                 Theme
 

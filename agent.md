@@ -3,9 +3,9 @@
 Last updated: 2026-10-29
 
 This file is the handoff snapshot for a future coding agent. Read it before changing
-the project, then verify the current code and running state. The current backlog is
-`TODO/STATUS.md`; AlbumGrid/AlbumList behavior is specified in
-`docs/ALBUM_VIEW_SPEC.md`.
+the project, then verify the current code and running state. There is no separate
+checkout backlog; album-grid geometry lives in `AlbumGridLayout.swift` and the
+current navigation entry point is `NavigationRouter.swift`.
 
 ## 1. Product and scope
 
@@ -139,7 +139,8 @@ Sources/Audia/
   PlayerToolbar.swift        Top transport bar, seek, volume, output, search
   SidebarView.swift          Library and playlist sidebar
   ContentPane.swift          Content routing and album sort/view settings
-  ContentViews.swift         Album grid/list, album detail, song table, Add Seq/Add Time, selection
+  ContentViews.swift         Album grid, album detail, song table, Add Seq/Add Time, selection
+  AlbumGridLayout.swift      Pure album-grid index -> content-rect geometry
   BrowserViews.swift         Artists/Genres master-detail browsers
   ContextMenus.swift         Shared album/song context menus
   KeyboardShortcut.swift     Standard AppKit shortcut recorder, matching, persistence
@@ -152,8 +153,10 @@ Sources/Audia/
   DragController.swift       Long-press drag, marquee, native file drag
   MarqueeSelection.swift     Reusable marquee selection modifier
   PlaylistActions.swift      Add-to-playlist submenu and New Playlist naming
-  KeyboardNavigator.swift    Keyboard selection navigation
+  NavigationRouter.swift     Focus owner and navigation key routing
   NavigationCenter.swift     Cross-view navigation state
+  SessionViewState.swift     Per-view viewport offsets and active-viewport persistence
+  DebugSupport.swift         Debug window, metrics, frame overlays, album locator
 ```
 
 ## 5. Library model and database
@@ -373,42 +376,26 @@ Important schema decisions:
   `library:<section>`, `starred`, or `playlist:<uuid>`. A missing, malformed,
   or deleted-playlist value falls back to **Recently Added**. The first launch
   and library switches also use Recently Added as the default view.
-- The active scroll viewport is persisted as a single `lastViewportKey` /
-  `lastViewportOffset` pair. Only the list currently on screen writes it;
-  hidden views are not persisted. Within one app session, `ViewScrollStore`
-  keeps in-memory offsets for visited views so switching back restores them;
-  after relaunch only the last active view restores its offset, and other
-  views start at the top. Do not mix item anchors with this offset.
-  SwiftUI's `ScrollPosition(y:)` adds the view's top content padding when it
-  applies a saved `contentOffset`, so initialize it with
-  `max(0, savedOffset - contentTopPadding)` instead of calling
-  `scrollTo(y: savedOffset)` after layout. The latter added 22pt per view switch
-  in the album grid and made the viewport drift upward.
-- Cursor/selection is session-only (`ViewFocusStore`). Switching views in the
-  same app session restores the selected items and focus, but quitting and
-  relaunching starts with no selected album/song and only the saved scroll
-  offset. Artists/Genres fall back to the first item when the session store is
-  empty. There is no center-on-selection restore.
-- Escape first clears the current list's selection (album grid/list, song
-  table, album-detail tracks, artist/genre browser); if nothing is selected it
-  clears the active search query. Neither action moves the viewport.
-- In the search field, Return moves focus to the content and selects the first
-  result when the query is non-empty; Escape clears the query and moves focus
-  to the content. Focus returns to `LibraryFocusSinkView` so arrows/Home/End
-  immediately operate on the list.
-- Home/End/Page Up/Page Down are routed through `KeyboardNavigator` to the
-  mounted SwiftUI list. The lists use `ScrollPosition` plus
-  `onScrollGeometryChange`, not `ScrollViewReader`, so they always know the
-  current content offset, viewport height, and content height. Home/End scroll
-  to offset `0` / `maxOffset`, preserving the grid's 22pt and list's 6pt
-  content padding at both ends (the last row keeps its album/artist text and
-  the bottom gap). Page Up/Down move to the target visible row with the same
-  top inset. Keyboard selection scrolls only enough to show the selected item
-  completely plus the same padding; it does not center. An off-screen saved
-  focus starts arrow navigation from the first item actually visible in the
-  current viewport. Viewport persistence saves the exact scroll offset, not a
-  top item. Album-grid item frames are computed from the uniform grid layout
-  when the SwiftUI preference frames are unavailable after a long scroll jump.
+- Viewport state is session-only (`SessionViewState`). Each view saves its exact
+  content offset when it disappears; switching back restores the viewport.
+  Selections are never saved or restored, so a changed list cannot resurrect a
+  stale selected item.
+- At graceful quit, the viewport of the currently active view is persisted under
+  `tracks.lastViewport.key`, `tracks.lastViewport.offset`, and
+  `tracks.lastViewport.itemCount`. On launch the viewport is applied after the
+  list has loaded and only when the item count still matches. Other views start
+  at the top. No rendered frames or viewport anchors are stored.
+- Restored offsets are raw `onScrollGeometryChange` content offsets. Apply them
+  once with `ScrollPosition.scrollTo(y:)` after content/viewport geometry is
+  ready; do not subtract the content padding. The old `ScrollPosition(y:)`
+  initializer path caused 22pt album-grid drift.
+- The saved viewport is the main list area only. Album detail and the
+  Artists/Genres right-hand pane are not persisted.
+- Album-grid navigation and marquee hit testing use `AlbumGridLayout`, not the
+  cached GeometryReader frames. Cached frames are debug-only snapshots and can
+  be one row spacing off after lazy-grid jumps. LazyVGrid row spacing is baked
+  into each card cell (`spacing: 0` on the grid) so long jumps do not inject an
+  extra row gap.
 - Multi-disc albums are detected from their disc numbers even when the
   total-disc tag is missing. Album songs load disc-first and track-second,
   album detail shows the effective disc count and labels rows `disc-track`
@@ -416,8 +403,8 @@ Important schema decisions:
   infer a total because saving would overwrite intentionally empty tags.
 - Opening an album detail from the current grid keeps the mounted grid's scroll
   offset unchanged, so returning leaves the clicked album where it was.
-  `Go to Album` from another view scrolls the target album row to the first
-  row; the resulting offset is persisted like any other scroll.
+  `Go to Album` opens the target album detail; it does not scroll the parent
+  grid to the album.
 - Album cards/rows use single click for selection or album-detail navigation.
   Double-click no longer starts album playback; use the hover Play button or the
   context menu instead.
