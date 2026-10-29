@@ -232,19 +232,15 @@ struct AlbumGrid: View {
                 }
                 try? await Task.sleep(for: .milliseconds(200))
                 allowViewportSave = true
+                performRevealTarget()
             }
             .onDisappear { saveViewportNow() }
             .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
                 saveViewportNow()
             }
-            .onChange(of: revealTargetID) { _, id in
-                guard let id else { return }
-                if id == albums.first?.id {
-                    scrollPosition.scrollTo(y: 0)
-                } else {
-                    scrollPosition.scrollTo(id: id, anchor: .top)
-                }
-                revealTargetID = nil
+            .onChange(of: revealTargetID) { _, _ in
+                guard allowViewportSave else { return }
+                performRevealTarget()
             }
             .onChange(of: navigator.moveCount) { _, _ in
                 guard expandedAlbum == nil else { return }
@@ -259,6 +255,18 @@ struct AlbumGrid: View {
                 activateSelection()
             }
         }
+    }
+
+    private func performRevealTarget() {
+        guard let id = revealTargetID,
+              let index = albums.firstIndex(where: { $0.id == id }) else { return }
+        let frame = cardFrames[id] ?? gridFrame(at: index)
+        if let target = ListScroll.ensureVisibleTarget(for: frame,
+                                                       metrics: metrics,
+                                                       padding: 22) {
+            scrollPosition.scrollTo(y: target)
+        }
+        revealTargetID = nil
     }
 
     private func revealSelection() {

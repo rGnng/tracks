@@ -486,6 +486,45 @@ final class LibraryWorkflowTests: XCTestCase {
         data.append(Data(repeating: 0, count: Int(dataSize)))
         return data
     }
+
+    func testListScrollEnsureVisibleLeavesFullyVisibleItemsAlone() {
+        let metrics = ListScrollMetrics(offset: 100, viewportHeight: 600, contentHeight: 5000)
+
+        // Fully visible, even though it is close to both edges: no movement.
+        XCTAssertNil(ListScroll.ensureVisibleTarget(
+            for: CGRect(x: 0, y: 110, width: 100, height: 580),
+            metrics: metrics,
+            padding: 22
+        ))
+
+        // Clipped at the top: show it just above with the 22pt inset.
+        XCTAssertEqual(ListScroll.ensureVisibleTarget(
+            for: CGRect(x: 0, y: 40, width: 100, height: 200),
+            metrics: metrics,
+            padding: 22
+        ), 18)
+
+        // Clipped at the bottom: show it just below with the 22pt inset.
+        XCTAssertEqual(ListScroll.ensureVisibleTarget(
+            for: CGRect(x: 0, y: 650, width: 100, height: 200),
+            metrics: metrics,
+            padding: 22
+        ), 272)
+
+        // Entirely below: nearest edge is the bottom.
+        XCTAssertEqual(ListScroll.ensureVisibleTarget(
+            for: CGRect(x: 0, y: 2000, width: 100, height: 200),
+            metrics: metrics,
+            padding: 22
+        ), 1622)
+
+        // Entirely above: nearest edge is the top, clamped at zero.
+        XCTAssertEqual(ListScroll.ensureVisibleTarget(
+            for: CGRect(x: 0, y: 0, width: 100, height: 200),
+            metrics: metrics,
+            padding: 22
+        ), 0)
+    }
 }
 
 private extension Data {
