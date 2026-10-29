@@ -35,7 +35,7 @@ struct AlbumGrid: View {
     @State private var metrics = ListScrollMetrics()
 
     private let columns = [GridItem(.adaptive(minimum: 158, maximum: 240), spacing: 22)]
-    private let initialOffset: CGFloat?
+    private let contentTopPadding: CGFloat = 22
 
     init(albums: [Album], openAlbumID: Binding<UUID?>, scrollKey: String) {
         self.albums = albums
@@ -50,9 +50,13 @@ struct AlbumGrid: View {
         let restoredFocus = focus ?? restoredSelection.first
         let sessionOffset = ViewScrollStore.shared.offset(for: scrollKey)
         let persisted = ViewPositionStore.lastViewport()
-        initialOffset = sessionOffset ?? (persisted?.key == scrollKey ? persisted?.offset : nil)
+        let restoreOffset = sessionOffset
+            ?? (persisted?.key == scrollKey ? persisted?.offset : nil)
 
-        _scrollPosition = State(initialValue: ScrollPosition())
+        _scrollPosition = State(initialValue: ScrollPosition(
+            idType: Never.self,
+            y: max(0, (restoreOffset ?? 0) - contentTopPadding)
+        ))
         _selectedIDs = State(initialValue: restoredSelection)
         _selectionAnchor = State(initialValue: restoredFocus)
     }
@@ -185,7 +189,7 @@ struct AlbumGrid: View {
                         }
                     }
                     .scrollTargetLayout()
-                    .padding(22)
+                    .padding(contentTopPadding)
                     .background(
                         GeometryReader { geo in
                             Color.clear
@@ -230,9 +234,6 @@ struct AlbumGrid: View {
                 for _ in 0..<50 {
                     if metrics.viewportHeight > 0 { break }
                     try? await Task.sleep(for: .milliseconds(10))
-                }
-                if let offset = initialOffset, offset > 0 {
-                    scrollPosition.scrollTo(y: offset)
                 }
                 try? await Task.sleep(for: .milliseconds(200))
                 allowViewportSave = true
@@ -1100,7 +1101,7 @@ struct AlbumList: View {
     @State private var scrollPosition: ScrollPosition
     @State private var metrics = ListScrollMetrics()
 
-    private let initialOffset: CGFloat?
+    private let contentTopPadding: CGFloat = 6
 
     init(albums: [Album], scrollKey: String) {
         self.albums = albums
@@ -1114,9 +1115,13 @@ struct AlbumList: View {
         let restoredFocus = focus ?? restoredSelection.first
         let sessionOffset = ViewScrollStore.shared.offset(for: scrollKey)
         let persisted = ViewPositionStore.lastViewport()
-        initialOffset = sessionOffset ?? (persisted?.key == scrollKey ? persisted?.offset : nil)
+        let restoreOffset = sessionOffset
+            ?? (persisted?.key == scrollKey ? persisted?.offset : nil)
 
-        _scrollPosition = State(initialValue: ScrollPosition())
+        _scrollPosition = State(initialValue: ScrollPosition(
+            idType: Never.self,
+            y: max(0, (restoreOffset ?? 0) - contentTopPadding)
+        ))
         _selectedIDs = State(initialValue: restoredSelection)
         _selectionAnchor = State(initialValue: restoredFocus)
     }
@@ -1186,7 +1191,7 @@ struct AlbumList: View {
                         }
                     }
                     .scrollTargetLayout()
-                    .padding(.vertical, 6)
+                    .padding(.vertical, contentTopPadding)
                 }
                 .frame(minHeight: viewport.size.height, alignment: .top)
                 .background(
@@ -1222,9 +1227,6 @@ struct AlbumList: View {
                 for _ in 0..<50 {
                     if metrics.viewportHeight > 0 { break }
                     try? await Task.sleep(for: .milliseconds(10))
-                }
-                if let offset = initialOffset, offset > 0 {
-                    scrollPosition.scrollTo(y: offset)
                 }
                 try? await Task.sleep(for: .milliseconds(200))
                 allowViewportSave = true
@@ -1657,7 +1659,7 @@ struct SongTable: View {
     private let statusWidth: CGFloat = 28
     /// Fixed trailing slot for the per-track star button.
     private let starWidth: CGFloat = 28
-    private let initialOffset: CGFloat?
+    private let contentTopPadding: CGFloat = 6
 
     init(songs: [Song], context: SongTableContext,
          playlistInfo: [UUID: PlaylistItemInfo] = [:]) {
@@ -1707,10 +1709,13 @@ struct SongTable: View {
         let restoredFocus = focus ?? restoredSelection.first
         let sessionOffset = ViewScrollStore.shared.offset(for: context.scrollPositionKey)
         let persisted = ViewPositionStore.lastViewport()
-        initialOffset = sessionOffset
+        let restoreOffset = sessionOffset
             ?? (persisted?.key == context.scrollPositionKey ? persisted?.offset : nil)
 
-        _scrollPosition = State(initialValue: ScrollPosition())
+        _scrollPosition = State(initialValue: ScrollPosition(
+            idType: Never.self,
+            y: max(0, (restoreOffset ?? 0) - contentTopPadding)
+        ))
         _selectedIDs = State(initialValue: restoredSelection)
         _selectionAnchor = State(initialValue: restoredFocus)
     }
@@ -2087,7 +2092,7 @@ struct SongTable: View {
                 }
             }
             .scrollTargetLayout()
-            .padding(.vertical, 6)
+            .padding(.vertical, contentTopPadding)
             .onTapGesture { clearSelection() }
             .marqueeSelectable(selection: $selectedIDs, space: "songTableSpace")
             .onPreferenceChange(MarqueeFramesKey.self) { rowFrames = $0 }
@@ -2105,9 +2110,6 @@ struct SongTable: View {
             for _ in 0..<50 {
                 if metrics.viewportHeight > 0 { break }
                 try? await Task.sleep(for: .milliseconds(10))
-            }
-            if let offset = initialOffset, offset > 0 {
-                scrollPosition.scrollTo(y: offset)
             }
             try? await Task.sleep(for: .milliseconds(200))
             allowViewportSave = true

@@ -377,6 +377,11 @@ Important schema decisions:
   keeps in-memory offsets for visited views so switching back restores them;
   after relaunch only the last active view restores its offset, and other
   views start at the top. Do not mix item anchors with this offset.
+  SwiftUI's `ScrollPosition(y:)` adds the view's top content padding when it
+  applies a saved `contentOffset`, so initialize it with
+  `max(0, savedOffset - contentTopPadding)` instead of calling
+  `scrollTo(y: savedOffset)` after layout. The latter added 22pt per view switch
+  in the album grid and made the viewport drift upward.
 - Cursor/selection is session-only (`ViewFocusStore`). Switching views in the
   same app session restores the selected items and focus, but quitting and
   relaunching starts with no selected album/song and only the saved scroll

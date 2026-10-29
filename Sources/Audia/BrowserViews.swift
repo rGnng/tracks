@@ -192,7 +192,7 @@ private struct BrowserList<Item: Identifiable>: View where Item.ID == String {
     @State private var scrollPosition: ScrollPosition
     @State private var metrics = ListScrollMetrics()
 
-    private let initialOffset: CGFloat?
+    private let contentTopPadding: CGFloat = 6
 
     init(items: [Item], selectedID: Binding<Item.ID?>,
          title: @escaping (Item) -> String,
@@ -207,8 +207,12 @@ private struct BrowserList<Item: Identifiable>: View where Item.ID == String {
         self.onDoubleTap = onDoubleTap
         let sessionOffset = ViewScrollStore.shared.offset(for: scrollKey)
         let persisted = ViewPositionStore.lastViewport()
-        initialOffset = sessionOffset ?? (persisted?.key == scrollKey ? persisted?.offset : nil)
-        _scrollPosition = State(initialValue: ScrollPosition())
+        let restoreOffset = sessionOffset
+            ?? (persisted?.key == scrollKey ? persisted?.offset : nil)
+        _scrollPosition = State(initialValue: ScrollPosition(
+            idType: Never.self,
+            y: max(0, (restoreOffset ?? 0) - contentTopPadding)
+        ))
     }
 
     var body: some View {
@@ -229,7 +233,7 @@ private struct BrowserList<Item: Identifiable>: View where Item.ID == String {
                 }
             }
             .scrollTargetLayout()
-            .padding(.vertical, 6)
+            .padding(.vertical, contentTopPadding)
         }
         .scrollPosition($scrollPosition)
         .onScrollGeometryChange(for: ListScrollMetrics.self) { geometry in
@@ -244,9 +248,6 @@ private struct BrowserList<Item: Identifiable>: View where Item.ID == String {
             for _ in 0..<50 {
                 if metrics.viewportHeight > 0 { break }
                 try? await Task.sleep(for: .milliseconds(10))
-            }
-            if let offset = initialOffset, offset > 0 {
-                scrollPosition.scrollTo(y: offset)
             }
             try? await Task.sleep(for: .milliseconds(200))
             allowViewportSave = true
