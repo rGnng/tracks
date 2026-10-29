@@ -368,8 +368,9 @@ Important schema decisions:
   relaunching starts with no selected album/song and only the saved scroll
   offset. Artists/Genres fall back to the first item when the session store is
   empty. There is no center-on-selection restore.
-- Escape clears the current list's selection (album grid/list, song table,
-  album-detail tracks, artist/genre browser) without moving the viewport.
+- Escape first clears the current list's selection (album grid/list, song
+  table, album-detail tracks, artist/genre browser); if nothing is selected it
+  clears the active search query. Neither action moves the viewport.
 - In the search field, Return moves focus to the content and selects the first
   result when the query is non-empty; Escape clears the query and moves focus
   to the content. Focus returns to `LibraryFocusSinkView` so arrows/Home/End

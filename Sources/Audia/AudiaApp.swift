@@ -210,15 +210,26 @@ struct SettingsView: View {
 
             Divider()
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    settingsPageHeader(selectedSection ?? .general)
-                    settingsContent(selectedSection ?? .general)
-                    Spacer(minLength: 0)
+            VStack(spacing: 0) {
+                settingsPageHeader(selectedSection ?? .general)
+                    .padding(.horizontal, 24)
+                    .padding(.top, 18)
+                    .padding(.bottom, 14)
+
+                Hairline()
+
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 22) {
+                        settingsContent(selectedSection ?? .general)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 20)
+                    .frame(maxWidth: 640, alignment: .leading)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
                 }
-                .padding(24)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(Theme.contentBackground)
         }
         .font(SettingsTypography.body)
         .frame(width: 760, height: 720, alignment: .topLeading)
@@ -366,172 +377,167 @@ struct SettingsView: View {
         case .shortcuts:
             shortcutsSettings
         case .services:
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 22) {
                 traySettings
-                Divider()
                 mpdSettings
             }
         }
     }
 
     private var generalSettings: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Picker("Album display as", selection: $albumViewMode) {
-                Text("Grid").tag("grid")
-                Text("List").tag("list")
-            }
-            .pickerStyle(.menu)
-            .frame(width: 260, alignment: .leading)
-
-            HStack(spacing: 12) {
-                Picker("Albums sorted by", selection: $albumSort) {
-                    ForEach(GridSort.allCases, id: \.self) { sort in
-                        Text(sort == .album ? "Album Name" : sort.rawValue)
-                            .tag(sort.rawValue)
+        VStack(alignment: .leading, spacing: 22) {
+            SettingsCard(title: "Browsing") {
+                SettingsRow(title: "Album display as") {
+                    Picker("", selection: $albumViewMode) {
+                        Text("Grid").tag("grid")
+                        Text("List").tag("list")
                     }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .frame(width: 150)
                 }
-                .pickerStyle(.menu)
-                .fixedSize()
-
-                Picker("Sort", selection: $albumSortDirection) {
-                    ForEach(GridSortDirection.allCases) { direction in
-                        Text(direction.title).tag(direction.rawValue)
-                    }
-                }
-                .pickerStyle(.menu)
-                .fixedSize()
-            }
-            .frame(maxWidth: 420, alignment: .leading)
-
-            HStack(spacing: 10) {
-                Text("Highlights")
-
-                HStack(spacing: 2) {
-                    ForEach(HighlightColor.allCases) { choice in
-                        let selected = highlightColor == choice.rawValue
-                        Button {
-                            highlightColor = choice.rawValue
-                        } label: {
-                            ZStack {
-                                if selected {
-                                    Circle()
-                                        .strokeBorder(Color.primary, lineWidth: 2)
-                                        .frame(width: 24, height: 24)
-                                }
-                                Circle()
-                                    .fill(choice.swatch)
-                                    .frame(width: 18, height: 18)
-                                    .overlay(
-                                        Circle()
-                                            .strokeBorder(Color.black.opacity(0.14), lineWidth: 0.5)
-                                    )
+                SettingsDivider()
+                SettingsRow(title: "Albums sorted by") {
+                    HStack(spacing: 8) {
+                        Picker("", selection: $albumSort) {
+                            ForEach(GridSort.allCases, id: \.self) { sort in
+                                Text(sort == .album ? "Album Name" : sort.rawValue)
+                                    .tag(sort.rawValue)
                             }
-                            .frame(width: 26, height: 26)
-                            .contentShape(Circle())
                         }
-                        .buttonStyle(.plain)
-                        .help(choice.title)
-                        .accessibilityLabel("\(choice.title) highlight")
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                        .frame(width: 150)
+
+                        Picker("", selection: $albumSortDirection) {
+                            ForEach(GridSortDirection.allCases) { direction in
+                                Text(direction.title).tag(direction.rawValue)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                        .frame(width: 100)
                     }
                 }
             }
-            .frame(maxWidth: 360, alignment: .leading)
+
+            SettingsCard(title: "Theme") {
+                SettingsRow(title: "Highlight color") {
+                    highlightColorSwatches
+                }
+            }
+        }
+    }
+
+    private var highlightColorSwatches: some View {
+        HStack(spacing: 2) {
+            ForEach(HighlightColor.allCases) { choice in
+                let selected = highlightColor == choice.rawValue
+                Button {
+                    highlightColor = choice.rawValue
+                } label: {
+                    ZStack {
+                        if selected {
+                            Circle()
+                                .strokeBorder(Color.primary, lineWidth: 2)
+                                .frame(width: 24, height: 24)
+                        }
+                        Circle()
+                            .fill(choice.swatch)
+                            .frame(width: 18, height: 18)
+                            .overlay(
+                                Circle()
+                                    .strokeBorder(Color.black.opacity(0.14), lineWidth: 0.5)
+                            )
+                    }
+                    .frame(width: 26, height: 26)
+                    .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .help(choice.title)
+                .accessibilityLabel("\(choice.title) highlight")
+            }
         }
     }
 
     private var librarySettings: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 22) {
             HStack {
-                Text("Music Folders")
-                    .font(SettingsTypography.sectionTitle)
-                    .foregroundColor(Theme.primaryText)
-                Spacer()
                 Text("\(library.albums.count) albums · \(library.allSongs.count) songs")
                     .font(SettingsTypography.caption.monospacedDigit())
                     .foregroundColor(Theme.secondaryText)
+                Spacer()
             }
-
             internalLibrarySection
-            Divider()
             externalLibrariesSection
-            Divider()
             artworkCacheSection
         }
     }
 
     private var artworkCacheSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 10) {
-                Image(systemName: "photo.on.rectangle")
-                    .font(.system(size: 12))
-                    .foregroundColor(.secondary)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Artwork Cache")
-                        .font(SettingsTypography.cardTitle)
-                        .foregroundColor(Theme.primaryText)
-                    Text("Cached album art speeds up browsing. It is rebuilt from library files.")
-                        .font(SettingsTypography.help)
-                        .foregroundColor(Theme.secondaryText)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer(minLength: 0)
+        SettingsCard(title: "Artwork Cache") {
+            SettingsRow(title: "Rebuild cache",
+                        subtitle: "Cached album art speeds up browsing. It is rebuilt from library files.") {
                 Button("Rebuild Cache") {
                     artworkCache.rebuildCache()
                 }
+                .controlSize(.small)
             }
 
-            HStack(spacing: 8) {
-                Text("JPEG quality")
-                    .font(SettingsTypography.body)
-                    .foregroundColor(Theme.secondaryText)
-                    .frame(width: 120, alignment: .leading)
-                TextField("80", text: $artworkQualityText)
-                    .textFieldStyle(.roundedBorder)
-                    .font(SettingsTypography.body.monospacedDigit())
-                    .frame(width: 58)
-                    .multilineTextAlignment(.trailing)
-                    .focused($artworkQualityFocused)
-                    .onSubmit { commitArtworkQuality() }
-                    .onChange(of: artworkQualityFocused) { _, focused in
-                        if !focused { commitArtworkQuality() }
-                    }
-                    .onChange(of: artworkQualityText) { _, value in
-                        let digits = value.filter(\.isNumber)
-                        if digits != value { artworkQualityText = digits }
-                    }
-                Text("%")
-                    .font(SettingsTypography.body)
-                    .foregroundColor(Theme.secondaryText)
-                Spacer(minLength: 0)
+            SettingsDivider()
+
+            SettingsRow(title: "JPEG quality") {
+                HStack(spacing: 6) {
+                    TextField("80", text: $artworkQualityText)
+                        .textFieldStyle(.roundedBorder)
+                        .font(SettingsTypography.body.monospacedDigit())
+                        .frame(width: 58)
+                        .multilineTextAlignment(.trailing)
+                        .focused($artworkQualityFocused)
+                        .onSubmit { commitArtworkQuality() }
+                        .onChange(of: artworkQualityFocused) { _, focused in
+                            if !focused { commitArtworkQuality() }
+                        }
+                        .onChange(of: artworkQualityText) { _, value in
+                            let digits = value.filter(\.isNumber)
+                            if digits != value { artworkQualityText = digits }
+                        }
+                    Text("%")
+                        .font(SettingsTypography.body)
+                        .foregroundColor(Theme.secondaryText)
+                }
             }
 
-            HStack(spacing: 8) {
-                Text("Cache size")
-                    .font(SettingsTypography.body)
-                    .foregroundColor(Theme.secondaryText)
-                    .frame(width: 120, alignment: .leading)
+            SettingsDivider()
+
+            SettingsRow(title: "Cache size") {
                 Text(artworkCacheSizeText)
                     .font(SettingsTypography.body.monospacedDigit())
-                    .foregroundColor(Theme.primaryText)
-                Spacer(minLength: 0)
+                    .foregroundColor(Theme.secondaryText)
             }
         }
     }
 
     private var shortcutsSettings: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            shortcutBindingTable(for: .inApp,
-                                 selectedID: $selectedInAppBindingID)
-            shortcutBindingTable(for: .systemWide,
-                                 selectedID: $selectedSystemWideBindingID)
+        VStack(alignment: .leading, spacing: 22) {
+            SettingsCard(title: "In-App") {
+                shortcutBindingTable(for: .inApp,
+                                     selectedID: $selectedInAppBindingID)
+            }
 
-            HStack {
-                Spacer()
-                Toggle("Display raw values", isOn: $showRawShortcutValues)
-                    .toggleStyle(.checkbox)
-                    .controlSize(.small)
-                    .font(SettingsTypography.help)
-                    .padding(.trailing, 6)
+            SettingsCard(title: "System-Wide") {
+                shortcutBindingTable(for: .systemWide,
+                                     selectedID: $selectedSystemWideBindingID)
+            }
+
+            SettingsCard(title: "Options") {
+                SettingsRow(title: "Display raw values",
+                            subtitle: "Show physical key codes instead of the formatted shortcut.") {
+                    Toggle("", isOn: $showRawShortcutValues)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                }
             }
         }
         .onChange(of: shortcutBindings) { _, bindings in
@@ -546,11 +552,7 @@ struct SettingsView: View {
         let visibleRows = max(1, min(ids.count, 6))
         let hasAvailableActions = !availableShortcutActions(for: scope).isEmpty
 
-        return VStack(alignment: .leading, spacing: 6) {
-            Text(scope.title)
-                .font(SettingsTypography.cardTitle)
-                .foregroundColor(Theme.primaryText)
-
+        return VStack(alignment: .leading, spacing: 0) {
             VStack(spacing: 0) {
                 HStack(spacing: 0) {
                     Text("Action")
@@ -613,8 +615,7 @@ struct SettingsView: View {
                 .frame(height: 20)
                 .background(Theme.controlBackground.opacity(0.4))
             }
-            .background(Theme.controlBackground.opacity(0.25))
-            .overlay(Rectangle().strokeBorder(Theme.controlBorder, lineWidth: 0.5))
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
     }
 
@@ -716,50 +717,46 @@ struct SettingsView: View {
     }
 
     private var traySettings: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 6) {
-                Image(systemName: "opticaldisc")
-                    .font(.system(size: 12))
-                    .foregroundColor(Theme.secondaryText)
-                Text("System Tray")
-                    .font(SettingsTypography.cardTitle)
-                Spacer()
-                Toggle("Show icon", isOn: $trayEnabled)
+        SettingsCard(title: "System Tray") {
+            SettingsRow(title: "Show icon",
+                        subtitle: "Shows a disc icon in the menu bar. Popups appear below the icon.") {
+                Toggle("", isOn: $trayEnabled)
+                    .labelsHidden()
                     .toggleStyle(.switch)
                     .controlSize(.small)
             }
 
-            Text("Shows a disc icon in the menu bar. Popups appear below the icon.")
-                .font(SettingsTypography.help)
-                .foregroundColor(Theme.secondaryText)
-
             if trayEnabled {
-                Toggle("Track change", isOn: $trayTrackChange)
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
-                Toggle("Add or remove current song from Stared playlist",
-                       isOn: $trayStarChange)
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
-                Toggle("Only display popup when Library window is not focused",
-                       isOn: $trayOnlyWhenLibraryNotFocused)
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
-                HStack(spacing: 8) {
-                    Text("Popup duration")
-                        .font(SettingsTypography.body)
-                        .foregroundColor(Theme.secondaryText)
-                    Spacer()
+                SettingsDivider()
+                SettingsRow(title: "Track change") {
+                    Toggle("", isOn: $trayTrackChange)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                }
+                SettingsDivider()
+                SettingsRow(title: "Add or remove current song from Stared playlist") {
+                    Toggle("", isOn: $trayStarChange)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                }
+                SettingsDivider()
+                SettingsRow(title: "Only display popup when Library window is not focused") {
+                    Toggle("", isOn: $trayOnlyWhenLibraryNotFocused)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                }
+                SettingsDivider()
+                SettingsRow(title: "Popup duration") {
                     Stepper("\(trayPopupDurationMs) ms",
                             value: $trayPopupDurationMs,
                             in: 300...10000,
                             step: 100)
                         .controlSize(.small)
                 }
-                Text("Default: 1500 ms. Popups are suppressed while the Library window is focused.")
-                    .font(SettingsTypography.help)
-                    .foregroundColor(Theme.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
+                SettingsFootnote("Default: 1500 ms. Popups are suppressed while the Library window is focused.")
             }
         }
         .onChange(of: trayEnabled) { _, _ in TrayController.shared.refresh() }
@@ -772,68 +769,60 @@ struct SettingsView: View {
     }
 
     private var mpdSettings: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 6) {
-                Image(systemName: "dot.radiowaves.left.and.right")
-                    .font(.system(size: 12))
-                    .foregroundColor(Theme.secondaryText)
-                Text("MPD Server")
-                    .font(SettingsTypography.cardTitle)
-                Spacer()
-                Toggle("Enable", isOn: $mpdEnabled)
+        SettingsCard(title: "MPD Server") {
+            SettingsRow(title: "Enable",
+                        subtitle: "Lets MPD clients browse and control the library over TCP.") {
+                Toggle("", isOn: $mpdEnabled)
+                    .labelsHidden()
                     .toggleStyle(.switch)
                     .controlSize(.small)
             }
 
-            Text("Lets MPD clients browse and control the library over TCP.")
-                .font(SettingsTypography.help)
-                .foregroundColor(Theme.secondaryText)
-
             if mpdEnabled {
-                Toggle("Listen on all interfaces", isOn: $mpdAllInterfaces)
-                    .controlSize(.small)
-
-                HStack(spacing: 8) {
-                    Text("Addresses")
-                        .font(SettingsTypography.body)
-                        .foregroundColor(Theme.secondaryText)
-                        .frame(width: 76, alignment: .leading)
+                SettingsDivider()
+                SettingsRow(title: "Listen on all interfaces") {
+                    Toggle("", isOn: $mpdAllInterfaces)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                }
+                SettingsDivider()
+                SettingsRow(title: "Addresses") {
                     TextField("127.0.0.1", text: $mpdAddresses)
                         .textFieldStyle(.roundedBorder)
                         .font(SettingsTypography.body)
+                        .frame(width: 220)
                         .disabled(mpdAllInterfaces)
-                    Text("Port")
-                        .font(SettingsTypography.body)
-                        .foregroundColor(Theme.secondaryText)
+                }
+                SettingsDivider()
+                SettingsRow(title: "Port") {
                     TextField("6600", value: $mpdPort, format: .number)
                         .textFieldStyle(.roundedBorder)
                         .font(SettingsTypography.body.monospacedDigit())
-                        .frame(width: 72)
+                        .frame(width: 80)
                 }
-
-                HStack(spacing: 8) {
-                    Text("Password")
-                        .font(SettingsTypography.body)
-                        .foregroundColor(Theme.secondaryText)
-                        .frame(width: 76, alignment: .leading)
-                    SecureField("optional", text: $mpdPassword)
-                        .textFieldStyle(.roundedBorder)
-                        .font(SettingsTypography.body)
-                        .frame(maxWidth: 240)
-                    Spacer()
-                    Button("Restart") { mpd.applyPreferences() }
-                        .controlSize(.small)
+                SettingsDivider()
+                SettingsRow(title: "Password") {
+                    HStack(spacing: 8) {
+                        SecureField("optional", text: $mpdPassword)
+                            .textFieldStyle(.roundedBorder)
+                            .font(SettingsTypography.body)
+                            .frame(width: 150)
+                        Button("Restart") { mpd.applyPreferences() }
+                            .controlSize(.small)
+                            .fixedSize()
+                    }
                 }
-
                 Text(mpd.status)
                     .font(SettingsTypography.help)
                     .foregroundColor(Theme.secondaryText)
-                    .lineLimit(2)
+                    .lineLimit(3)
                     .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 9)
             } else {
-                Text("Disabled")
-                    .font(SettingsTypography.help)
-                    .foregroundColor(Theme.secondaryText)
+                SettingsFootnote("Disabled")
             }
         }
     }
@@ -876,16 +865,7 @@ struct SettingsView: View {
     // MARK: Internal library
 
     private var internalLibrarySection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 6) {
-                Image(systemName: "internaldrive")
-                    .font(.system(size: 12))
-                    .foregroundColor(Theme.secondaryText)
-                Text("Internal Library")
-                    .font(SettingsTypography.cardTitle)
-                Spacer()
-            }
-
+        SettingsCard(title: "Internal Library") {
             if let warning = library.openWarning {
                 HStack(alignment: .top, spacing: 6) {
                     Image(systemName: "exclamationmark.triangle.fill")
@@ -905,66 +885,81 @@ struct SettingsView: View {
                     }
                     .buttonStyle(.borderless)
                 }
-                .padding(6)
-                .background(
-                    RoundedRectangle(cornerRadius: 5)
-                        .fill(Color.orange.opacity(0.10))
-                )
+                .padding(10)
+                .background(Color.orange.opacity(0.10))
+                SettingsDivider()
             }
 
             if let internalLibrary = library.internalLibrary {
                 HStack(spacing: 8) {
                     Image(systemName: "folder")
-                        .font(.system(size: 11))
+                        .font(.system(size: 12))
                         .foregroundColor(.secondary)
-                    Text(internalLibrary.path)
-                        .font(SettingsTypography.caption)
-                        .foregroundColor(Theme.primaryText)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .textSelection(.enabled)
-                    Spacer(minLength: 0)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Location")
+                            .font(SettingsTypography.body)
+                            .foregroundColor(Theme.primaryText)
+                        Text(internalLibrary.path)
+                            .font(SettingsTypography.caption)
+                            .foregroundColor(Theme.secondaryText)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .textSelection(.enabled)
+                    }
+                    Spacer(minLength: 12)
                     Button("Quick Scan") {
                         library.rescan(internalLibrary)
                     }
+                    .controlSize(.small)
                     .disabled(library.isScanning || !internalLibrary.isEnabled)
                 }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 9)
 
-                HStack(spacing: 10) {
+                SettingsDivider()
+
+                HStack(spacing: 8) {
+                    Spacer()
                     Button("Open Music Folder") {
                         openMusicFolder(internalLibrary)
                     }
+                    .controlSize(.small)
                     Button("Full Scan") {
                         runFullScan(internalLibrary)
                     }
+                    .controlSize(.small)
                     .disabled(library.isScanning || !internalLibrary.isEnabled)
                     Button("Open Another Library…") {
                         chooseOpenLibrary()
                     }
-                    Spacer()
+                    .controlSize(.small)
                 }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
 
-                Text("The database lives in this folder. Music belongs in its Music subfolder.")
-                    .font(SettingsTypography.help)
-                    .foregroundColor(Theme.secondaryText)
+                SettingsFootnote("The database lives in this folder. Music belongs in its Music subfolder.")
             } else {
-                Text("Not set up yet. Create one folder for your Tracks database and music.")
-                    .font(SettingsTypography.body)
-                    .foregroundColor(Theme.secondaryText)
-
-                HStack(spacing: 10) {
+                SettingsRow(title: "Not set up yet",
+                            subtitle: "Create one folder for your Tracks database and music.") {
+                    EmptyView()
+                }
+                SettingsDivider()
+                HStack(spacing: 8) {
+                    Spacer()
                     Button("Set Up Internal Library…") {
                         openWindow(id: "setup")
                         NSApp.activate(ignoringOtherApps: true)
                     }
+                    .controlSize(.small)
                     Button("Open Existing Library…") {
                         chooseOpenLibrary()
                     }
-                    Spacer()
+                    .controlSize(.small)
                 }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func openMusicFolder(_ internalLibrary: MusicLibrary) {
@@ -998,108 +993,90 @@ struct SettingsView: View {
     // MARK: External libraries
 
     private var externalLibrariesSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 6) {
-                Image(systemName: "externaldrive")
-                    .font(.system(size: 12))
-                    .foregroundColor(Theme.secondaryText)
-                Text("External Libraries")
-                    .font(SettingsTypography.cardTitle)
-                Spacer()
-                Text("Read-Only")
-                    .font(SettingsTypography.caption)
-                    .foregroundColor(.secondary)
+        SettingsCard(title: "External Libraries") {
+            SettingsRow(title: "Read-Only",
+                        subtitle: "Folders managed by iTunes or another music app. Tracks indexes them without modifying the files.") {
+                EmptyView()
             }
 
-            Text("Folders managed by iTunes or another music app. Tracks indexes them without modifying the files.")
-                .font(SettingsTypography.help)
-                .foregroundColor(Theme.secondaryText)
-
             if library.externalLibraries.isEmpty {
-                Text("No external libraries.")
-                    .font(SettingsTypography.body)
-                    .foregroundColor(Theme.secondaryText)
-                    .padding(.vertical, 4)
+                SettingsDivider()
+                SettingsFootnote("No external libraries.")
             } else {
-                VStack(spacing: 0) {
-                    ForEach(Array(library.externalLibraries.enumerated()), id: \.offset) { index, externalLibrary in
-                        VStack(alignment: .leading, spacing: 7) {
-                            HStack(spacing: 8) {
-                                Image(systemName: "folder")
-                                    .font(.system(size: 12))
-                                    .foregroundColor(.secondary)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    HStack(spacing: 8) {
-                                        Text(externalLibrary.name)
-                                            .font(SettingsTypography.body)
-                                            .foregroundColor(Theme.primaryText)
-                                            .lineLimit(1)
-                                        Text(externalLibrary.isEnabled ? "Enabled" : "Disabled")
-                                            .font(SettingsTypography.caption)
-                                            .foregroundColor(externalLibrary.isEnabled ? Theme.secondaryText : .orange)
-                                    }
-                                    Text(externalLibrary.path)
-                                        .font(SettingsTypography.caption)
-                                        .foregroundColor(Theme.secondaryText)
-                                        .lineLimit(1)
-                                        .truncationMode(.middle)
-                                }
-                                Spacer(minLength: 0)
-                            }
-
-                            HStack(spacing: 8) {
-                                Button("Quick Scan") {
-                                    library.rescan(externalLibrary)
-                                }
-                                .disabled(library.isScanning || !externalLibrary.isEnabled)
-                                Button("Full Scan") {
-                                    runFullScan(externalLibrary)
-                                }
-                                .disabled(library.isScanning || !externalLibrary.isEnabled)
-                                Button("Change Location…") {
-                                    chooseRelocation(for: externalLibrary)
-                                }
-                                .disabled(library.isScanning || !externalLibrary.isEnabled)
-                                Spacer(minLength: 0)
-                                if externalLibrary.isEnabled {
-                                    Button("Disable") {
-                                        alert = .confirmDisable(externalLibrary)
-                                    }
-                                    .disabled(library.isScanning)
-                                } else {
-                                    Button("Enable") {
-                                        do {
-                                            try library.setExternalLibrary(externalLibrary.id, enabled: true)
-                                        } catch {
-                                            alert = .error(error.localizedDescription)
-                                        }
-                                    }
-                                    .disabled(library.isScanning)
-                                }
-                                Button(role: .destructive) {
-                                    alert = .confirmDelete(externalLibrary)
-                                } label: {
-                                    Label("Delete", systemImage: "trash")
-                                }
-                                .disabled(externalLibrary.isEnabled || library.isScanning)
-                            }
-                        }
-                        .padding(.vertical, 12)
-                        if index < library.externalLibraries.count - 1 {
-                            Divider()
-                        }
+                ForEach(library.externalLibraries) { externalLibrary in
+                    SettingsDivider()
+                    SettingsRow(title: externalLibrary.name,
+                                subtitle: externalLibrary.path) {
+                        Toggle("", isOn: externalLibraryEnabledBinding(externalLibrary))
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                            .controlSize(.small)
                     }
+
+                    HStack(spacing: 8) {
+                        Button("Quick Scan") {
+                            library.rescan(externalLibrary)
+                        }
+                        .controlSize(.small)
+                        .disabled(library.isScanning || !externalLibrary.isEnabled)
+                        Button("Full Scan") {
+                            runFullScan(externalLibrary)
+                        }
+                        .controlSize(.small)
+                        .disabled(library.isScanning || !externalLibrary.isEnabled)
+                        Button("Change Location…") {
+                            chooseRelocation(for: externalLibrary)
+                        }
+                        .controlSize(.small)
+                        .disabled(library.isScanning || !externalLibrary.isEnabled)
+                        Spacer()
+                        Button(role: .destructive) {
+                            alert = .confirmDelete(externalLibrary)
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                        .controlSize(.small)
+                        .disabled(externalLibrary.isEnabled || library.isScanning)
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 8)
                 }
             }
 
-            HStack(spacing: 10) {
-                Button("Add External Library…") { addExternalLibraries() }
-                Button("Rescan All") { library.rescanAll() }
-                    .disabled(library.isScanning)
+            SettingsDivider()
+
+            HStack(spacing: 8) {
                 Spacer()
+                Button("Rescan All") {
+                    library.rescanAll()
+                }
+                .controlSize(.small)
+                .disabled(library.isScanning)
+                Button("Add External Library…") {
+                    addExternalLibraries()
+                }
+                .controlSize(.small)
             }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func externalLibraryEnabledBinding(_ externalLibrary: MusicLibrary) -> Binding<Bool> {
+        Binding(
+            get: { externalLibrary.isEnabled },
+            set: { enabled in
+                if enabled {
+                    do {
+                        try library.setExternalLibrary(externalLibrary.id, enabled: true)
+                    } catch {
+                        alert = .error(error.localizedDescription)
+                    }
+                } else {
+                    alert = .confirmDisable(externalLibrary)
+                }
+            }
+        )
     }
 
     private func addExternalLibraries() {
@@ -1342,6 +1319,91 @@ private struct MissingFilesReviewView: View {
                 else { selectedIDs.remove(id) }
             }
         )
+    }
+}
+
+private struct SettingsCard<Content: View>: View {
+    let title: String
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(SettingsTypography.sectionTitle)
+                .foregroundColor(Theme.primaryText)
+                .padding(.leading, 2)
+            VStack(alignment: .leading, spacing: 0) {
+                content()
+            }
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Theme.controlBackground.opacity(0.55))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(Theme.controlBorder.opacity(0.7), lineWidth: 0.5)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+    }
+}
+
+private struct SettingsRow<Trailing: View>: View {
+    let title: String
+    var subtitle: String?
+    var icon: String?
+    @ViewBuilder let trailing: () -> Trailing
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            if let icon {
+                Image(systemName: icon)
+                    .font(.system(size: 13))
+                    .foregroundColor(Theme.secondaryText)
+                    .frame(width: 18)
+            }
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(SettingsTypography.body)
+                    .foregroundColor(Theme.primaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let subtitle {
+                    Text(subtitle)
+                        .font(SettingsTypography.help)
+                        .foregroundColor(Theme.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer(minLength: 12)
+            trailing()
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 9)
+        .frame(minHeight: 40)
+    }
+}
+
+private struct SettingsDivider: View {
+    var body: some View {
+        Divider()
+            .padding(.leading, 14)
+    }
+}
+
+private struct SettingsFootnote: View {
+    let text: String
+
+    init(_ text: String) {
+        self.text = text
+    }
+
+    var body: some View {
+        Text(text)
+            .font(SettingsTypography.help)
+            .foregroundColor(Theme.secondaryText)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
     }
 }
 

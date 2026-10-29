@@ -261,7 +261,11 @@ private struct BrowserList<Item: Identifiable>: View where Item.ID == String {
             revealSelection()
         }
         .onChange(of: navigator.clearSelectionCount) { _, _ in
-            selectedID = nil
+            if selectedID == nil {
+                NotificationCenter.default.post(name: .clearSearch, object: nil)
+            } else {
+                selectedID = nil
+            }
         }
         .onChange(of: navigator.selectFirstCount) { _, _ in
             guard let first = items.first else { return }

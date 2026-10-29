@@ -80,6 +80,9 @@ struct ContentView: View {
         .onChange(of: windowMode.mode) { _, _ in
             searchText = ""
         }
+        .onReceive(NotificationCenter.default.publisher(for: .clearSearch)) { _ in
+            searchText = ""
+        }
         .onReceive(NotificationCenter.default.publisher(for: .libraryDidChange)) { _ in
             selection = .library(.recentlyAdded)
             searchText = ""

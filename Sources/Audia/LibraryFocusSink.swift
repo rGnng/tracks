@@ -4,6 +4,7 @@ import AppKit
 extension Notification.Name {
     static let libraryWindowDidShow = Notification.Name("tracks.libraryWindowDidShow")
     static let focusContent = Notification.Name("tracks.focusContent")
+    static let clearSearch = Notification.Name("tracks.clearSearch")
 }
 
 /// Keeps the Library window from auto-focusing the search field when it is

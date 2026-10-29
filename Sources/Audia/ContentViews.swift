@@ -249,7 +249,11 @@ struct AlbumGrid: View {
             }
             .onChange(of: navigator.clearSelectionCount) { _, _ in
                 guard expandedAlbum == nil else { return }
-                clearSelection()
+                if selectedIDs.isEmpty {
+                    NotificationCenter.default.post(name: .clearSearch, object: nil)
+                } else {
+                    clearSelection()
+                }
             }
             .onChange(of: navigator.selectFirstCount) { _, _ in
                 guard expandedAlbum == nil, let first = albums.first else { return }
@@ -772,7 +776,11 @@ private struct AlbumDetailView: View {
             revealSelection()
         }
         .onChange(of: navigator.clearSelectionCount) { _, _ in
-            clearSelection()
+            if selectedSongIDs.isEmpty {
+                NotificationCenter.default.post(name: .clearSearch, object: nil)
+            } else {
+                clearSelection()
+            }
         }
         .onChange(of: navigator.selectFirstCount) { _, _ in
             guard let first = album.songs.first else { return }
@@ -1231,7 +1239,11 @@ struct AlbumList: View {
                 revealSelection()
             }
             .onChange(of: navigator.clearSelectionCount) { _, _ in
-                clearSelection()
+                if selectedIDs.isEmpty {
+                    NotificationCenter.default.post(name: .clearSearch, object: nil)
+                } else {
+                    clearSelection()
+                }
             }
             .onChange(of: navigator.selectFirstCount) { _, _ in
                 guard let first = albums.first else { return }
@@ -2110,7 +2122,11 @@ struct SongTable: View {
             revealSelection()
         }
         .onChange(of: navigator.clearSelectionCount) { _, _ in
-            clearSelection()
+            if selectedIDs.isEmpty {
+                NotificationCenter.default.post(name: .clearSearch, object: nil)
+            } else {
+                clearSelection()
+            }
         }
         .onChange(of: navigator.selectFirstCount) { _, _ in
             guard let first = sorted.first else { return }
