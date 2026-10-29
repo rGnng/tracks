@@ -343,13 +343,22 @@ struct SettingsView: View {
         }
     }
 
+    private func headerSubtitle(for section: SettingsSection) -> String {
+        switch section {
+        case .library:
+            return "\(library.albums.count.formatted()) albums · \(library.allSongs.count.formatted()) songs"
+        default:
+            return section.subtitle
+        }
+    }
+
     private func settingsPageHeader(_ section: SettingsSection) -> some View {
         HStack(alignment: .center, spacing: 16) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(section.title)
                     .font(SettingsTypography.pageTitle)
                     .foregroundColor(Theme.primaryText)
-                Text(section.subtitle)
+                Text(headerSubtitle(for: section))
                     .font(SettingsTypography.help)
                     .foregroundColor(Theme.secondaryText)
             }
@@ -460,12 +469,6 @@ struct SettingsView: View {
 
     private var librarySettings: some View {
         VStack(alignment: .leading, spacing: 22) {
-            HStack {
-                Text("\(library.albums.count) albums · \(library.allSongs.count) songs")
-                    .font(SettingsTypography.caption.monospacedDigit())
-                    .foregroundColor(Theme.secondaryText)
-                Spacer()
-            }
             internalLibrarySection
             externalLibrariesSection
             artworkCacheSection
