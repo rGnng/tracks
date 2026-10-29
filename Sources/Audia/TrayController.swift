@@ -278,7 +278,7 @@ final class TrayController: NSObject, NSMenuItemValidation {
         model.title = song.title
         model.subtitle = subtitle(for: song)
         model.isStarred = starred ?? Library.shared.isStarred(songID: song.id)
-        let artwork = Library.shared.artwork(forAlbumTitle: song.album)
+        let artwork = Library.shared.artwork(forSongID: song.id)
         model.artwork = artwork
         prepareCover(for: artwork)
     }

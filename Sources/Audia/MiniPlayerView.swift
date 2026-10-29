@@ -44,7 +44,7 @@ struct MiniPlayerView: View {
         ZStack(alignment: .topTrailing) {
             Group {
                 if let song = player.currentSong {
-                    AlbumArtwork(artwork: library.artwork(forAlbumTitle: song.album))
+                    AlbumArtwork(artwork: library.artwork(forSongID: song.id))
                 } else {
                     ZStack {
                         Theme.lcdIdleFill

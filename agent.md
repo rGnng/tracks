@@ -233,6 +233,11 @@ Important schema decisions:
   The order is computed by caching `addedAt` once per album before sorting;
   recomputing it inside the comparator made every playback-driven view update
   re-walk all songs.
+- `LibraryCatalog` rebuilds when `Library.albums` changes and caches the
+  flattened `allSongs` array plus song→album and ID lookups. Now Playing,
+  MiniPlayer, Control Center, and the menu-bar card resolve artwork by song ID,
+  not album title; duplicate album titles must never select the first matching
+  album's cover.
 - WAL is used while running. On normal termination, `closeForTermination()`
   checkpoints and switches the journal back to DELETE so `library.sqlite` is
   self-contained.
@@ -613,7 +618,9 @@ volume toggle in Settings.
 Supported areas:
 
 - Status/current song/queue: `status`, `stats`, `currentsong`, `playlistinfo`,
-  `playlistid`, `plchanges`, `plchangesposid`.
+  `playlistid`, `plchanges`, `plchangesposid`. In `status`, `song` and
+  `nextsong` are positions, but `songid` and `nextsongid` are the stable
+  `QueueEntry.id` values (never `position + 1`).
 - Queue editing: `add`, `addid`, `clear`, `delete`, `deleteid`, `move`, `moveid`,
   `shuffle`, `play`, `playid`, `pause`, `stop`, `next`, `previous`, `seek`,
   `seekid`, `seekcur`, `getvol`, `setvol`, `volume` (including `+`/`-` relative

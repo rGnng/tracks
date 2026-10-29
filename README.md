@@ -230,6 +230,9 @@ queue, and history live on this Mac.
   BLOBs.
 - The 45pt Now Playing cover is downsampled once to its backing-pixel size
   before display, instead of relying on live SwiftUI scaling.
+- Now Playing, MiniPlayer, Control Center, and the menu-bar card resolve artwork
+  through the song's album relationship, so repeated album titles cannot select
+  another album's cover.
 - Settings shows the current cache size and allows a full cache rebuild, which
   clears the disk cache and forces a rescan.
 
@@ -242,7 +245,8 @@ with an optional password. Treat exposure beyond a trusted LAN as unsafe.
 Supported areas include status/current song/queue, library browse and search,
 stored playlists, album art, idle notifications, audio outputs, and the virtual
 **Stared** playlist. Queue entries have stable MPD `Id` values independent of
-song IDs, so duplicate queue copies remain distinct.
+song IDs, so duplicate queue copies remain distinct. `status.songid` and
+`status.nextsongid` expose those entry IDs; `song`/`nextsong` remain positions.
 
 The server is not a complete MPD 0.24 implementation. `playlistsearch`,
 stickers, channels, mounts, and partitions are not implemented; stored playlists

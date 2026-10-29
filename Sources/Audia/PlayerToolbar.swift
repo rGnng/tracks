@@ -829,7 +829,7 @@ struct NowPlayingView: View {
             }
             .frame(width: width, height: 45, alignment: .top)
 
-            NowPlayingArtwork(artwork: Library.shared.artwork(forAlbumTitle: song.album))
+            NowPlayingArtwork(artwork: Library.shared.artwork(forSongID: song.id))
                 .frame(width: Self.artworkSize, height: Self.artworkSize)
                 .clipped()
         }

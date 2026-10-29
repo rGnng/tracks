@@ -914,6 +914,17 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
         PlayerState.shared.selectAudioOutput(entries[index])
     }
 
+    /// MPD's `songid` and `nextsongid` are stable queue-entry IDs, not queue
+    /// positions. `song`/`nextsong` remain positions.
+    static func stableQueueIDs(_ queue: [QueueEntry],
+                               currentIndex: Int?) -> (songID: UInt32?, nextSongID: UInt32?) {
+        guard let currentIndex, queue.indices.contains(currentIndex) else {
+            return (nil, nil)
+        }
+        let next = currentIndex + 1 < queue.count ? queue[currentIndex + 1].id : nil
+        return (queue[currentIndex].id, next)
+    }
+
     private func statusLines() -> [String] {
         let player = PlayerState.shared
         let state = playbackState.rawValue
@@ -942,12 +953,15 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
             "duration: \(String(format: "%.3f", duration))",
             "time: \(Int(player.elapsed)):\(Int(duration))",
         ]
-        if let index = player.currentIndex, player.queue.indices.contains(index) {
+        if let index = player.currentIndex, player.queueEntries.indices.contains(index) {
+            let ids = Self.stableQueueIDs(player.queueEntries, currentIndex: index)
             lines.append("song: \(index)")
-            lines.append("songid: \(index + 1)")
-            if index + 1 < player.queue.count {
+            if let songID = ids.songID {
+                lines.append("songid: \(songID)")
+            }
+            if let nextSongID = ids.nextSongID {
                 lines.append("nextsong: \(index + 1)")
-                lines.append("nextsongid: \(index + 2)")
+                lines.append("nextsongid: \(nextSongID)")
             }
         }
         if Library.shared.isScanning {

@@ -71,6 +71,55 @@ enum ScanPhase: String, Equatable, Sendable {
     case updatingLibrary = "Updating library"
 }
 
+/// Immutable indexes over the loaded album graph. Rebuilt once whenever
+/// `Library.albums` changes so hot paths (song lookup, now-playing artwork,
+/// and Settings counts) do not repeatedly flatten every album.
+struct LibraryCatalog {
+    let allSongs: [Song]
+    private let albumsByID: [UUID: Album]
+    private let albumsBySongID: [UUID: Album]
+    private let songsByID: [UUID: Song]
+
+    init(albums: [Album]) {
+        let songCount = albums.reduce(0) { $0 + $1.songs.count }
+        var all: [Song] = []
+        all.reserveCapacity(songCount)
+        var albumsByID: [UUID: Album] = [:]
+        albumsByID.reserveCapacity(albums.count)
+        var albumsBySongID: [UUID: Album] = [:]
+        albumsBySongID.reserveCapacity(songCount)
+        var songsByID: [UUID: Song] = [:]
+        songsByID.reserveCapacity(songCount)
+
+        for album in albums {
+            albumsByID[album.id] = album
+            for song in album.songs {
+                all.append(song)
+                songsByID[song.id] = song
+                albumsBySongID[song.id] = album
+            }
+        }
+
+        self.allSongs = all
+        self.albumsByID = albumsByID
+        self.albumsBySongID = albumsBySongID
+        self.songsByID = songsByID
+    }
+
+    func album(withID id: UUID) -> Album? {
+        albumsByID[id]
+    }
+
+    func song(withID id: UUID) -> (song: Song, album: Album)? {
+        guard let song = songsByID[id], let album = albumsBySongID[id] else { return nil }
+        return (song, album)
+    }
+
+    func artwork(forSongID id: UUID) -> Artwork {
+        albumsBySongID[id]?.artwork ?? Artwork(colors: [])
+    }
+}
+
 /// SQLite-backed music library modeled on iTunes.
 ///
 /// There is at most one **Internal Library**: a writable folder holding both
@@ -87,7 +136,9 @@ final class Library: ObservableObject {
     static let starredPlaylistName = "Stared"
     private static let starredModifiedKey = "library.starredPlaylistModifiedAt"
 
-    @Published var albums: [Album]
+    @Published private(set) var albums: [Album] {
+        didSet { catalog = LibraryCatalog(albums: albums) }
+    }
     @Published var playlists: [Playlist]
     /// Fast lookup for star buttons; mirrors `Song.isStarred` and survives
     /// without re-reading every album on each row render.
@@ -118,6 +169,7 @@ final class Library: ObservableObject {
     }
 
     private let db: LibraryDatabase
+    private var catalog = LibraryCatalog(albums: [])
     private var scanTask: Task<Void, Never>?
     private var didAutoPromptSetup = false
 
@@ -199,7 +251,7 @@ final class Library: ObservableObject {
 
     // MARK: Derived collections
 
-    var allSongs: [Song] { albums.flatMap(\.songs) }
+    var allSongs: [Song] { catalog.allSongs }
 
     /// Backing store for the built-in "Stared" playlist.
     var starredSongs: [Song] { allSongs.filter(\.isStarred) }
@@ -229,23 +281,18 @@ final class Library: ObservableObject {
     }
 
     func album(withID id: UUID) -> Album? {
-        albums.first { $0.id == id }
+        catalog.album(withID: id)
     }
 
     func song(withID id: UUID) -> (song: Song, album: Album)? {
-        for album in albums {
-            if let song = album.songs.first(where: { $0.id == id }) {
-                return (song, album)
-            }
-        }
-        return nil
+        catalog.song(withID: id)
     }
 
-    func artwork(forAlbumTitle title: String?) -> Artwork {
-        guard let title, let album = albums.first(where: { $0.title == title }) else {
-            return Artwork(colors: [])
-        }
-        return album.artwork
+    /// Resolve artwork through the song's actual album. Matching by album
+    /// title alone picks the first same-named album, which is wrong for
+    /// compilations and repeated edition titles.
+    func artwork(forSongID id: UUID) -> Artwork {
+        catalog.artwork(forSongID: id)
     }
 
     // MARK: Library locations
@@ -528,6 +575,7 @@ final class Library: ObservableObject {
         guard !libraries.isEmpty else {
             albums = []
             playlists = []
+            starredSongIDs = []
             isScanning = false
             scanCompleted = 0
             scanTotal = 0
@@ -816,7 +864,7 @@ final class Library: ObservableObject {
         let loaded = db.loadLibrary()
         albums = loaded.albums
         playlists = loaded.playlists
-        starredSongIDs = Set(loaded.albums.flatMap(\.songs).lazy.filter(\.isStarred).map(\.id))
+        starredSongIDs = Set(allSongs.lazy.filter(\.isStarred).map(\.id))
         ArtworkCache.shared.setDatabasePath(db.path)
         PlayerState.shared.applyUpdatedSongs(allSongs)
     }

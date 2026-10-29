@@ -88,7 +88,7 @@ final class SystemNowPlaying {
     }
 
     private func loadArtwork(for song: Song) {
-        let artwork = Library.shared.artwork(forAlbumTitle: song.album)
+        let artwork = Library.shared.artwork(forSongID: song.id)
         let key: String
         if let cacheKey = artwork.cacheKey {
             key = cacheKey
