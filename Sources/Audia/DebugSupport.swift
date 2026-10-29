@@ -52,6 +52,12 @@ struct AlbumGridDebugInfo: Equatable {
     var firstAlbumGap: CGFloat?
     var minVisibleDelta: CGFloat?
     var maxVisibleDelta: CGFloat?
+    var selectedActualFrame: CGRect?
+    var selectedModelFrame: CGRect?
+    var selectedFrameDelta: CGFloat?
+    var lastRevealSource = "—"
+    var lastRevealTarget: CGFloat?
+    var lastRevealOffsetBefore: CGFloat = 0
     var scrollID = "—"
     var scrollPoint = "—"
     var scrollEdge = "—"
@@ -180,19 +186,24 @@ struct AlbumGridLayoutOverlay: View {
     let cardHeight: CGFloat
     let rowSpacing: CGFloat
     let padding: CGFloat
+    let selectedActualFrame: CGRect?
+    let selectedModelFrame: CGRect?
+    let viewportTop: CGFloat
+    let viewportBottom: CGFloat
+    let revealTarget: CGFloat?
 
     var body: some View {
         Canvas { context, size in
             let columnStep = cardWidth + 22
             let rowStep = cardHeight + rowSpacing
-            let color = Color.blue.opacity(0.55)
+            let guide = Color.blue.opacity(0.55)
 
             for column in 0...max(columns, 1) {
                 let x = padding + CGFloat(column) * columnStep
                 var path = Path()
                 path.move(to: CGPoint(x: x, y: 0))
                 path.addLine(to: CGPoint(x: x, y: size.height))
-                context.stroke(path, with: .color(color), lineWidth: 0.5)
+                context.stroke(path, with: .color(guide), lineWidth: 0.5)
             }
 
             var y = padding
@@ -200,8 +211,65 @@ struct AlbumGridLayoutOverlay: View {
                 var path = Path()
                 path.move(to: CGPoint(x: 0, y: y))
                 path.addLine(to: CGPoint(x: size.width, y: y))
-                context.stroke(path, with: .color(color), lineWidth: 0.5)
+                context.stroke(path, with: .color(guide), lineWidth: 0.5)
                 y += rowStep
+            }
+
+            if let model = selectedModelFrame {
+                context.stroke(
+                    Path(model),
+                    with: .color(.blue),
+                    style: StrokeStyle(lineWidth: 1, dash: [4, 3])
+                )
+                context.draw(
+                    Text("model").font(.system(size: 9, weight: .semibold)).foregroundColor(.blue),
+                    at: CGPoint(x: model.minX + 3, y: model.minY + 3),
+                    anchor: .topLeading
+                )
+            }
+
+            if let actual = selectedActualFrame {
+                context.stroke(Path(actual), with: .color(.green), lineWidth: 1.5)
+                context.draw(
+                    Text("cached").font(.system(size: 9, weight: .semibold)).foregroundColor(.green),
+                    at: CGPoint(x: actual.minX + 3, y: actual.minY + 16),
+                    anchor: .topLeading
+                )
+            }
+
+            for (lineY, label, color) in [
+                (viewportTop, "viewport top", Color.red),
+                (viewportBottom, "viewport bottom", Color.orange)
+            ] {
+                var path = Path()
+                path.move(to: CGPoint(x: 0, y: lineY))
+                path.addLine(to: CGPoint(x: size.width, y: lineY))
+                context.stroke(
+                    path,
+                    with: .color(color),
+                    style: StrokeStyle(lineWidth: 1, dash: [2, 2])
+                )
+                context.draw(
+                    Text(label).font(.system(size: 9, weight: .semibold)).foregroundColor(color),
+                    at: CGPoint(x: padding + 4, y: lineY + 2),
+                    anchor: .topLeading
+                )
+            }
+
+            if let revealTarget {
+                var path = Path()
+                path.move(to: CGPoint(x: 0, y: revealTarget))
+                path.addLine(to: CGPoint(x: size.width, y: revealTarget))
+                context.stroke(
+                    path,
+                    with: .color(.purple),
+                    style: StrokeStyle(lineWidth: 1, dash: [6, 3])
+                )
+                context.draw(
+                    Text("reveal target").font(.system(size: 9, weight: .semibold)).foregroundColor(.purple),
+                    at: CGPoint(x: padding + 4, y: revealTarget + 14),
+                    anchor: .topLeading
+                )
             }
         }
         .allowsHitTesting(false)
@@ -292,10 +360,10 @@ struct DebugPanel: View {
                             ? fmt3(state.albumLocator.rowHeight)
                             : "—")
                         metric("computed", rectString(state.albumLocator.computedFrame))
-                        metric("actual", rectString(state.albumLocator.actualFrame))
-                        metric("delta", optionalFmt3(state.albumLocator.frameDelta))
-                        metric("min visible delta", optionalFmt3(state.albumLocator.minVisibleFrameDelta))
-                        metric("max visible delta", optionalFmt3(state.albumLocator.maxVisibleFrameDelta))
+                        metric("cached", rectString(state.albumLocator.actualFrame))
+                        metric("cache delta", optionalFmt3(state.albumLocator.frameDelta))
+                        metric("cache delta min", optionalFmt3(state.albumLocator.minVisibleFrameDelta))
+                        metric("cache delta max", optionalFmt3(state.albumLocator.maxVisibleFrameDelta))
                         metric("offset at request", fmt(state.albumLocator.offset))
                         metric("target offset", optionalFmt(state.albumLocator.targetOffset))
                         metric("viewport / content",
@@ -313,8 +381,14 @@ struct DebugPanel: View {
                             metric("card", "\(fmt(state.albumGrid.cardWidth)) × \(fmt(state.albumGrid.cardHeight))")
                             metric("row height", fmt(state.albumGrid.rowHeight))
                             metric("first album gap", optionalFmt(state.albumGrid.firstAlbumGap))
-                            metric("min visible delta", optionalFmt3(state.albumGrid.minVisibleDelta))
-                            metric("max visible delta", optionalFmt3(state.albumGrid.maxVisibleDelta))
+                            metric("cache delta min", optionalFmt3(state.albumGrid.minVisibleDelta))
+                            metric("cache delta max", optionalFmt3(state.albumGrid.maxVisibleDelta))
+                            metric("cached selected", rectString(state.albumGrid.selectedActualFrame))
+                            metric("model selected", rectString(state.albumGrid.selectedModelFrame))
+                            metric("cache delta", optionalFmt3(state.albumGrid.selectedFrameDelta))
+                            metric("reveal source", state.albumGrid.lastRevealSource)
+                            metric("reveal target", optionalFmt3(state.albumGrid.lastRevealTarget))
+                            metric("offset before", fmt(state.albumGrid.lastRevealOffsetBefore))
                             metric("scroll id", state.albumGrid.scrollID)
                             metric("scroll point", state.albumGrid.scrollPoint)
                             metric("scroll edge", state.albumGrid.scrollEdge)

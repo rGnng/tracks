@@ -25,6 +25,9 @@ struct AlbumGrid: View {
     @State private var cardFrames: [UUID: CGRect] = [:]
     @State private var albumIndexByID: [UUID: Int] = [:]
     @State private var pendingLocateRequest: AlbumLocateRequest?
+    @State private var lastRevealSource = "—"
+    @State private var lastRevealTarget: CGFloat?
+    @State private var lastRevealOffsetBefore: CGFloat = 0
     @State private var marqueeStart: CGPoint?
     @State private var marqueeCurrent: CGPoint?
     @State private var marqueeBaseSelection: Set<UUID> = []
@@ -191,7 +194,12 @@ struct AlbumGrid: View {
                                 cardWidth: gridCardWidth,
                                 cardHeight: gridCardHeight,
                                 rowSpacing: 26,
-                                padding: contentTopPadding
+                                padding: contentTopPadding,
+                                selectedActualFrame: selectedActualFrame,
+                                selectedModelFrame: selectedModelFrame,
+                                viewportTop: metrics.offset,
+                                viewportBottom: metrics.offset + metrics.viewportHeight,
+                                revealTarget: lastRevealTarget
                             )
                         }
                     }
@@ -263,8 +271,14 @@ struct AlbumGrid: View {
     }
 
     private func publishDebugState() {
-        let selectedIndex = selectionAnchor.flatMap { albumIndexByID[$0] } ?? -1
-        let selectedID = (selectionAnchor ?? selectedIDs.first)?.uuidString ?? "—"
+        let currentAlbumID = selectedAlbumID
+        let selectedIndex = currentAlbumID.flatMap { albumIndexByID[$0] } ?? -1
+        let selectedID = currentAlbumID?.uuidString ?? "—"
+        let modelFrame = selectedModelFrame
+        let actualFrame = selectedActualFrame
+        let selectedFrameDelta = modelFrame.flatMap { model in
+            actualFrame.map { frameDelta(model, $0) }
+        }
         let firstAlbumGap = albums.first.flatMap { album in
             cardFrames[album.id].map { frame in
                 let gap = frame.minY - metrics.offset
@@ -290,6 +304,12 @@ struct AlbumGrid: View {
             firstAlbumGap: firstAlbumGap,
             minVisibleDelta: visibleDeltas?.min,
             maxVisibleDelta: visibleDeltas?.max,
+            selectedActualFrame: actualFrame,
+            selectedModelFrame: modelFrame,
+            selectedFrameDelta: selectedFrameDelta,
+            lastRevealSource: lastRevealSource,
+            lastRevealTarget: lastRevealTarget,
+            lastRevealOffsetBefore: lastRevealOffsetBefore,
             scrollID: scrollID,
             scrollPoint: scrollPoint,
             scrollEdge: scrollEdge,
@@ -325,15 +345,28 @@ struct AlbumGrid: View {
                         padding: contentTopPadding)
     }
 
-    private func gridFrame(at index: Int) -> CGRect {
-        let id = albums[index].id
-        if let frame = cardFrames[id] { return frame }
-        return gridLayout.frame(at: index) ?? .zero
+    private var selectedAlbumID: UUID? {
+        selectionAnchor ?? selectedIDs.first
+    }
+
+    private var selectedModelFrame: CGRect? {
+        guard let id = selectedAlbumID,
+              let index = albumIndexByID[id] else { return nil }
+        return gridLayout.frame(at: index)
+    }
+
+    private var selectedActualFrame: CGRect? {
+        guard let id = selectedAlbumID else { return nil }
+        return cardFrames[id]
+    }
+
+    private func modelFrame(at index: Int) -> CGRect {
+        gridLayout.frame(at: index) ?? .zero
     }
 
     private func topVisibleAlbumIndex() -> Int? {
         for index in albums.indices {
-            let frame = cardFrames[albums[index].id] ?? gridFrame(at: index)
+            let frame = modelFrame(at: index)
             if frame.maxY > metrics.offset + 0.5 {
                 return index
             }
@@ -342,7 +375,7 @@ struct AlbumGrid: View {
     }
 
     private func isOnScreen(_ id: UUID, index: Int) -> Bool {
-        let frame = cardFrames[id] ?? gridFrame(at: index)
+        let frame = modelFrame(at: index)
         return frame.maxY > metrics.offset + 0.5
             && frame.minY < metrics.offset + metrics.viewportHeight - 0.5
     }
@@ -381,12 +414,18 @@ struct AlbumGrid: View {
 
     private func revealSelection() {
         guard let id = selectionAnchor,
-              let index = albums.firstIndex(where: { $0.id == id }) else { return }
-        let frame = cardFrames[id] ?? gridFrame(at: index)
-        guard let target = ListScroll.revealTarget(for: frame,
-                                                   metrics: metrics,
-                                                   padding: contentTopPadding) else { return }
-        scrollPosition.scrollTo(y: target)
+              let index = albumIndexByID[id] else { return }
+        let frame = modelFrame(at: index)
+        let target = ListScroll.revealTarget(for: frame,
+                                             metrics: metrics,
+                                             padding: contentTopPadding)
+        lastRevealSource = "model"
+        lastRevealTarget = target
+        lastRevealOffsetBefore = metrics.offset
+        if let target {
+            scrollPosition.scrollTo(y: target)
+        }
+        publishDebugState()
     }
 
     private func handleScroll(_ command: NavigationScrollCommand) {
@@ -653,7 +692,7 @@ struct AlbumGrid: View {
         guard let start = marqueeStart, let current = marqueeCurrent else { return }
         let rect = marqueeRect(start, current)
         var hits: Set<UUID> = []
-        for (index, album) in albums.enumerated() where gridFrame(at: index).intersects(rect) {
+        for (index, album) in albums.enumerated() where modelFrame(at: index).intersects(rect) {
             hits.insert(album.id)
         }
         let additive = NSEvent.modifierFlags.contains(.command)
@@ -1733,7 +1772,6 @@ struct SongTable: View {
                         .id(song.id)
                 }
             }
-            .scrollTargetLayout()
             .padding(.vertical, contentTopPadding)
             .onTapGesture { clearSelection() }
             .marqueeSelectable(selection: $selectedIDs, space: "songTableSpace")
