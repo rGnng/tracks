@@ -97,7 +97,6 @@ struct SongTableDebugInfo: Equatable {
     var selected = 0
     var selectedIndex = -1
     var selectedID = ""
-    var instance = ""
     var offset: CGFloat = 0
     var viewport: CGFloat = 0
     var content: CGFloat = 0
@@ -142,8 +141,6 @@ final class DebugState: ObservableObject {
     @Published var sidebar = SidebarDebugInfo()
     @Published var albumLocateRequest: AlbumLocateRequest?
     @Published var albumLocator = AlbumLocatorDebugInfo()
-    @Published var sessionSave = ""
-    @Published var sessionLoad = ""
 }
 
 private struct DebugFrameModifier: ViewModifier {
@@ -413,9 +410,6 @@ struct DebugPanel: View {
                             metric("selected", "\(state.songTable.selected)")
                             metric("index", "\(state.songTable.selectedIndex)")
                             metric("selected id", state.songTable.selectedID.isEmpty ? "—" : state.songTable.selectedID)
-                            metric("instance", state.songTable.instance)
-                            metric("session save", state.sessionSave.isEmpty ? "—" : state.sessionSave)
-                            metric("session load", state.sessionLoad.isEmpty ? "—" : state.sessionLoad)
                             metric("offset", fmt(state.songTable.offset))
                             metric("viewport", fmt(state.songTable.viewport))
                             metric("content", fmt(state.songTable.content))

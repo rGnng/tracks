@@ -49,8 +49,6 @@ struct AlbumGrid: View {
             ? SessionViewState.shared.albumState(for: viewKey)
             : nil
         let saved = stored?.itemCount == albums.count ? stored : nil
-        _selectedIDs = State(initialValue: saved?.selectedIDs ?? [])
-        _selectionAnchor = State(initialValue: saved?.anchor)
         _scrollPosition = State(initialValue: ScrollPosition(
             idType: Never.self,
             y: max(0, saved?.offset ?? 0)
@@ -106,8 +104,6 @@ struct AlbumGrid: View {
             guard metrics.viewportHeight > 0 else { return }
             SessionViewState.shared.saveAlbum(
                 .init(offset: metrics.offset,
-                      selectedIDs: selectedIDs,
-                      anchor: selectionAnchor,
                       itemCount: albums.count),
                 for: viewKey
             )
@@ -1350,8 +1346,6 @@ struct SongTable: View {
     let songs: [Song]
     let context: SongTableContext
     let playlistInfo: [UUID: PlaylistItemInfo]
-    private let restoredSongState: SessionViewState.SongState?
-    @State private var debugInstanceID = String(UUID().uuidString.prefix(4))
 
     @ObservedObject private var playback = PlaybackStatus.shared
     @Environment(\.openWindow) private var openWindow
@@ -1452,9 +1446,6 @@ struct SongTable: View {
 
         let stored = SessionViewState.shared.songState(for: context.viewStateKey)
         let saved = stored?.itemCount == songs.count ? stored : nil
-        self.restoredSongState = saved
-        _selectedIDs = State(initialValue: saved?.selectedIDs ?? [])
-        _selectionAnchor = State(initialValue: saved?.anchor)
         _scrollPosition = State(initialValue: ScrollPosition(
             idType: Never.self,
             y: max(0, saved?.offset ?? 0)
@@ -1590,11 +1581,6 @@ struct SongTable: View {
         .background(Theme.contentBackground)
         .debugFrame("SongTable")
         .task {
-            if let restoredSongState {
-                DebugState.shared.sessionLoad = "\(context.viewStateKey) off=\(String(format: "%.1f", restoredSongState.offset)) n=\(restoredSongState.selectedIDs.count) a=\(restoredSongState.anchor?.uuidString.prefix(8) ?? "nil")"
-            } else {
-                DebugState.shared.sessionLoad = "\(context.viewStateKey) nil"
-            }
             rebuildSorted()
             let valid = Set(songs.map(\.id))
             selectedIDs.formIntersection(valid)
@@ -1634,10 +1620,7 @@ struct SongTable: View {
             guard metrics.viewportHeight > 0 else { return }
             SessionViewState.shared.saveSong(
                 .init(offset: metrics.offset,
-                      selectedIDs: selectedIDs,
-                      anchor: selectionAnchor,
-                      itemCount: songs.count,
-                      debugTag: debugInstanceID),
+                      itemCount: songs.count),
                 for: context.viewStateKey
             )
         }
@@ -1653,7 +1636,6 @@ struct SongTable: View {
             selected: selectedIDs.count,
             selectedIndex: selectedIndex,
             selectedID: (selectionAnchor ?? selectedIDs.first)?.uuidString ?? "",
-            instance: debugInstanceID,
             offset: metrics.offset,
             viewport: metrics.viewportHeight,
             content: metrics.contentHeight

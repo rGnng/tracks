@@ -13,22 +13,16 @@ final class SessionViewState {
 
     struct AlbumState: Equatable {
         var offset: CGFloat
-        var selectedIDs: Set<UUID>
-        var anchor: UUID?
         var itemCount: Int
     }
 
     struct SongState: Equatable {
         var offset: CGFloat
-        var selectedIDs: Set<UUID>
-        var anchor: UUID?
         var itemCount: Int
-        var debugTag: String = ""
     }
 
     struct BrowserState: Equatable {
         var offset: CGFloat
-        var selectedID: String?
         var itemCount: Int
     }
 
@@ -52,7 +46,6 @@ final class SessionViewState {
 
     func saveSong(_ state: SongState, for key: String) {
         songStates[key] = state
-        DebugState.shared.sessionSave = "\(key) inst=\(state.debugTag) off=\(String(format: "%.1f", state.offset)) n=\(state.selectedIDs.count) a=\(state.anchor?.uuidString.prefix(8) ?? "nil")"
     }
 
     func browserState(for key: String) -> BrowserState? {

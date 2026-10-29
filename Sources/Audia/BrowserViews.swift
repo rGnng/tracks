@@ -17,11 +17,7 @@ struct ArtistsBrowser: View {
         let requested = initialArtistID.flatMap { id in
             artists.contains(where: { $0.id == id }) ? id : nil
         }
-        let storedState = SessionViewState.shared.browserState(for: "artists")
-        let stored = (storedState?.itemCount == artists.count ? storedState?.selectedID : nil).flatMap { id in
-            artists.contains(where: { $0.id == id }) ? id : nil
-        }
-        _selectedID = State(initialValue: requested ?? stored ?? artists.first?.id)
+        _selectedID = State(initialValue: requested ?? artists.first?.id)
     }
 
     private var selectedArtist: ArtistSummary? {
@@ -102,11 +98,7 @@ struct GenresBrowser: View {
 
     init(genres: [GenreItem]) {
         self.genres = genres
-        let storedState = SessionViewState.shared.browserState(for: "genres")
-        let stored = (storedState?.itemCount == genres.count ? storedState?.selectedID : nil).flatMap { name in
-            genres.contains(where: { $0.name == name }) ? name : nil
-        }
-        _selectedID = State(initialValue: stored ?? genres.first?.name)
+        _selectedID = State(initialValue: genres.first?.name)
     }
 
     private var selectedGenre: GenreItem? {
@@ -252,7 +244,6 @@ private struct BrowserList<Item: Identifiable>: View where Item.ID == String {
             guard metrics.viewportHeight > 0 else { return }
             SessionViewState.shared.saveBrowser(
                 .init(offset: metrics.offset,
-                      selectedID: selectedID,
                       itemCount: items.count),
                 for: viewKey
             )
