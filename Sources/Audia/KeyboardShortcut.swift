@@ -170,6 +170,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable, Codable {
     case volumeDown
     case volumeUp
     case playPause
+    case shufflePlayAll
     case nextTrack
     case previousTrack
     case showHide
@@ -184,6 +185,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable, Codable {
         case .volumeDown: return "Volume down"
         case .volumeUp: return "Volume up"
         case .playPause: return "Play / Pause"
+        case .shufflePlayAll: return "Shuffle Play All"
         case .nextTrack: return "Next Track"
         case .previousTrack: return "Previous Track"
         case .showHide: return "Show or hide Library Window"
@@ -198,6 +200,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable, Codable {
         case .volumeDown: return .defaultVolumeDown
         case .volumeUp: return .defaultVolumeUp
         case .playPause: return .defaultPlayPause
+        case .shufflePlayAll: return nil
         case .nextTrack, .previousTrack: return nil
         case .showHide: return .defaultShowHide
         case .starCurrent: return .defaultStarCurrent
@@ -207,7 +210,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable, Codable {
 
     var defaultScope: ShortcutScope {
         switch self {
-        case .mute, .volumeDown, .volumeUp, .playPause,
+        case .mute, .volumeDown, .volumeUp, .playPause, .shufflePlayAll,
              .nextTrack, .previousTrack, .goToCurrentAlbum: return .inApp
         case .showHide, .starCurrent: return .systemWide
         }
@@ -231,6 +234,8 @@ enum ShortcutAction: String, CaseIterable, Identifiable, Codable {
             PlayerState.shared.stepDisplayVolume(up: true)
         case .playPause:
             PlayerState.shared.togglePlayPause()
+        case .shufflePlayAll:
+            PlayerState.shared.playShuffled(Library.shared.allSongs)
         case .nextTrack:
             PlayerState.shared.next()
         case .previousTrack:

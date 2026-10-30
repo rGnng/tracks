@@ -76,6 +76,11 @@ final class LibraryWorkflowTests: XCTestCase {
         XCTAssertEqual(loaded.elapsed, 42, accuracy: 0.001)
     }
 
+    func testShufflePlayAllShortcutHasNoDefaultBinding() {
+        XCTAssertNil(ShortcutAction.shufflePlayAll.defaultShortcut)
+        XCTAssertEqual(ShortcutAction.shufflePlayAll.defaultScope, .inApp)
+    }
+
     func testShortcutConflictUsesPhysicalKeyAndModifiers() {
         let plainN = KeyboardShortcut(key: "n", modifiers: [], display: "N", keyCode: 45)
         let alternateLayoutN = KeyboardShortcut(key: "ñ", modifiers: [], display: "Ñ", keyCode: 45)

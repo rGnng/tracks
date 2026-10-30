@@ -227,8 +227,9 @@ queue, and history live on this Mac.
   **+**, remove it with **−**, and click its Key field to record a combination.
   Defaults: mute `m`, volume down `-`, volume up `=`, play/pause Space, go to
   current album `j`; system-wide show/hide Tracks `F17` and star/unstar the
-  current song `F18`. The star action targets the playing song, not the row
-  selection.
+  current song `F18`. **Shuffle Play All** shuffles every song in the enabled
+  libraries but is unassigned by default. The star action targets the playing
+  song, not the row selection.
 - Opening Settings does not focus a text field or beep. The JPEG-quality field
   commits on Return or focus loss and clamps to 15–100.
 - The status bar summarizes the current selection with item count, total

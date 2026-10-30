@@ -495,6 +495,8 @@ Important schema decisions:
   up `=`, play/pause Space, and go to current album `j`; system-wide show/hide
   Tracks `F17` and add/remove the current song from Stared playlist `F18`. The
   star action always targets the current playing song, not row selection.
+  **Shuffle Play All** shuffles every song in the enabled libraries and is
+  available in the shortcut tables but unassigned by default.
 - Click a Key field to record a combination, press Escape to cancel, or Delete
   to clear it. Modifiers and shifted symbols are supported. The table prevents
   duplicate assignments across both scopes. **Display raw values** shows the
