@@ -25,6 +25,9 @@ private struct PlayerIdleSnapshot: Equatable {
 final class MPDServer: ObservableObject, @unchecked Sendable {
     static let shared = MPDServer()
 
+    /// Shared by every listener so IPv4 and IPv6 clients count toward one cap.
+    nonisolated static let connectionLimiter = MPDConnectionLimiter(limit: 32)
+
     @Published private(set) var isRunning = false
     @Published private(set) var status = "Disabled"
     @Published private(set) var listeningSummary = ""
@@ -1316,6 +1319,65 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
     }
 }
 
+// MARK: - Input limits
+
+/// Accumulates bytes until a complete MPD command line is available. MPD is
+/// line-oriented, so an unterminated line is capped to keep a stalled or
+/// malicious client from growing memory without bound.
+struct MPDLineBuffer {
+    static let maxLineBytes = 64 * 1024
+
+    private var data = Data()
+
+    /// Returns complete lines, or nil when the pending line exceeds the limit.
+    mutating func append(_ bytes: Data) -> [String]? {
+        data.append(bytes)
+        var lines: [String] = []
+        while let newline = data.firstIndex(of: 0x0A) {
+            let lineData = data[..<newline]
+            guard lineData.count <= Self.maxLineBytes else { return nil }
+            data.removeSubrange(...newline)
+            var line = String(decoding: lineData, as: UTF8.self)
+            if line.hasSuffix("\r") { line.removeLast() }
+            lines.append(line)
+        }
+        guard data.count <= Self.maxLineBytes else { return nil }
+        return lines
+    }
+}
+
+/// Thread-safe concurrent-client cap. Listener queues and client teardown run
+/// on different queues, so the count cannot live on the main actor.
+final class MPDConnectionLimiter: @unchecked Sendable {
+    private let limit: Int
+    private let lock = NSLock()
+    private var active = 0
+
+    init(limit: Int) {
+        self.limit = max(0, limit)
+    }
+
+    var activeCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return active
+    }
+
+    func tryAcquire() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard active < limit else { return false }
+        active += 1
+        return true
+    }
+
+    func release() {
+        lock.lock()
+        defer { lock.unlock() }
+        if active > 0 { active -= 1 }
+    }
+}
+
 // MARK: - TCP listener
 
 final class MPDListener: @unchecked Sendable {
@@ -1386,12 +1448,18 @@ final class MPDListener: @unchecked Sendable {
         while true {
             let client = accept(fd, nil, nil)
             if client < 0 { break }
+            guard MPDServer.connectionLimiter.tryAcquire() else {
+                Darwin.close(client)
+                continue
+            }
             var one: Int32 = 1
             setsockopt(client, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout<Int32>.size))
             setsockopt(client, IPPROTO_TCP, TCP_NODELAY, &one, socklen_t(MemoryLayout<Int32>.size))
             let flags = fcntl(client, F_GETFL, 0)
             if flags >= 0 { _ = fcntl(client, F_SETFL, flags | O_NONBLOCK) }
-            let session = MPDClientSession(fd: client, server: server)
+            let session = MPDClientSession(fd: client, server: server) {
+                MPDServer.connectionLimiter.release()
+            }
             if let server {
                 DispatchQueue.main.async {
                     MainActor.assumeIsolated { server.addSession(session) }
@@ -1410,23 +1478,29 @@ final class MPDListener: @unchecked Sendable {
 // MARK: - Client session
 
 final class MPDClientSession: @unchecked Sendable {
+    private static let maxCommandListBytes = 64 * 1024
+    private static let maxCommandListCommands = 1024
+
     private let fd: Int32
     private weak var server: MPDServer?
+    private let onClose: (@Sendable () -> Void)?
     private let queue: DispatchQueue
     private var source: DispatchSourceRead?
-    private var buffer = Data()
+    private var buffer = MPDLineBuffer()
     private var authenticated = false
     private var isClosed = false
     private var isIdle = false
     private var idleFilter: Set<String>?
     private var pendingChanges = Set<String>()
     private var listBuffer: [String]?
+    private var listBufferBytes = 0
     private var listOK = false
     var binaryLimit = 262_144
 
-    init(fd: Int32, server: MPDServer?) {
+    init(fd: Int32, server: MPDServer?, onClose: (@Sendable () -> Void)? = nil) {
         self.fd = fd
         self.server = server
+        self.onClose = onClose
         self.queue = DispatchQueue(label: "tracks.mpd.client.\(fd)")
     }
 
@@ -1442,6 +1516,7 @@ final class MPDClientSession: @unchecked Sendable {
         queue.async { [weak self] in
             guard let self, !self.isClosed else { return }
             self.isClosed = true
+            self.onClose?()
             self.source?.cancel()
             self.source = nil
             Darwin.close(self.fd)
@@ -1490,12 +1565,11 @@ final class MPDClientSession: @unchecked Sendable {
             close()
             return
         }
-        buffer.append(contentsOf: bytes[0..<count])
-        while let newline = buffer.firstIndex(of: 0x0A) {
-            let lineData = buffer[..<newline]
-            buffer.removeSubrange(...newline)
-            var line = String(decoding: lineData, as: UTF8.self)
-            if line.hasSuffix("\r") { line.removeLast() }
+        guard let lines = buffer.append(Data(bytes[0..<count])) else {
+            close()
+            return
+        }
+        for line in lines {
             handleLine(line)
             if isClosed { return }
         }
@@ -1508,16 +1582,27 @@ final class MPDClientSession: @unchecked Sendable {
 
         if command == "command_list_begin" || command == "command_list_ok_begin" {
             listBuffer = []
+            listBufferBytes = 0
             listOK = command == "command_list_ok_begin"
             return
         }
         if command == "command_list_end" {
             let commands = listBuffer ?? []
             listBuffer = nil
+            listBufferBytes = 0
             executeList(commands)
             return
         }
         if listBuffer != nil {
+            let nextCount = (listBuffer?.count ?? 0) + 1
+            let nextBytes = listBufferBytes + trimmed.utf8.count + 1
+            guard nextCount <= Self.maxCommandListCommands,
+                  nextBytes <= Self.maxCommandListBytes else {
+                send("ACK [0@0] {} Command list too large\n")
+                close()
+                return
+            }
+            listBufferBytes = nextBytes
             listBuffer?.append(trimmed)
             return
         }

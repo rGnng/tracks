@@ -112,4 +112,41 @@ final class CatalogAndMPDTests: XCTestCase {
         XCTAssertNil(empty.songID)
         XCTAssertNil(empty.nextSongID)
     }
+
+    func testMPDLineBufferExtractsLinesAndKeepsPartialInput() {
+        var buffer = MPDLineBuffer()
+
+        XCTAssertEqual(buffer.append(Data("status\r\npla".utf8)), ["status"])
+        XCTAssertEqual(buffer.append(Data("ylist\ncommand_list_begin\n".utf8)),
+                       ["playlist", "command_list_begin"])
+        XCTAssertEqual(buffer.append(Data("status".utf8)), [])
+        XCTAssertEqual(buffer.append(Data("\n".utf8)), ["status"])
+    }
+
+    func testMPDLineBufferRejectsOversizedLine() {
+        var buffer = MPDLineBuffer()
+        let maxLine = String(repeating: "x", count: MPDLineBuffer.maxLineBytes)
+
+        XCTAssertEqual(buffer.append(Data((maxLine + "\n").utf8)), [maxLine])
+        XCTAssertNil(buffer.append(Data((maxLine + "x").utf8)))
+    }
+
+    func testMPDConnectionLimiterCapsConcurrentClients() {
+        let limiter = MPDConnectionLimiter(limit: 2)
+
+        XCTAssertTrue(limiter.tryAcquire())
+        XCTAssertTrue(limiter.tryAcquire())
+        XCTAssertFalse(limiter.tryAcquire())
+        XCTAssertEqual(limiter.activeCount, 2)
+
+        limiter.release()
+        XCTAssertEqual(limiter.activeCount, 1)
+        XCTAssertTrue(limiter.tryAcquire())
+        XCTAssertEqual(limiter.activeCount, 2)
+
+        limiter.release()
+        limiter.release()
+        limiter.release()
+        XCTAssertEqual(limiter.activeCount, 0)
+    }
 }

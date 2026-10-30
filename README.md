@@ -258,6 +258,10 @@ stored playlists, album art, idle notifications, audio outputs, and the virtual
 song IDs, so duplicate queue copies remain distinct. `status.songid` and
 `status.nextsongid` expose those entry IDs; `song`/`nextsong` remain positions.
 
+The server caps command lines at 64 KiB, command lists at 64 KiB/1,024 commands,
+and accepts at most 32 concurrent client sessions. Oversized input and excess
+connections are closed.
+
 The server is not a complete MPD 0.24 implementation. `playlistsearch`,
 stickers, channels, mounts, and partitions are not implemented; stored playlists
 cannot contain duplicate copies of the same song because of the database primary

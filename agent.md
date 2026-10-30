@@ -710,6 +710,9 @@ Current configuration:
 - Port: `6600`
 - Password: empty
 - Protocol greeting: `OK MPD 0.24.0`
+- Input limits: command lines are capped at 64 KiB and command lists at
+  64 KiB/1,024 commands; at most 32 concurrent client sessions are accepted.
+  Oversized lines, oversized command lists, and excess connections are closed.
 
 Do not disable or reconfigure MPD without an explicit user request. Remote clients
 may be connected.
