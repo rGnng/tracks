@@ -511,10 +511,8 @@ struct GetInfoView: View {
             genre = uniform(.genre, songs.map(\.genre))
             year = uniform(.year, songs.map(\.year))
             track = uniform(.track, songs.map(\.trackNumberLabel))
-            trackTotal = uniform(.trackTotal, songs.map { song in
-                let total = song.trackTotal > 0 ? song.trackTotal : songs.count
-                return total > 0 ? String(total) : ""
-            })
+            trackTotal = uniform(.trackTotal,
+                                 songs.map { $0.trackTotal > 0 ? String($0.trackTotal) : "" })
             disc = uniform(.disc, songs.map { $0.discNumber > 0 ? String($0.discNumber) : "" })
             discTotal = uniform(.discTotal, songs.map { $0.discTotal > 0 ? String($0.discTotal) : "" })
             comments = uniform(.comments, songs.map(\.comments))
@@ -545,8 +543,7 @@ struct GetInfoView: View {
             genre = song.genre
             year = song.year
             track = song.trackNumberLabel
-            let fallbackTotal = song.trackTotal > 0 ? song.trackTotal : result.album.songs.count
-            trackTotal = fallbackTotal > 0 ? String(fallbackTotal) : ""
+            trackTotal = song.trackTotal > 0 ? String(song.trackTotal) : ""
             disc = song.discNumber > 0 ? String(song.discNumber) : ""
             discTotal = song.discTotal > 0 ? String(song.discTotal) : ""
             comments = song.comments
@@ -580,10 +577,6 @@ struct GetInfoView: View {
         return Int(ui) ?? 0
     }
 
-    private func fallbackTrackTotal(_ song: Song, album: Album) -> Int {
-        song.trackTotal > 0 ? song.trackTotal : album.songs.count
-    }
-
     private func save() async {
         guard !readOnly, !isSaving else { return }
         guard let target = info.target else { return }
@@ -609,7 +602,7 @@ struct GetInfoView: View {
                          trackNumber: resolvedInt(.track, ui: track, original: song.trackNumber),
                          trackTotal: resolvedInt(.trackTotal,
                                                   ui: trackTotal,
-                                                  original: fallbackTrackTotal(song, album: album)),
+                                                  original: song.trackTotal),
                          discNumber: resolvedInt(.disc, ui: disc, original: song.discNumber),
                          discTotal: resolvedInt(.discTotal, ui: discTotal, original: song.discTotal),
                          comments: resolved(.comments, ui: comments, original: song.comments),

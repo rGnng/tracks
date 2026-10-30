@@ -108,7 +108,7 @@ struct ContentPane: View {
 
     private var filteredGenres: [GenreItem] {
         guard !q.isEmpty else { return library.genres }
-        return library.genres.filter { matches($0.name) }
+        return library.genres.filter { matches($0.displayName) }
     }
 
     private func playlistSongs(_ id: UUID) -> [Song] {

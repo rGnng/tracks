@@ -165,7 +165,7 @@ final class Library: ObservableObject {
 
     var scanActivityDetail: String? {
         guard scanPhase == .readingMetadata, scanTotal > 0 else { return nil }
-        return "\(scanCompleted)/\(scanTotal) files"
+        return "\(scanCompleted)/\(scanTotal)"
     }
 
     private let db: LibraryDatabase
@@ -277,7 +277,11 @@ final class Library: ObservableObject {
     var genres: [GenreItem] {
         var counts: [String: Int] = [:]
         for album in albums { counts[album.genre, default: 0] += 1 }
-        return counts.sorted { $0.key < $1.key }.map { GenreItem(name: $0.key, count: $0.value) }
+        return counts.sorted { lhs, rhs in
+            // Empty genre is a placeholder, not the alphabetically first genre.
+            if lhs.key.isEmpty != rhs.key.isEmpty { return !lhs.key.isEmpty }
+            return lhs.key < rhs.key
+        }.map { GenreItem(name: $0.key, count: $0.value) }
     }
 
     func album(withID id: UUID) -> Album? {

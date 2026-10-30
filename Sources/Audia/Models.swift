@@ -257,9 +257,12 @@ struct ArtistSummary: Identifiable, Hashable {
 }
 
 struct GenreItem: Identifiable, Hashable {
+    /// Raw genre value. Empty means the tag is missing.
     let name: String
     let count: Int
     var id: String { name }
+    var displayName: String { name.isEmpty ? "#Unknown" : name }
+    var isUnknown: Bool { name.isEmpty }
 }
 
 // MARK: - Navigation

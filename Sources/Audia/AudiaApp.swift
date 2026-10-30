@@ -477,12 +477,12 @@ struct SettingsView: View {
 
     private var artworkCacheSection: some View {
         SettingsCard(title: "Artwork Cache") {
-            SettingsRow(title: "Rebuild cache",
-                        subtitle: "Cached album art speeds up browsing. It is rebuilt from library files.") {
+            SettingsRow(title: "Rebuild cache") {
                 Button("Rebuild Cache") {
                     artworkCache.rebuildCache()
                 }
                 .controlSize(.small)
+                .disabled(library.isScanning)
             }
 
             SettingsDivider()
@@ -993,18 +993,14 @@ struct SettingsView: View {
     // MARK: External libraries
 
     private var externalLibrariesSection: some View {
-        SettingsCard(title: "External Libraries") {
-            SettingsRow(title: "Read-Only",
-                        subtitle: "Folders managed by iTunes or another music app. Tracks indexes them without modifying the files.") {
-                EmptyView()
-            }
-
+        SettingsCard(title: "External Libraries (Read Only)") {
             if library.externalLibraries.isEmpty {
-                SettingsDivider()
                 SettingsFootnote("No external libraries.")
             } else {
-                ForEach(library.externalLibraries) { externalLibrary in
-                    SettingsDivider()
+                ForEach(Array(library.externalLibraries.enumerated()), id: \.element.id) { index, externalLibrary in
+                    if index > 0 {
+                        SettingsDivider()
+                    }
                     SettingsRow(title: externalLibrary.name,
                                 subtitle: externalLibrary.path) {
                         Toggle("", isOn: externalLibraryEnabledBinding(externalLibrary))

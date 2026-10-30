@@ -41,7 +41,8 @@ queue, and history live on this Mac.
   Artist, or Year, ascending or descending. Recently Added keeps its own
   newest-first order.
 - **Artists** and **Genres** use master-detail browsers, with album panes that
-  follow the current album sort.
+  follow the current album sort. An empty genre is shown as italic `#Unknown`
+  at the bottom of the Genres list.
 - The **Songs** table has adjustable column visibility and order, including
   Track, Name, Time, Artist, Album Artist, Album, Genre, and Plays.
 - Playlist tables add **Add Seq** and **Add Time**. Add Seq appears after Genre
@@ -100,8 +101,8 @@ queue, and history live on this Mac.
   italic placeholders; submitting an empty mixed field preserves the underlying
   value. Read-only fields remain selectable and copyable.
 - Multi-disc albums are ordered by disc then track. Album detail shows the
-  effective disc count and `disc-track` labels. Get Info keeps the stored disc
-  values as-is so saving does not fill intentionally empty total-disc tags.
+  effective disc count and `disc-track` labels. Get Info keeps the stored track
+  and disc totals as-is so saving does not fill intentionally empty tags.
 - **Delete** is available only for Internal Library files, requires
   confirmation, and moves files to the macOS Trash before removing their index
   rows.

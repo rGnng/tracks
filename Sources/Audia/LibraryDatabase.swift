@@ -854,9 +854,9 @@ final class LibraryDatabase {
             while sqlite3_step(stmt) == SQLITE_ROW {
                 let idString = text(stmt, 0) ?? UUID().uuidString
                 let albumIDString = text(stmt, 8) ?? UUID().uuidString
-                let albumArtist = text(stmt, 12) ?? "Unknown Artist"
+                let albumArtist = text(stmt, 12) ?? ""
                 let songArtist = text(stmt, 13) ?? albumArtist
-                let albumTitle = text(stmt, 9) ?? "Unknown Album"
+                let albumTitle = text(stmt, 9) ?? ""
 
                 let song = Song(id: UUID(uuidString: idString) ?? UUID(),
                                 title: text(stmt, 1) ?? "",

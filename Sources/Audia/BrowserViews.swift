@@ -116,8 +116,9 @@ struct GenresBrowser: View {
             BrowserList(
                 items: genres,
                 selectedID: $selectedID,
-                title: { $0.name },
+                title: { $0.displayName },
                 detail: { "\($0.count)" },
+                isPlaceholder: { $0.isUnknown },
                 viewKey: "genres"
             ) { genre in
                 player.play(library.albums.filter { $0.genre == genre.name }.flatMap(\.songs))
@@ -128,7 +129,7 @@ struct GenresBrowser: View {
 
             if let genre = selectedGenre {
                 BrowserAlbumPane(
-                    title: genre.name,
+                    title: genre.displayName,
                     subtitle: "\(albumsForSelected.count) albums",
                     albums: albumsForSelected
                 )
@@ -169,6 +170,7 @@ private struct BrowserList<Item: Identifiable>: View where Item.ID == String {
     @Binding var selectedID: Item.ID?
     let title: (Item) -> String
     let detail: (Item) -> String
+    let isPlaceholder: (Item) -> Bool
     let viewKey: String
     let onDoubleTap: (Item) -> Void
 
@@ -182,12 +184,14 @@ private struct BrowserList<Item: Identifiable>: View where Item.ID == String {
     init(items: [Item], selectedID: Binding<Item.ID?>,
          title: @escaping (Item) -> String,
          detail: @escaping (Item) -> String,
+         isPlaceholder: @escaping (Item) -> Bool = { _ in false },
          viewKey: String,
          onDoubleTap: @escaping (Item) -> Void) {
         self.items = items
         self._selectedID = selectedID
         self.title = title
         self.detail = detail
+        self.isPlaceholder = isPlaceholder
         self.viewKey = viewKey
         self.onDoubleTap = onDoubleTap
         let stored = SessionViewState.shared.browserState(for: viewKey)
@@ -204,6 +208,7 @@ private struct BrowserList<Item: Identifiable>: View where Item.ID == String {
                         title: title(item),
                         detail: detail(item),
                         isSelected: selected,
+                        isPlaceholder: isPlaceholder(item),
                         background: rowBackground(index: index, selected: selected)
                     )
                     .id(item.id)
@@ -375,13 +380,16 @@ private struct BrowserRow: View {
     let title: String
     let detail: String
     let isSelected: Bool
+    let isPlaceholder: Bool
     let background: Color
 
     var body: some View {
         HStack(spacing: 8) {
             Text(title)
-                .font(.system(size: 13))
-                .foregroundColor(isSelected ? Theme.highlightForeground : Theme.primaryText)
+                .font(isPlaceholder ? .system(size: 13).italic() : .system(size: 13))
+                .foregroundColor(isSelected
+                                 ? Theme.highlightForeground
+                                 : (isPlaceholder ? Theme.secondaryText : Theme.primaryText))
                 .lineLimit(1)
             Spacer(minLength: 8)
             Text(detail)

@@ -137,6 +137,9 @@ final class ArtworkCache: ObservableObject {
     }
 
     func rebuildCache() {
+        // A full scan is already running (including one started by a previous
+        // rebuild). Starting another would cancel and restart the scan.
+        guard !Library.shared.isScanning else { return }
         clearCache()
         Library.shared.rescanAll(force: true)
     }

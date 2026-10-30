@@ -399,8 +399,9 @@ Important schema decisions:
 - Multi-disc albums are detected from their disc numbers even when the
   total-disc tag is missing. Album songs load disc-first and track-second,
   album detail shows the effective disc count and labels rows `disc-track`
-  (for example `1-01`). Get Info keeps the stored disc values as-is; it must not
-  infer a total because saving would overwrite intentionally empty tags.
+  (for example `1-01`). Get Info keeps the stored track and disc totals as-is;
+  it must not infer a total because saving would overwrite intentionally empty
+  tags.
 - Opening an album detail from the current grid keeps the mounted grid's scroll
   offset unchanged, so returning leaves the clicked album where it was.
   `Go to Album` opens the target album detail; it does not scroll the parent
@@ -527,14 +528,17 @@ Important schema decisions:
 - Database artwork BLOBs are zero for library albums.
 - `ArtworkCache` uses an in-memory cache plus disk cache. Scans write artwork
   directly into the cache. Rebuild Cache clears the disk cache and performs a
-  forced rescan to regenerate it.
+  forced rescan to regenerate it. The button is disabled while any scan is
+  running, and `rebuildCache()` ignores re-entry so repeated clicks cannot
+  restart the scan.
 - The 45pt top-bar Now Playing cover is downsampled once to its backing-pixel
   size (45 × displayScale, normally 90×90) with a Core Graphics medium-quality
   bilinear draw before displaying, instead of relying on SwiftUI's live scaling.
 - Settings shows the current cache size, calculated asynchronously from the
   files under the Artwork cache directory.
-- The Internal Library header no longer shows a "Read & Write" label, and the
-  External Libraries section no longer lists supported formats.
+- The Internal Library header no longer shows a "Read & Write" label. The
+  External Libraries card is titled "External Libraries (Read Only)" and no
+  longer has a separate Read-Only intro row or supported-format list.
 - JPEG quality control:
   - Plain SwiftUI `TextField`, digits only.
   - Accepted range 15-100, default 80.
@@ -581,6 +585,8 @@ Important schema decisions:
   (Ascending/Descending). Defaults are Album Name + Ascending. Direction applies
   to Albums and artist/genre browser album panes; Recently Added keeps its
   newest-first date order.
+- An empty album genre is rendered as italic `#Unknown` at the bottom of the
+  Genres list; the underlying genre value stays empty for filtering and status.
 
 ## 8. MPD server
 
