@@ -62,12 +62,6 @@ struct AudiaApp: App {
                 .keyboardShortcut("2", modifiers: .command)
 
                 Divider()
-
-                Button("Log") {
-                    LogViewer.openConsole()
-                }
-
-                Divider()
             }
 
             CommandMenu("Controls") {
@@ -1682,6 +1676,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var focusMonitor: Any?
     private var keyMonitor: Any?
     private var windowMenuObserver: NSObjectProtocol?
+    private var logMenuItem: NSMenuItem?
     private var isPruningWindowMenu = false
     private let hiddenWindowMenuTitles: Set<String> = [
         "Tracks",
@@ -1756,6 +1751,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         while let last = menu.items.last, last.isSeparatorItem {
             menu.removeItem(last)
         }
+
+        installLogMenuItem(in: menu)
+    }
+
+    /// The Log command lives in the Window menu directly above the Debug window
+    /// entry. SwiftUI's command placements put it either above all window
+    /// commands or below the window list, so position the native item here.
+    private func installLogMenuItem(in menu: NSMenu) {
+        let item = logMenuItem ?? {
+            let item = NSMenuItem(title: "Log",
+                                  action: #selector(openLogViewer),
+                                  keyEquivalent: "")
+            item.target = self
+            logMenuItem = item
+            return item
+        }()
+
+        guard let debugIndex = menu.items.firstIndex(where: { $0.title == "Debug" }) else {
+            if item.menu == nil { menu.addItem(item) }
+            return
+        }
+        if let currentMenu = item.menu {
+            if currentMenu === menu, menu.items.firstIndex(of: item) == debugIndex - 1 {
+                return
+            }
+            currentMenu.removeItem(item)
+        }
+        let insertion = menu.items.firstIndex(where: { $0.title == "Debug" }) ?? debugIndex
+        menu.insertItem(item, at: insertion)
+    }
+
+    @objc private func openLogViewer() {
+        LogViewer.openConsole()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
