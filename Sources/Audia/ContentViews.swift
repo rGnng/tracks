@@ -1393,6 +1393,8 @@ struct SongTable: View {
     @State private var metrics = ListScrollMetrics()
     @State private var pendingRestoreOffset: CGFloat?
     @State private var pendingRestoreItemCount: Int?
+    /// Cached so building a row menu never scans the whole selection.
+    @State private var selectionCanDelete = true
 
     @AppStorage private var nameWidth: Double
     @AppStorage private var trackWidth: Double
@@ -1704,7 +1706,21 @@ struct SongTable: View {
         scrollPosition.scrollTo(y: offset)
     }
 
+    private func refreshSelectionCanDelete() {
+        guard selectedIDs.count > 1 else {
+            if !selectionCanDelete {
+                selectionCanDelete = true
+            }
+            return
+        }
+        let canDelete = selectedIDs.allSatisfy { !Library.shared.isReadOnly(songID: $0) }
+        if canDelete != selectionCanDelete {
+            selectionCanDelete = canDelete
+        }
+    }
+
     private func updateStatusBar() {
+        refreshSelectionCanDelete()
         if !selectedIDs.isEmpty {
             StatusBarCenter.shared.context = .tracks(Array(selectedIDs))
         } else if context == .starred {
@@ -1954,6 +1970,12 @@ struct SongTable: View {
         let selected = selectedIDs.contains(song.id)
         let previousSelected = index > 0 && selectedIDs.contains(sorted[index - 1].id)
         let nextSelected = index + 1 < sorted.count && selectedIDs.contains(sorted[index + 1].id)
+        // Keep selection-dependent work out of the menu builder. Reading
+        // selectedIDs there makes SwiftUI rebuild every row's menu whenever
+        // the selection changes, which is what made Shift/marquee lag.
+        let deleteDisabled = selected && selectedIDs.count > 1
+            ? !selectionCanDelete
+            : !LibraryDeletion.canDelete(songs: [song])
 
         return HStack(spacing: 0) {
             statusCell(song, selected: selected)
@@ -1990,7 +2012,7 @@ struct SongTable: View {
         .contextMenu {
             Button("Play") { playContext(song) }
             Divider()
-            AddToPlaylistMenu(songs: contextSongs(for: song))
+            AddToPlaylistMenu(lazySongs: { contextSongs(for: song) })
             Button("Play Next") { player.playNext(contextSongs(for: song)) }
             Button("Play Later") { player.playLater(contextSongs(for: song)) }
             Divider()
@@ -2010,7 +2032,7 @@ struct SongTable: View {
             Button("Delete…") {
                 LibraryDeletion.confirmDelete(songs: contextSongs(for: song))
             }
-            .disabled(!LibraryDeletion.canDelete(songs: contextSongs(for: song)))
+            .disabled(deleteDisabled)
         }
         .longPressArmable { dragPayload(for: song) }
     }
