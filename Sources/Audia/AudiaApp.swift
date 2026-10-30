@@ -801,7 +801,7 @@ struct SettingsView: View {
                 }
                 SettingsDivider()
                 SettingsRow(title: "Port") {
-                    TextField("6600", value: $mpdPort, format: .number)
+                    TextField("6600", value: $mpdPort, format: .number.grouping(.never))
                         .textFieldStyle(.roundedBorder)
                         .font(SettingsTypography.body.monospacedDigit())
                         .frame(width: 80)
