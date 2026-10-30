@@ -291,6 +291,12 @@ Requires Xcode 16+ and Swift 6 on macOS 15+.
   belongs to the system Dock. The panel does not open at launch by default; use
   the shortcut, the Debug menu item, or enable **Open with app** inside it. All
   panel checkboxes start unchecked and remember their state across launches.
+- **Window > Log** opens Console.app, macOS's built-in unified-log viewer.
+  Tracks logs under subsystem `com.audia.tracks` with categories `app`,
+  `library`, `database`, `metadata`, `artwork`, `playback`, `import`, `mpd`, and
+  `shortcuts`. Filter Console by the Tracks process or the subsystem, and use
+  **Action > Include Info Messages** / **Include Debug Messages** for verbose
+  output.
 - `scripts/debug/audiactl` is the reusable Accessibility test CLI. It can read
   Debug metrics, locate album UUIDs, send keys, resize windows, drag selections
   and map album indices. See `scripts/debug/README.md`.

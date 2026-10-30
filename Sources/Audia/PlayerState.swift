@@ -362,6 +362,7 @@ final class PlayerState: ObservableObject {
     }
 
     private func reportMissingFilesPaused() {
+        AppLog.playback.error("Playback paused after 100 consecutive missing files")
         missingFilePauseMessage = "Playback paused after 100 consecutive missing files. Check whether the external drive is available."
         releasePlayer()
         stopTimer()
@@ -1294,6 +1295,7 @@ final class PlayerState: ObservableObject {
     }
 
     private func handleMissingFile(_ song: Song) {
+        AppLog.playback.warning("Missing media file for song \(song.id.uuidString, privacy: .public)")
         missingFileIDs.insert(song.id)
         let shouldPause = missingFileStreak.recordMissing()
         pendingPlayCountSongID = nil
@@ -1320,6 +1322,7 @@ final class PlayerState: ObservableObject {
     }
 
     private func pauseForUnavailableFile(_ song: Song, reason: String) {
+        AppLog.playback.warning("Cannot access song \(song.id.uuidString, privacy: .public): \(reason, privacy: .public)")
         missingFileStreak.reset()
         pendingPlayCountSongID = nil
         didRecordPendingPlay = false

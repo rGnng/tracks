@@ -34,6 +34,8 @@ final class SystemWideShortcutCenter {
             let id = UInt32(offset + 1)
             if register(shortcut, id: id) {
                 actions[id] = action
+            } else {
+                AppLog.shortcuts.warning("Could not register system-wide shortcut for \(action.rawValue, privacy: .public)")
             }
         }
     }

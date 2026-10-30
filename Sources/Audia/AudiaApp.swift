@@ -62,6 +62,12 @@ struct AudiaApp: App {
                 .keyboardShortcut("2", modifiers: .command)
 
                 Divider()
+
+                Button("Log") {
+                    LogViewer.openConsole()
+                }
+
+                Divider()
             }
 
             CommandMenu("Controls") {
@@ -1690,6 +1696,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        let info = Bundle.main.infoDictionary
+        let version = info?["CFBundleShortVersionString"] as? String ?? "?"
+        let build = info?["CFBundleVersion"] as? String ?? "?"
+        let system = ProcessInfo.processInfo.operatingSystemVersionString
+        AppLog.app.notice("Launched Tracks \(version, privacy: .public) (\(build, privacy: .public)) on \(system, privacy: .public)")
+
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         installFocusMonitor()
@@ -1747,6 +1759,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        AppLog.app.notice("Terminating")
         SessionViewState.shared.persistActiveViewport()
         WindowModeCenter.shared.persistLibraryFrameIfNeeded()
         PlayerState.shared.persistQueueForTermination()

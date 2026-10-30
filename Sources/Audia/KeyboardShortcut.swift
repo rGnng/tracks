@@ -278,11 +278,15 @@ enum KeyboardShortcutStore {
 
     static func loadBindings() -> [ShortcutBinding] {
         let defaults = UserDefaults.standard
-        if let data = defaults.data(forKey: bindingsKey),
-           let bindings = try? JSONDecoder().decode([ShortcutBinding].self, from: data) {
-            let configured = bindings.filter { $0.action != nil }
-            if configured.count != bindings.count { saveBindings(configured) }
-            return configured
+        if let data = defaults.data(forKey: bindingsKey) {
+            do {
+                let bindings = try JSONDecoder().decode([ShortcutBinding].self, from: data)
+                let configured = bindings.filter { $0.action != nil }
+                if configured.count != bindings.count { saveBindings(configured) }
+                return configured
+            } catch {
+                AppLog.shortcuts.warning("Could not decode shortcut bindings; using defaults: \(error.localizedDescription, privacy: .public)")
+            }
         }
 
         let initial = defaultBindings
@@ -291,8 +295,12 @@ enum KeyboardShortcutStore {
     }
 
     static func saveBindings(_ bindings: [ShortcutBinding]) {
-        guard let data = try? JSONEncoder().encode(bindings) else { return }
-        UserDefaults.standard.set(data, forKey: bindingsKey)
+        do {
+            let data = try JSONEncoder().encode(bindings)
+            UserDefaults.standard.set(data, forKey: bindingsKey)
+        } catch {
+            AppLog.shortcuts.error("Could not save shortcut bindings: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     private static var defaultBindings: [ShortcutBinding] {

@@ -55,10 +55,15 @@ final class LibraryDatabase {
             at: URL(fileURLWithPath: path).deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        guard sqlite3_open(path, &db) == SQLITE_OK else {
+        let result = sqlite3_open(path, &db)
+        guard result == SQLITE_OK else {
+            let message = db.map { String(cString: sqlite3_errmsg($0)) } ?? "Unknown SQLite error"
+            if let handle = db { sqlite3_close(handle) }
             db = nil
+            AppLog.database.error("Could not open library database (SQLite \(result, privacy: .public)): \(message, privacy: .public)")
             return
         }
+        AppLog.database.notice("Opened library database")
         exec("PRAGMA journal_mode=WAL;")
         exec("PRAGMA foreign_keys=ON;")
         createSchema()
@@ -66,7 +71,10 @@ final class LibraryDatabase {
 
     private func checkpointAndClose() {
         guard let db else { return }
-        sqlite3_wal_checkpoint_v2(db, nil, SQLITE_CHECKPOINT_TRUNCATE, nil, nil)
+        let result = sqlite3_wal_checkpoint_v2(db, nil, SQLITE_CHECKPOINT_TRUNCATE, nil, nil)
+        if result != SQLITE_OK {
+            AppLog.database.warning("WAL checkpoint failed (SQLite \(result, privacy: .public))")
+        }
         sqlite3_close(db)
         self.db = nil
     }
@@ -77,7 +85,10 @@ final class LibraryDatabase {
     /// -wal/-shm siblings. Reopening switches to WAL again.
     func closeForTermination() {
         guard let db else { return }
-        sqlite3_wal_checkpoint_v2(db, nil, SQLITE_CHECKPOINT_TRUNCATE, nil, nil)
+        let checkpoint = sqlite3_wal_checkpoint_v2(db, nil, SQLITE_CHECKPOINT_TRUNCATE, nil, nil)
+        if checkpoint != SQLITE_OK {
+            AppLog.database.warning("Final WAL checkpoint failed (SQLite \(checkpoint, privacy: .public))")
+        }
         exec("PRAGMA journal_mode=DELETE;")
         sqlite3_close(db)
         self.db = nil
@@ -120,7 +131,11 @@ final class LibraryDatabase {
         } catch {
             // Restore the original database so the running app keeps working.
             if fileManager.fileExists(atPath: newPath) && !fileManager.fileExists(atPath: oldPath) {
-                try? fileManager.moveItem(atPath: newPath, toPath: oldPath)
+                do {
+                    try fileManager.moveItem(atPath: newPath, toPath: oldPath)
+                } catch {
+                    AppLog.database.error("Could not restore the original library database: \(error.localizedDescription, privacy: .public)")
+                }
             }
             path = oldPath
             open()
@@ -192,7 +207,9 @@ final class LibraryDatabase {
         let openResult = sqlite3_open_v2(path, &handle, SQLITE_OPEN_READWRITE, nil)
         guard openResult == SQLITE_OK,
               let handle else {
+            let message = handle.map { String(cString: sqlite3_errmsg($0)) } ?? "Unknown SQLite error"
             if let handle { sqlite3_close(handle) }
+            AppLog.database.warning("Could not inspect library database (SQLite \(openResult, privacy: .public)): \(message, privacy: .public)")
             return nil
         }
         defer { sqlite3_close(handle) }
@@ -1272,21 +1289,30 @@ final class LibraryDatabase {
         guard let queueData = try? encoder.encode(state.entries),
               let baseData = try? encoder.encode(state.baseEntries),
               let queueJSON = String(data: queueData, encoding: .utf8),
-              let baseJSON = String(data: baseData, encoding: .utf8),
-              let stmt = prepare("""
+              let baseJSON = String(data: baseData, encoding: .utf8) else {
+            AppLog.database.error("Could not encode the player queue for saving")
+            return
+        }
+        guard let stmt = prepare("""
                   INSERT OR REPLACE INTO player_queue
                       (id, queue_entries, base_queue_entries, next_queue_id,
                        current_index, elapsed, updated_at)
                   VALUES (1, ?, ?, ?, ?, ?, ?)
-                  """) else { return }
+                  """) else {
+            AppLog.database.error("Could not prepare the player queue save: \(self.databaseErrorMessage, privacy: .public)")
+            return
+        }
         bind(stmt, 1, queueJSON)
         bind(stmt, 2, baseJSON)
         bind(stmt, 3, Int(state.nextQueueID))
         bind(stmt, 4, state.currentIndex ?? -1)
         bind(stmt, 5, state.elapsed)
         bind(stmt, 6, Date().timeIntervalSince1970)
-        sqlite3_step(stmt)
+        let result = sqlite3_step(stmt)
         sqlite3_finalize(stmt)
+        if result != SQLITE_DONE {
+            AppLog.database.error("Could not save the player queue (SQLite \(result, privacy: .public)): \(self.databaseErrorMessage, privacy: .public)")
+        }
     }
 
     func loadPlayerQueue() -> PersistedPlayerQueue? {
@@ -1309,10 +1335,13 @@ final class LibraryDatabase {
         let decoder = JSONDecoder()
         guard let entriesData = entriesJSON.data(using: .utf8),
               let entries = try? decoder.decode([PersistedQueueEntry].self,
-                                                 from: entriesData),
-              !entries.isEmpty else {
+                                                 from: entriesData) else {
+            if !entriesJSON.isEmpty {
+                AppLog.database.warning("Could not decode the saved player queue; starting without it")
+            }
             return nil
         }
+        guard !entries.isEmpty else { return nil }
 
         var baseEntries: [PersistedQueueEntry] = []
         if let data = baseEntriesJSON.data(using: .utf8),
@@ -1363,7 +1392,15 @@ final class LibraryDatabase {
 
     private func exec(_ sql: String) {
         guard let db else { return }
-        sqlite3_exec(db, sql, nil, nil, nil)
+        var errorPointer: UnsafeMutablePointer<CChar>?
+        let result = sqlite3_exec(db, sql, nil, nil, &errorPointer)
+        guard result != SQLITE_OK else {
+            if let errorPointer { sqlite3_free(errorPointer) }
+            return
+        }
+        let message = errorPointer.map { String(cString: $0) } ?? databaseErrorMessage
+        if let errorPointer { sqlite3_free(errorPointer) }
+        AppLog.database.error("SQLite statement failed (SQLite \(result, privacy: .public)): \(message, privacy: .public)")
     }
 
     private var databaseErrorMessage: String {

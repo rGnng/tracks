@@ -538,6 +538,7 @@ final class Library: ObservableObject {
             }
 
             openWarning = messages.isEmpty ? nil : messages.joined(separator: "\n\n")
+            AppLog.library.notice("Opened internal library")
             if shouldScan {
                 rescanAll()
             }
@@ -549,11 +550,16 @@ final class Library: ObservableObject {
             }
             UserDefaults.standard.set(oldDismissed, forKey: Self.setupDismissedKey)
             if switchingDatabase && db.path != oldDatabasePath {
-                try? db.switchTo(path: oldDatabasePath)
+                do {
+                    try db.switchTo(path: oldDatabasePath)
+                } catch {
+                    AppLog.library.error("Could not restore the previous library database: \(error.localizedDescription, privacy: .public)")
+                }
             }
             internalLibrary = oldInternal
             externalLibraries = oldExternal
             reload()
+            AppLog.library.error("Could not open internal library: \(error.localizedDescription, privacy: .public)")
             throw error
         }
     }
@@ -566,6 +572,7 @@ final class Library: ObservableObject {
     /// main database file can be copied safely to another Mac.
     func closeDatabaseForTermination() {
         scanTask?.cancel()
+        AppLog.library.debug("Closing library database for termination")
         db.closeForTermination()
     }
 
@@ -589,6 +596,7 @@ final class Library: ObservableObject {
 
         let roots = libraries.map(\.scanPath)
         let known = force ? [:] : db.knownFiles()
+        AppLog.library.notice("Library rescan started (\(libraries.count, privacy: .public) libraries, \(force ? "full" : "quick", privacy: .public))")
         isScanning = true
         scanError = nil
         scanPhase = .findingFiles
@@ -607,6 +615,7 @@ final class Library: ObservableObject {
 
             guard let self, !Task.isCancelled else { return }
             guard result.isComplete else {
+                AppLog.library.error("Library rescan failed: \(result.errors.joined(separator: "; "), privacy: .public)")
                 self.scanError = result.errors.joined(separator: "\n")
                 self.isScanning = false
                 return
@@ -620,6 +629,7 @@ final class Library: ObservableObject {
             self.reload()
             self.scanProgress = 1
             self.isScanning = false
+            AppLog.library.notice("Library rescan finished: \(result.tracks.count, privacy: .public) tracks")
         }
     }
 
@@ -634,6 +644,7 @@ final class Library: ObservableObject {
         scanTask?.cancel()
         let root = location.scanPath
         let known = db.knownFiles()
+        AppLog.library.notice("Library rescan started (single \(location.isInternal ? "internal" : "external", privacy: .public) library)")
         isScanning = true
         scanError = nil
         scanPhase = .findingFiles
@@ -652,6 +663,7 @@ final class Library: ObservableObject {
 
             guard let self, !Task.isCancelled else { return }
             guard result.isComplete else {
+                AppLog.library.error("Library rescan failed: \(result.errors.joined(separator: "; "), privacy: .public)")
                 self.scanError = result.errors.joined(separator: "\n")
                 self.isScanning = false
                 return
@@ -665,6 +677,7 @@ final class Library: ObservableObject {
             self.reload()
             self.scanProgress = 1
             self.isScanning = false
+            AppLog.library.notice("Library rescan finished: \(result.tracks.count, privacy: .public) tracks")
         }
     }
 
@@ -956,6 +969,10 @@ final class Library: ObservableObject {
         db.deleteSongs(withIDs: deletedIDs)
         PlayerState.shared.removeSongs(withIDs: Set(deletedIDs))
         reload()
+        AppLog.library.notice("Deleted \(deletedIDs.count, privacy: .public) songs (\(failures.count, privacy: .public) failures)")
+        if !failures.isEmpty {
+            AppLog.library.warning("Some songs could not be deleted: \(failures.joined(separator: "; "), privacy: .public)")
+        }
         return LibraryDeletionResult(deleted: deletedIDs.count, failures: failures)
     }
 
@@ -1080,8 +1097,13 @@ final class Library: ObservableObject {
                                    discTotal: updated.discTotal > 0 ? updated.discTotal : nil,
                                    comments: updated.comments.isEmpty ? nil : updated.comments,
                                    artwork: artwork)
-            try await writeTags(fields, to: url)
-            updateFileStats(for: url)
+            do {
+                try await writeTags(fields, to: url)
+                updateFileStats(for: url)
+            } catch {
+                AppLog.metadata.error("Tag write failed for song \(updated.id.uuidString, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                throw error
+            }
         }
         db.updateSong(updated)
         do {
@@ -1110,8 +1132,13 @@ final class Library: ObservableObject {
                                    discTotal: song.discTotal > 0 ? song.discTotal : nil,
                                    comments: song.comments.isEmpty ? nil : song.comments,
                                    artwork: updated.artwork.imageData)
-            try await writeTags(fields, to: url)
-            updateFileStats(for: url)
+            do {
+                try await writeTags(fields, to: url)
+                updateFileStats(for: url)
+            } catch {
+                AppLog.metadata.error("Tag write failed for song \(song.id.uuidString, privacy: .public) in album \(updated.id.uuidString, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                throw error
+            }
         }
         db.updateAlbum(updated)
         db.updateSongMetadata(updated.songs)

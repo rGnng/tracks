@@ -156,6 +156,7 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
         let defaults = UserDefaults.standard
         guard defaults.bool(forKey: "mpd.enabled") else {
             status = "Disabled"
+            AppLog.mpd.debug("MPD is disabled")
             return
         }
 
@@ -191,14 +192,20 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
         listeningSummary = started.joined(separator: ", ")
         if listeners.isEmpty {
             status = "Could not listen on \(failures.joined(separator: ", ")) :\(port)"
+            AppLog.mpd.error("Could not start MPD on \(failures.joined(separator: ", "), privacy: .public):\(port, privacy: .public)")
         } else if failures.isEmpty {
             status = "Listening on \(listeningSummary):\(port)"
+            AppLog.mpd.notice("MPD listening on \(self.listeningSummary, privacy: .public):\(port, privacy: .public)")
         } else {
             status = "Listening on \(listeningSummary):\(port) (failed: \(failures.joined(separator: ", ")))"
+            AppLog.mpd.warning("MPD listening on \(self.listeningSummary, privacy: .public):\(port, privacy: .public); failed: \(failures.joined(separator: ", "), privacy: .public)")
         }
     }
 
     private func stopServer() {
+        if isRunning {
+            AppLog.mpd.notice("MPD server stopped")
+        }
         for listener in listeners { listener.stop() }
         listeners.removeAll()
         for session in sessions.values { session.close() }
@@ -210,11 +217,13 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
 
     func addSession(_ session: MPDClientSession) {
         sessions[ObjectIdentifier(session)] = session
+        AppLog.mpd.debug("MPD client connected (\(self.sessions.count, privacy: .public) active)")
     }
 
     func removeSession(_ session: MPDClientSession) {
         sessions.removeValue(forKey: ObjectIdentifier(session))
         idleSessions.removeValue(forKey: ObjectIdentifier(session))
+        AppLog.mpd.debug("MPD client disconnected (\(self.sessions.count, privacy: .public) active)")
     }
 
     /// Tells connected clients that the output list or volume-control mode
@@ -265,6 +274,7 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
         if !password.isEmpty, !authenticated {
             let allowed = ["password", "close", "commands", "notcommands", "ping"]
             guard allowed.contains(command) else {
+                AppLog.mpd.debug("Rejected unauthenticated MPD command \(command, privacy: .public)")
                 return ack(4, command, "you must not send this command")
             }
         }
@@ -277,6 +287,7 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
             if password.isEmpty || supplied == password {
                 return MPDResponse(text: "OK\n", authenticated: true)
             }
+            AppLog.mpd.warning("MPD client supplied an incorrect password")
             return ack(3, command, "incorrect password")
 
         case "ping":
@@ -1449,6 +1460,7 @@ final class MPDListener: @unchecked Sendable {
             let client = accept(fd, nil, nil)
             if client < 0 { break }
             guard MPDServer.connectionLimiter.tryAcquire() else {
+                AppLog.mpd.warning("Rejecting MPD client: connection limit reached")
                 Darwin.close(client)
                 continue
             }
@@ -1566,6 +1578,7 @@ final class MPDClientSession: @unchecked Sendable {
             return
         }
         guard let lines = buffer.append(Data(bytes[0..<count])) else {
+            AppLog.mpd.warning("Closing MPD client: command line exceeded 64 KiB")
             close()
             return
         }
@@ -1598,6 +1611,7 @@ final class MPDClientSession: @unchecked Sendable {
             let nextBytes = listBufferBytes + trimmed.utf8.count + 1
             guard nextCount <= Self.maxCommandListCommands,
                   nextBytes <= Self.maxCommandListBytes else {
+                AppLog.mpd.warning("Closing MPD client: command list exceeded 64 KiB or 1,024 commands")
                 send("ACK [0@0] {} Command list too large\n")
                 close()
                 return

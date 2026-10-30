@@ -101,6 +101,21 @@ If no Internal Library exists, the fallback database path is
 - Do not clear playback history, play counts, stars, playlists, or user window
   preferences while testing.
 
+### Logging
+
+- All diagnostics go through `AppLog` (`Sources/Audia/AppLog.swift`), which wraps
+  `os.Logger` with subsystem `com.audia.tracks` and categories `app`, `library`,
+  `database`, `metadata`, `artwork`, `playback`, `import`, `mpd`, and
+  `shortcuts`. Do not use `print` or ad-hoc `NSLog`.
+- **Window > Log** calls `LogViewer.openConsole()` (`Sources/Audia/LogViewer.swift`),
+  which opens Console.app (`/System/Applications/Utilities/Console.app`).
+- Use `.notice` for lifecycle events, `.info`/`.debug` for routine detail,
+  `.warning`/`.error` for failures. Avoid logging absolute paths, song titles, or
+  other user content at public privacy.
+- In Console, filter by process `Tracks`/`Audia` or subsystem `com.audia.tracks`;
+  enable **Action > Include Info Messages** and **Include Debug Messages** to see
+  lower levels.
+
 ## 4. Source map
 
 ```text
@@ -157,6 +172,8 @@ Sources/Audia/
   NavigationCenter.swift     Cross-view navigation state
   SessionViewState.swift     Per-view viewport offsets and active-viewport persistence
   DebugSupport.swift         Debug window, metrics, frame overlays, album locator
+  AppLog.swift               os.Logger channels (app, library, database, ...)
+  LogViewer.swift            Window > Log opens Console.app
 ```
 
 ## 5. Library model and database

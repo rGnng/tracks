@@ -118,8 +118,13 @@ final class ArtworkCache: ObservableObject {
     func importArtwork(_ artwork: [String: Data]) async {
         guard !artwork.isEmpty else { return }
         let directory = Self.cacheDirectory
+        AppLog.artwork.debug("Importing artwork for \(artwork.count, privacy: .public) albums")
         await Task.detached(priority: .userInitiated) {
-            try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            do {
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            } catch {
+                AppLog.artwork.error("Could not create the artwork cache directory: \(error.localizedDescription, privacy: .public)")
+            }
             for (albumID, data) in artwork {
                 Self.writeArtwork(data, albumID: albumID, directory: directory)
             }
@@ -133,7 +138,13 @@ final class ArtworkCache: ObservableObject {
         memory.removeAllObjects()
         cacheSizeBytes = 0
         isCalculatingCacheSize = false
-        try? FileManager.default.removeItem(at: Self.cacheDirectory)
+        do {
+            try FileManager.default.removeItem(at: Self.cacheDirectory)
+        } catch let error as CocoaError where error.code == .fileNoSuchFile {
+            // Nothing cached yet.
+        } catch {
+            AppLog.artwork.warning("Could not remove the artwork cache: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     func rebuildCache() {
@@ -190,12 +201,29 @@ final class ArtworkCache: ObservableObject {
     }
 
     nonisolated private static func writeArtwork(_ data: Data?, albumID: String, directory: URL) {
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        } catch {
+            AppLog.artwork.error("Could not create the artwork cache directory: \(error.localizedDescription, privacy: .public)")
+            return
+        }
         let thumb = thumbnailURL(directory: directory, albumID: albumID)
         if let data, let jpeg = makeJPEG(data, maxPixel: artworkMaxPixel) {
-            try? jpeg.write(to: thumb, options: .atomic)
+            do {
+                try jpeg.write(to: thumb, options: .atomic)
+            } catch {
+                AppLog.artwork.error("Could not write artwork for album \(albumID, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            }
         } else if data == nil {
-            try? FileManager.default.removeItem(at: thumb)
+            do {
+                try FileManager.default.removeItem(at: thumb)
+            } catch let error as CocoaError where error.code == .fileNoSuchFile {
+                // No cached thumbnail to remove.
+            } catch {
+                AppLog.artwork.warning("Could not remove cached artwork for album \(albumID, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            }
+        } else {
+            AppLog.artwork.warning("Could not decode artwork for album \(albumID, privacy: .public)")
         }
     }
 

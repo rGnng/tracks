@@ -78,6 +78,7 @@ final class MediaImporter: ObservableObject {
         }
 
         importTotal = files.count
+        AppLog.importer.notice("Import started: \(files.count, privacy: .public) files")
         var imported = 0
         var skipped: [String] = []
         var errors: [String] = []
@@ -121,6 +122,10 @@ final class MediaImporter: ObservableObject {
         isImporting = false
         if imported > 0 {
             Library.shared.rescan(library)
+        }
+        AppLog.importer.notice("Import finished: \(imported, privacy: .public) imported, \(skipped.count, privacy: .public) skipped, \(errors.count, privacy: .public) failed")
+        if !errors.isEmpty {
+            AppLog.importer.warning("Import errors: \(errors.prefix(5).joined(separator: "; "), privacy: .public)")
         }
         presentImportSummary(imported: imported,
                              skipped: skipped,
