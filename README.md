@@ -282,7 +282,8 @@ Requires Xcode 16+ and Swift 6 on macOS 15+.
 ### Debugging
 
 - Debug panel shortcut: `Control-Option-Command-D`. Plain `Option-Command-D`
-  belongs to the system Dock.
+  belongs to the system Dock. The panel does not open at launch by default; use
+  the shortcut, the Debug menu item, or enable **Open with app** inside it.
 - `scripts/debug/audiactl` is the reusable Accessibility test CLI. It can read
   Debug metrics, locate album UUIDs, send keys, resize windows, drag selections
   and map album indices. See `scripts/debug/README.md`.

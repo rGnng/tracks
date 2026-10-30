@@ -35,7 +35,7 @@ final class DebugSettings: ObservableObject {
         showAlbumGridInfo = defaults.object(forKey: "debug.showAlbumGridInfo") as? Bool ?? true
         showViewInfo = defaults.object(forKey: "debug.showViewInfo") as? Bool ?? true
         showPlaybackInfo = defaults.object(forKey: "debug.showPlaybackInfo") as? Bool ?? true
-        openWithApp = defaults.object(forKey: "debug.openWithApp") as? Bool ?? true
+        openWithApp = defaults.object(forKey: "debug.openWithApp") as? Bool ?? false
     }
 }
 

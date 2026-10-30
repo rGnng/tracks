@@ -118,6 +118,8 @@ struct AudiaApp: App {
         }
         .defaultSize(width: 780, height: 760)
         .windowResizability(.contentMinSize)
+        .defaultLaunchBehavior(.suppressed)
+        .restorationBehavior(.disabled)
 
         Window("Set Up Tracks Library", id: "setup") {
             InternalLibrarySetupView()

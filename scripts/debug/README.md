@@ -7,8 +7,9 @@ investigation.
 The terminal running it needs macOS Accessibility permission. The app must be
 running as `Tracks.app` (`com.audia.tracks`).
 
-The Debug panel shortcut is `Control-Option-Command-D`. The CLI opens the panel
-through its menu item so it does not depend on the system Dock shortcut.
+The Debug panel shortcut is `Control-Option-Command-D`. The panel does not open
+at launch by default. The CLI opens it through its menu item so it does not
+depend on the system Dock shortcut.
 
 ## Commands
 
