@@ -423,8 +423,8 @@ Important schema decisions:
   tags.
 - Opening an album detail from the current grid keeps the mounted grid's scroll
   offset unchanged, so returning leaves the clicked album where it was.
-  `Go to Album` opens the target album detail; it does not scroll the parent
-  grid to the album.
+  `Go to Album` opens the target album detail; closing that detail locates the
+  album through the UUID locator. See **Go to Album detail return** below.
 - Album cards/rows use single click for selection or album-detail navigation.
   Double-click no longer starts album playback; use the hover Play button or the
   context menu instead.
@@ -441,12 +441,25 @@ Important schema decisions:
   Get Info, and the conditional Delete item. Songs/Playlist row menus also have
   **Go to Album**, which switches to Albums and opens that song's album detail.
 - Album detail keeps the underlying Albums/Recently Added grid mounted while
-  the detail view is visible, so returning restores the exact previous scroll
-  position and does not force-center an album that is already visible. Keyboard
-  navigation in the hidden grid is disabled while detail is open.
+  the detail view is visible. Closing a card-opened detail restores the exact
+  previous scroll position. Closing a detail opened through **Go to Album**
+  selects and reveals that album through the UUID locator. Keyboard navigation
+  in the hidden grid is disabled while detail is open.
 - **Go to Album** clears the current search before switching views, then the
   album grid retries a pending `openAlbumID` when the unfiltered list arrives.
   This handles songs whose album title does not match the search query.
+- **Go to Album detail return** (chosen behavior):
+  - **Option A**: every album-detail close runs the UUID locator.
+  - **Option B (chosen)**: only a detail opened through Go to Album sets
+    `locateOnCloseAlbumID`. `closeAlbum()` calls
+    `NavigationCenter.locateAlbum(_:)` only when that marker matches;
+    card-opened details keep the current grid position.
+- The UUID album locator is production navigation, not debug-only:
+  `AlbumLocateRequest`, `NavigationCenter.albumToLocate`, and
+  `NavigationCenter.locateAlbum(_:)` live outside `DebugState`. The grid's
+  `pendingLocateRequest` / `attemptPendingLocate()` consume that request.
+  `DebugState.albumLocator` only stores diagnostics, and the Debug panel calls
+  the same `NavigationCenter.locateAlbum(_:)`.
 - The playback queue is an array of `QueueEntry` values. Each entry has a
   monotonic `UInt32` ID that is exposed as MPD's `Id` and is independent of
   `Song.id`; the same song can appear multiple times with different entry IDs.
@@ -607,8 +620,9 @@ with `columnSpacing = 22`, `rowSpacing = 26`, and `padding = 22`.
 - `revealSelection()` computes the target from the model frame and
   `ListScroll.revealTarget`; it scrolls only enough to show the item plus the
   22pt padding.
-- `Go to Album`/locator uses `layout.frame(at: index)`, scrolls to that target,
-  and reports the rendered frame and delta in Debug.
+- `Go to Album`/UUID locator uses `layout.frame(at: index)` and
+  `ListScroll.ensureVisibleTarget`, and reports the rendered frame and delta in
+  Debug.
 - Viewport restore stores raw content offsets, not model frames or viewport
   anchors.
 

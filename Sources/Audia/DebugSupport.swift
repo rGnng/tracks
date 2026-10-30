@@ -79,11 +79,6 @@ struct AlbumGridDebugInfo: Equatable {
     var content: CGFloat = 0
 }
 
-struct AlbumLocateRequest: Equatable, Identifiable {
-    let id = UUID()
-    let albumID: UUID
-}
-
 struct AlbumLocatorDebugInfo: Equatable {
     var status = "idle"
     var requestedID = ""
@@ -151,7 +146,6 @@ final class DebugState: ObservableObject {
     @Published var albumDetail = AlbumDetailDebugInfo()
     @Published var browser = BrowserDebugInfo()
     @Published var sidebar = SidebarDebugInfo()
-    @Published var albumLocateRequest: AlbumLocateRequest?
     @Published var albumLocator = AlbumLocatorDebugInfo()
 }
 
@@ -570,8 +564,7 @@ struct DebugPanel: View {
             status: "requested",
             requestedID: id.uuidString
         )
-        state.albumLocateRequest = AlbumLocateRequest(albumID: id)
-        NavigationCenter.shared.sidebarSelection = .library(.albums)
+        NavigationCenter.shared.locateAlbum(id)
     }
 
     private var playbackState: String {

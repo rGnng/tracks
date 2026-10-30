@@ -20,6 +20,10 @@ struct AlbumGrid: View {
     @State private var selectedIDs: Set<UUID> = []
     @State private var selectionAnchor: UUID?
     @State private var expandedAlbum: Album?
+    /// Set only when the detail was opened through Go to Album. Closing that
+    /// detail routes through the album locator; card-opened details keep the
+    /// current grid position.
+    @State private var locateOnCloseAlbumID: UUID?
     @State private var columnCount = 5
     @State private var gridCardWidth: CGFloat = 0
     @State private var gridWidth: CGFloat = 0
@@ -94,7 +98,7 @@ struct AlbumGrid: View {
             updateStatusBar()
             rebuildAlbumIndex()
             publishDebugState()
-            if let request = DebugState.shared.albumLocateRequest {
+            if let request = NavigationCenter.shared.albumToLocate {
                 pendingLocateRequest = request
             }
             SessionViewState.shared.setActiveView(key: viewKey,
@@ -124,7 +128,7 @@ struct AlbumGrid: View {
             guard NavigationRouter.shared.focus == .albumGrid else { return }
             handleScroll(event.command)
         }
-        .onReceive(DebugState.shared.$albumLocateRequest) { request in
+        .onReceive(NavigationCenter.shared.$albumToLocate) { request in
             guard let request else { return }
             pendingLocateRequest = request
             attemptPendingLocate()
@@ -155,14 +159,24 @@ struct AlbumGrid: View {
         guard let album = albums.first(where: { $0.id == id }) else { return }
         selectedIDs = [album.id]
         selectionAnchor = album.id
+        locateOnCloseAlbumID = album.id
         expandedAlbum = album
         openAlbumID = nil
         NavigationRouter.shared.setFocus(.albumDetail)
     }
 
     private func closeAlbum() {
+        guard let albumID = expandedAlbum?.id else {
+            locateOnCloseAlbumID = nil
+            return
+        }
+        let shouldLocate = locateOnCloseAlbumID == albumID
         expandedAlbum = nil
+        locateOnCloseAlbumID = nil
         NavigationRouter.shared.setFocus(.albumGrid)
+        if shouldLocate {
+            NavigationCenter.shared.locateAlbum(albumID)
+        }
     }
 
     /// While an album is expanded, AlbumDetailView owns the status bar context
@@ -679,6 +693,7 @@ struct AlbumGrid: View {
 
         if expandedAlbum != nil {
             expandedAlbum = nil
+            locateOnCloseAlbumID = nil
         }
         selectedIDs = [request.albumID]
         selectionAnchor = request.albumID
@@ -711,8 +726,8 @@ struct AlbumGrid: View {
 
     private func finishPendingLocate(_ request: AlbumLocateRequest) {
         pendingLocateRequest = nil
-        if DebugState.shared.albumLocateRequest?.id == request.id {
-            DebugState.shared.albumLocateRequest = nil
+        if NavigationCenter.shared.albumToLocate?.id == request.id {
+            NavigationCenter.shared.albumToLocate = nil
         }
     }
 
@@ -781,6 +796,8 @@ struct AlbumGrid: View {
 
     private func handleCardTap(_ album: Album) {
         NavigationRouter.shared.setFocus(.albumGrid)
+        // A card-opened detail is already at the user's grid position.
+        locateOnCloseAlbumID = nil
         let flags = NSEvent.modifierFlags
         let command = flags.contains(.command)
         let shift = flags.contains(.shift)

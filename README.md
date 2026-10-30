@@ -159,9 +159,10 @@ queue, and history live on this Mac.
   list's 6pt top padding. No rendered frames or viewport anchors are stored.
   The saved viewport covers the main list area; album detail and the
   Artists/Genres right-hand pane are not persisted.
-- Album detail keeps the underlying grid mounted while open. Returning leaves
-  the clicked album where it was. **Go to Album** opens that album detail; it no
-  longer scrolls the parent grid to the album.
+- Album detail keeps the underlying grid mounted while open. Returning from a
+  card-opened detail leaves the clicked album where it was. **Go to Album**
+  opens that album detail; closing it selects and reveals the album through the
+  UUID locator.
 
 ### Windows and chrome
 
