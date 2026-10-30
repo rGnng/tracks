@@ -84,6 +84,22 @@ struct Song: Identifiable, Hashable {
     var yearNumber: Int { Self.yearNumber(from: year) }
     var trackNumberLabel: String { trackNumber > 0 ? String(trackNumber) : "" }
 
+    /// Compares the metadata exposed by Get Info. Play counts, stars, and file
+    /// bookkeeping are intentionally excluded so a no-op save can skip writing.
+    func hasSameTagMetadata(as other: Song) -> Bool {
+        title == other.title
+            && artist == other.artist
+            && albumArtist == other.albumArtist
+            && album == other.album
+            && genre == other.genre
+            && year == other.year
+            && trackNumber == other.trackNumber
+            && trackTotal == other.trackTotal
+            && discNumber == other.discNumber
+            && discTotal == other.discTotal
+            && comments == other.comments
+    }
+
     fileprivate static func yearNumber(from value: String) -> Int {
         Int(value.prefix(4)) ?? 0
     }
@@ -142,6 +158,24 @@ extension Album {
     /// disc number when totals are missing.
     var effectiveDiscTotal: Int {
         max(discNumbers.max() ?? 0, songs.map(\.discTotal).max() ?? 0)
+    }
+
+    /// Compares editable album and track metadata. Artwork, play counts, stars,
+    /// and file bookkeeping are excluded: Get Info checks artwork separately so
+    /// a save with no edits can skip writing tags and files.
+    func hasSameTagMetadata(as other: Album) -> Bool {
+        guard id == other.id,
+              title == other.title,
+              artist == other.artist,
+              genre == other.genre,
+              year == other.year,
+              songs.count == other.songs.count else { return false }
+        let songsByID = other.songs.reduce(into: [UUID: Song]()) { $0[$1.id] = $1 }
+        guard songsByID.count == songs.count else { return false }
+        return songs.allSatisfy { song in
+            guard let otherSong = songsByID[song.id] else { return false }
+            return song.hasSameTagMetadata(as: otherSong)
+        }
     }
 }
 

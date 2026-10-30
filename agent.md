@@ -277,6 +277,9 @@ Important schema decisions:
   and `date_added`.
 - Get Info supports Mixed values with italic placeholders; submitting empty mixed
   fields preserves the underlying value.
+- Get Info only writes tags, relocates files, or updates album artwork when the
+  submitted values differ from the loaded values. OK with no edits closes without
+  writing; a play-count reset updates only the database.
 - Get Info Details fields use square AppKit-backed boxes. They remain selectable
   and copyable when read-only (for example for External Library tracks); the
   read-only state only disables editing, not text selection.

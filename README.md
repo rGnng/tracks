@@ -99,7 +99,8 @@ queue, and history live on this Mac.
   back to the file and relocate it while preserving the song ID and play data.
 - **Get Info** has Details, Artwork, and File tabs. Mixed-value fields use
   italic placeholders; submitting an empty mixed field preserves the underlying
-  value. Read-only fields remain selectable and copyable.
+  value. Read-only fields remain selectable and copyable. OK with no edits does
+  not rewrite tags or artwork.
 - Multi-disc albums are ordered by disc then track. Album detail shows the
   effective disc count and `disc-track` labels. Get Info keeps the stored track
   and disc totals as-is so saving does not fill intentionally empty tags.

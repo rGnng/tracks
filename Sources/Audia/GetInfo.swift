@@ -622,7 +622,10 @@ struct GetInfoView: View {
                                     year: yearValue,
                                     artwork: artwork,
                                     songs: updatedSongs)
-                try await library.updateAlbum(updated)
+                if !updated.hasSameTagMetadata(as: album)
+                    || artworkData != originalArtworkData {
+                    try await library.updateAlbum(updated)
+                }
                 if resetPlays {
                     library.resetPlayCount(songIDs: updatedSongs.map(\.id))
                 }
@@ -660,7 +663,9 @@ struct GetInfoView: View {
                                        fileURL: song.fileURL,
                                        fileSize: song.fileSize,
                                        isStarred: song.isStarred)
-                try await library.updateSong(updatedSong)
+                if !updatedSong.hasSameTagMetadata(as: song) {
+                    try await library.updateSong(updatedSong)
+                }
                 if resetPlays {
                     library.resetPlayCount(songIDs: [song.id])
                 }
