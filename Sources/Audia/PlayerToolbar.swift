@@ -827,6 +827,7 @@ struct NowPlayingView: View {
                 SeekBar()
                     .padding(.leading, Self.artworkSize)
                     .frame(height: 5)
+                    .offset(y: 1)
             }
             .frame(width: width, height: 45, alignment: .top)
 
