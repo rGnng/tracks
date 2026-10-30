@@ -184,6 +184,7 @@ struct SettingsView: View {
     @AppStorage(TrayController.DefaultsKey.enabled) private var trayEnabled = false
     @AppStorage(TrayController.DefaultsKey.trackChange) private var trayTrackChange = false
     @AppStorage(TrayController.DefaultsKey.starChange) private var trayStarChange = true
+    @AppStorage(TrayController.DefaultsKey.playControlAction) private var trayPlayControlAction = true
     @AppStorage(TrayController.DefaultsKey.displayDurationMs)
     private var trayDisplayDurationMs = 1500
     @State private var shortcutBindings = KeyboardShortcutStore.loadBindings()
@@ -740,6 +741,13 @@ struct SettingsView: View {
                         .controlSize(.small)
                 }
                 SettingsDivider()
+                SettingsRow(title: "Play control action") {
+                    Toggle("", isOn: $trayPlayControlAction)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                }
+                SettingsDivider()
                 SettingsRow(title: "Display duration") {
                     Stepper("\(trayDisplayDurationMs) ms",
                             value: $trayDisplayDurationMs,
@@ -747,12 +755,12 @@ struct SettingsView: View {
                             step: 100)
                         .controlSize(.small)
                 }
-                SettingsFootnote("How long the track information stays visible after the card finishes opening. Default: 1500 ms.")
             }
         }
         .onChange(of: trayEnabled) { _, _ in TrayController.shared.refresh() }
         .onChange(of: trayTrackChange) { _, _ in TrayController.shared.refresh() }
         .onChange(of: trayStarChange) { _, _ in TrayController.shared.refresh() }
+        .onChange(of: trayPlayControlAction) { _, _ in TrayController.shared.refresh() }
         .onChange(of: trayDisplayDurationMs) { _, value in
             trayDisplayDurationMs = min(max(value, 300), 10000)
         }

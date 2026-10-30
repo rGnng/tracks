@@ -2,6 +2,20 @@ import AppKit
 import Combine
 import SwiftUI
 
+enum TrayTransportIcon: Equatable {
+    case play
+    case pause
+    case stop
+
+    var symbolName: String {
+        switch self {
+        case .play: return "play.fill"
+        case .pause: return "pause.fill"
+        case .stop: return "stop.fill"
+        }
+    }
+}
+
 @MainActor
 final class TrayStatusModel: ObservableObject {
     static let idleLength: CGFloat = 24
@@ -15,11 +29,13 @@ final class TrayStatusModel: ObservableObject {
     @Published var coverImage: NSImage?
     @Published var flipAngle: Double = 0
     @Published var showsInfo = false
+    @Published var transportIcon: TrayTransportIcon?
 }
 
 /// Menu-bar icon with an inline now-playing card. A song or star change flips
 /// the icon to the current album cover while expanding the status item leftwards
-/// to reveal the track details.
+/// to reveal the track details. Play/pause/stop can briefly flip the idle disc
+/// to a transport icon instead, without expanding the item.
 @MainActor
 final class TrayController: NSObject, NSMenuItemValidation {
     static let shared = TrayController()
@@ -28,6 +44,7 @@ final class TrayController: NSObject, NSMenuItemValidation {
         static let enabled = "tray.enabled"
         static let trackChange = "tray.trackChange"
         static let starChange = "tray.starChange"
+        static let playControlAction = "tray.playControlAction"
         static let displayDurationMs = "tray.popupDurationMs"
     }
 
@@ -41,6 +58,9 @@ final class TrayController: NSObject, NSMenuItemValidation {
     private var starCheckScheduled = false
 
     private var hideWorkItem: DispatchWorkItem?
+    private var transportActionWorkItem: DispatchWorkItem?
+    private var transportActionToken = 0
+    private var isShowingTransportAction = false
     private var animationTimer: Timer?
     private var widthTween: Tween?
     private var flipTween: Tween?
@@ -62,6 +82,9 @@ final class TrayController: NSObject, NSMenuItemValidation {
     private let flipDuration: TimeInterval = 0.32
     private let expandDuration: TimeInterval = 0.32
     private let shrinkDuration: TimeInterval = 0.32
+    /// Hard-coded dwell time for play/pause/stop feedback, independent of the
+    /// configurable track-info display duration.
+    private let transportActionDisplayDuration: TimeInterval = 1.0
     private var entranceDuration: TimeInterval { max(flipDuration, expandDuration) }
     /// Exit collapses first, then flips, so the two phases run back to back.
     private var exitDuration: TimeInterval { shrinkDuration + flipDuration }
@@ -73,6 +96,7 @@ final class TrayController: NSObject, NSMenuItemValidation {
             DefaultsKey.enabled: false,
             DefaultsKey.trackChange: true,
             DefaultsKey.starChange: true,
+            DefaultsKey.playControlAction: true,
             DefaultsKey.displayDurationMs: 1500,
         ])
     }
@@ -95,7 +119,12 @@ final class TrayController: NSObject, NSMenuItemValidation {
         refreshStatusItem()
         if !enabled {
             resetInfo()
-        } else if model.showsInfo, !isHiding {
+            return
+        }
+        if !playControlActionEnabled {
+            cancelTransportAction(restoreAngle: true)
+        }
+        if model.showsInfo, !isHiding {
             let delay = (isExpanded ? 0 : entranceDuration) + displayDuration
             scheduleHide(after: delay)
         }
@@ -118,6 +147,10 @@ final class TrayController: NSObject, NSMenuItemValidation {
 
     private var starChangeEnabled: Bool {
         UserDefaults.standard.bool(forKey: DefaultsKey.starChange)
+    }
+
+    private var playControlActionEnabled: Bool {
+        UserDefaults.standard.bool(forKey: DefaultsKey.playControlAction)
     }
 
     private var displayDurationMs: Int {
@@ -205,6 +238,12 @@ final class TrayController: NSObject, NSMenuItemValidation {
             .dropFirst()
             .sink { [weak self] _ in
                 DispatchQueue.main.async { self?.currentSongChanged() }
+            }
+            .store(in: &cancellables)
+
+        PlayerState.transportActionEvents
+            .sink { [weak self] action in
+                DispatchQueue.main.async { self?.showTransportAction(action) }
             }
             .store(in: &cancellables)
 
@@ -309,6 +348,7 @@ final class TrayController: NSObject, NSMenuItemValidation {
 
     private func beginShow() {
         guard enabled, !model.showsInfo else { return }
+        cancelTransportAction(restoreAngle: false)
         sequence += 1
         let token = sequence
         hideWorkItem?.cancel()
@@ -332,6 +372,7 @@ final class TrayController: NSObject, NSMenuItemValidation {
     /// A new event arrived while the card was shrinking. Flip back to the
     /// cover and re-expand instead of letting the hide finish.
     private func resumeVisible() {
+        cancelTransportAction(restoreAngle: false)
         sequence += 1
         let token = sequence
         hideWorkItem?.cancel()
@@ -347,6 +388,89 @@ final class TrayController: NSObject, NSMenuItemValidation {
         DispatchQueue.main.asyncAfter(deadline: .now() + entranceDuration) { [weak self] in
             guard let self, self.sequence == token else { return }
             self.isExpanded = true
+        }
+    }
+
+    /// Flips the idle disc to a play/pause/stop icon, holds it briefly, then
+    /// flips back. A visible track-info card keeps priority for Play because it
+    /// already communicates that playback started; Pause/Stop replace it with
+    /// explicit feedback.
+    private func showTransportAction(_ action: PlayerTransportAction) {
+        guard enabled, playControlActionEnabled, statusItem != nil else { return }
+
+        let icon: TrayTransportIcon
+        switch action {
+        case .play: icon = .play
+        case .pause: icon = .pause
+        case .stop: icon = .stop
+        }
+        if isShowingTransportAction {
+            transportActionToken += 1
+            let token = transportActionToken
+            transportActionWorkItem?.cancel()
+            model.transportIcon = icon
+            animateFlip(to: 180, duration: flipDuration)
+            scheduleTransportActionRestore(token: token)
+            return
+        }
+
+        if model.showsInfo || isHiding || isExpanded || pendingShow {
+            guard action != .play else { return }
+            resetInfo()
+        }
+        guard !model.showsInfo, !isHiding, !isExpanded,
+              abs(model.flipAngle) < 0.5, widthTween == nil else { return }
+
+        transportActionToken += 1
+        let token = transportActionToken
+        transportActionWorkItem?.cancel()
+        transportActionWorkItem = nil
+        isShowingTransportAction = true
+        model.transportIcon = icon
+        model.flipAngle = 0
+        animateFlip(to: 180, duration: flipDuration)
+        scheduleTransportActionRestore(token: token)
+    }
+
+    private func scheduleTransportActionRestore(token: Int) {
+        transportActionWorkItem?.cancel()
+        let hold = DispatchWorkItem { [weak self] in
+            guard let self, self.transportActionToken == token else { return }
+            self.animateFlip(to: 0, duration: self.flipDuration)
+            let clear = DispatchWorkItem { [weak self] in
+                guard let self, self.transportActionToken == token else { return }
+                self.finishTransportAction()
+            }
+            self.transportActionWorkItem = clear
+            DispatchQueue.main.asyncAfter(deadline: .now() + self.flipDuration, execute: clear)
+        }
+        transportActionWorkItem = hold
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + flipDuration + transportActionDisplayDuration,
+            execute: hold
+        )
+    }
+
+    private func finishTransportAction() {
+        model.transportIcon = nil
+        model.flipAngle = 0
+        isShowingTransportAction = false
+        transportActionWorkItem = nil
+    }
+
+    private func cancelTransportAction(restoreAngle: Bool) {
+        transportActionToken += 1
+        transportActionWorkItem?.cancel()
+        transportActionWorkItem = nil
+        model.transportIcon = nil
+        isShowingTransportAction = false
+        if restoreAngle {
+            flipTween = nil
+            model.flipAngle = 0
+            if widthTween == nil {
+                animationTimer?.invalidate()
+                animationTimer = nil
+            }
         }
     }
 
@@ -503,6 +627,7 @@ final class TrayController: NSObject, NSMenuItemValidation {
     }
 
     private func resetInfo() {
+        cancelTransportAction(restoreAngle: false)
         sequence += 1
         hideWorkItem?.cancel()
         hideWorkItem = nil
@@ -625,7 +750,8 @@ private struct TrayStatusView: View {
             HStack(spacing: 5) {
                 TrayFlipCard(angle: model.flipAngle,
                              image: model.coverImage,
-                             artwork: model.artwork)
+                             artwork: model.artwork,
+                             transportIcon: model.transportIcon)
                     .frame(width: TrayStatusModel.cardSize,
                            height: TrayStatusModel.cardSize)
 
@@ -663,18 +789,27 @@ private struct TrayFlipCard: View {
     let angle: Double
     let image: NSImage?
     let artwork: Artwork?
+    let transportIcon: TrayTransportIcon?
 
     var body: some View {
-        let showsCover = angle >= 90
+        let showsBack = angle >= 90
         ZStack {
             Image(systemName: "opticaldisc.fill")
                 .font(.system(size: 14, weight: .regular))
                 .foregroundColor(.primary)
-                .opacity(showsCover ? 0 : 1)
+                .opacity(showsBack ? 0 : 1)
 
-            TrayCoverView(image: image, artwork: artwork)
-                .rotation3DEffect(.degrees(180), axis: (x: 0, y: 1, z: 0))
-                .opacity(showsCover ? 1 : 0)
+            Group {
+                if let transportIcon {
+                    Image(systemName: transportIcon.symbolName)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(.primary)
+                } else {
+                    TrayCoverView(image: image, artwork: artwork)
+                }
+            }
+            .rotation3DEffect(.degrees(180), axis: (x: 0, y: 1, z: 0))
+            .opacity(showsBack ? 1 : 0)
         }
         .frame(width: TrayStatusModel.cardSize,
                height: TrayStatusModel.cardSize)

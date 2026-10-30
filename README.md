@@ -204,6 +204,10 @@ queue, and history live on this Mac.
   back to the icon first, then flips back to the disc. Song-change and
   star/unstar triggers are independent toggles. The normal status-item menu
   still opens on click.
+- **Play control action** is an independent toggle. When enabled, Play, Pause,
+  and Stop briefly flip the idle disc to the matching transport icon, hold it
+  for 1000 ms, then flip back to the disc. If the track card is already open,
+  Play leaves it in place; Pause and Stop replace it with the transport icon.
 - The card is part of the menu bar, so it does not unhide the Library window.
 
 ### Settings and appearance

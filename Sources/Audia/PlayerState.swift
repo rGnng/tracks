@@ -8,6 +8,14 @@ enum RepeatMode: String, CaseIterable {
     case one
 }
 
+/// Explicit transport actions, used by the menu-bar icon feedback. Automatic
+/// state changes (for example a restored paused queue) do not emit these.
+enum PlayerTransportAction: Sendable {
+    case play
+    case pause
+    case stop
+}
+
 struct MissingFileStreak {
     private(set) var count = 0
 
@@ -50,6 +58,10 @@ final class PlayerState: ObservableObject {
     }
 
     static let shared = PlayerState()
+
+    /// Emits only when playback starts, pauses, or stops so the tray can show
+    /// a short transport icon without inferring actions from state changes.
+    static let transportActionEvents = PassthroughSubject<PlayerTransportAction, Never>()
 
     @Published private(set) var queueEntries: [QueueEntry] = []
     @Published private(set) var currentIndex: Int?
@@ -301,6 +313,7 @@ final class PlayerState: ObservableObject {
         missingFileStreak.reset()
         missingFilePauseMessage = nil
         persistQueue()
+        announceTransportAction(.stop)
     }
 
     func clearHistory() {
@@ -620,6 +633,7 @@ final class PlayerState: ObservableObject {
         isPlaying = false
         elapsed = 0
         persistQueuePosition()
+        announceTransportAction(.stop)
     }
 
     func setPaused(_ paused: Bool) {
@@ -930,6 +944,7 @@ final class PlayerState: ObservableObject {
             stopTimer()
             seekGraceUntil = nil
             persistQueuePosition()
+            announceTransportAction(.pause)
         } else {
             // Pressing play after the queue reached its end (repeat off)
             // restarts the last track instead of doing nothing at EOF.
@@ -945,6 +960,7 @@ final class PlayerState: ObservableObject {
             isPlaying = true
             startTimer()
             persistQueuePosition()
+            announceTransportAction(.play)
         }
     }
 
@@ -1109,6 +1125,10 @@ final class PlayerState: ObservableObject {
         UserDefaults.standard.set(volume, forKey: Self.volumeDefaultsKey)
     }
 
+    private func announceTransportAction(_ action: PlayerTransportAction) {
+        Self.transportActionEvents.send(action)
+    }
+
     // MARK: Engine
 
     private func beginCurrentTrack(countPlay: Bool = true, startAt: TimeInterval = 0) {
@@ -1161,6 +1181,7 @@ final class PlayerState: ObservableObject {
             player.play()
             isPlaying = true
             startTimer()
+            announceTransportAction(.play)
             return
         }
 
@@ -1175,6 +1196,7 @@ final class PlayerState: ObservableObject {
         }
         isPlaying = true
         startTimer()
+        announceTransportAction(.play)
     }
 
     private func releasePlayer() {
@@ -1341,5 +1363,6 @@ final class PlayerState: ObservableObject {
         elapsed = 0
         seekGraceUntil = nil
         persistQueue()
+        announceTransportAction(.stop)
     }
 }

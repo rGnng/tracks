@@ -508,6 +508,13 @@ Important schema decisions:
   `tray.onlyWhenLibraryNotFocused` gate is ignored. The status item keeps its
   normal menu click behavior because the SwiftUI host returns `nil` from
   `hitTest`.
+- Play/pause/stop feedback is controlled by `tray.playControlAction` (default
+  on). `PlayerState.transportActionEvents` emits only explicit transport
+  actions. When the idle disc is showing, the tray flips it to `play.fill`,
+  `pause.fill`, or `stop.fill`, holds for the hard-coded
+  `transportActionDisplayDuration` (1.0 s), then flips back. A visible track
+  card wins for Play; Pause/Stop reset it and show the action icon. The action
+  animation does not expand the status item.
 - Album covers are prefetched when the current song changes, center-cropped,
   bilinearly downsampled to 64 px, and kept in a 32-entry in-memory
   `NSCache`. The flip waits for that image so it never shows a blank back side;
