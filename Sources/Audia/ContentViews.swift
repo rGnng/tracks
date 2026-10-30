@@ -274,6 +274,7 @@ struct AlbumGrid: View {
                 .coordinateSpace(name: "albumGridSpace")
                 .onPreferenceChange(AlbumCardFramesKey.self) {
                     cardFrames = $0
+                    updateRenderedGridMetrics()
                     publishDebugState()
                     updateLocatorRenderedFrameIfNeeded()
                 }
@@ -307,8 +308,12 @@ struct AlbumGrid: View {
         }
     }
 
+    private func isCurrentLayoutFrame(_ frame: CGRect) -> Bool {
+        gridCardWidth > 1 && abs(frame.width - gridCardWidth) < 2.0
+    }
+
     private var currentGridSampleFrame: CGRect? {
-        for frame in cardFrames.values {
+        for frame in cardFrames.values where isCurrentLayoutFrame(frame) {
             if frame.maxY > metrics.offset, frame.minY < metrics.offset + metrics.viewportHeight {
                 return frame
             }
@@ -318,13 +323,104 @@ struct AlbumGrid: View {
 
     private func updateGridMetrics(width: CGFloat) {
         gridWidth = width
-        let cols = columns(for: width)
-        columnCount = cols
-        let available = width - 44 - CGFloat(max(cols - 1, 0)) * 22
-        gridCardWidth = max(available / CGFloat(max(cols, 1)), 1)
+        let contentWidth = max(width - contentTopPadding * 2, 1)
+        let fallbackColumns = fallbackColumnCount(contentWidth: contentWidth)
+        let fallbackCardWidth = max(
+            (contentWidth - CGFloat(max(fallbackColumns - 1, 0)) * 22)
+                / CGFloat(max(fallbackColumns, 1)),
+            1
+        )
+
+        columnCount = fallbackColumns
+        gridCardWidth = fallbackCardWidth
+        if let rendered = renderedGridMetrics(fallbackColumns: fallbackColumns) {
+            columnCount = rendered.columns
+            gridCardWidth = rendered.cardWidth
+        }
         publishDebugState()
         attemptPendingRestore()
         attemptPendingLocate()
+    }
+
+    /// SwiftUI's adaptive grid uses the content width inside the 22pt padding.
+    /// This is only the fallback used before a card has been rendered; once
+    /// frames exist, the rendered card width and column step take over.
+    private func fallbackColumnCount(contentWidth: CGFloat) -> Int {
+        max(1, Int((contentWidth + 22) / (158 + 22)))
+    }
+
+    /// Derive the actual grid metrics from rendered card frames. The visual
+    /// LazyVGrid layout is never changed; this only makes the navigation model
+    /// follow what SwiftUI actually rendered.
+    private func renderedGridMetrics(fallbackColumns: Int) -> (columns: Int, cardWidth: CGFloat)? {
+        var samples: [(index: Int, frame: CGRect)] = []
+        samples.reserveCapacity(cardFrames.count)
+        for (id, frame) in cardFrames {
+            guard let index = albumIndexByID[id],
+                  frame.width > 1, frame.height > 1 else { continue }
+            if gridCardWidth > 1, abs(frame.width - gridCardWidth) > 2 {
+                continue
+            }
+            samples.append((index, frame))
+        }
+        guard !samples.isEmpty else { return nil }
+
+        let widths = samples.map(\.frame.width).sorted()
+        let cardWidth = widths[widths.count / 2]
+
+        // Cards in the same column have the same x. Consecutive rows differ by
+        // exactly the rendered column count, including when the last row is
+        // partial. This avoids guessing columns from the content width.
+        var columnSteps: [Int] = []
+        let columnsByX = Dictionary(grouping: samples) { sample in
+            (sample.frame.minX * 2).rounded() / 2
+        }
+        for group in columnsByX.values {
+            let ordered = group.sorted { $0.frame.minY < $1.frame.minY }
+            guard ordered.count > 1 else { continue }
+            for i in 1..<ordered.count {
+                guard ordered[i].frame.minY - ordered[i - 1].frame.minY > 1 else { continue }
+                let step = ordered[i].index - ordered[i - 1].index
+                if step > 0 { columnSteps.append(step) }
+            }
+        }
+
+        let columns: Int
+        if columnSteps.isEmpty {
+            columns = fallbackColumns
+        } else {
+            let counts = Dictionary(columnSteps.map { ($0, 1) }, uniquingKeysWith: +)
+            let observed = counts.max { $0.value < $1.value }?.key ?? fallbackColumns
+            // A lazy jump can leave only every Nth row represented, making the
+            // observed index step a multiple of the real column count. The
+            // adaptive grid cannot have more columns than the minimum-width
+            // fallback, so treat larger steps as sparse-row artifacts.
+            columns = (observed > 0 && observed <= fallbackColumns)
+                ? observed
+                : fallbackColumns
+        }
+        return (max(columns, 1), cardWidth)
+    }
+
+    private func updateRenderedGridMetrics() {
+        let contentWidth = max(gridWidth - contentTopPadding * 2, 1)
+        let fallbackColumns = fallbackColumnCount(contentWidth: contentWidth)
+        guard let rendered = renderedGridMetrics(fallbackColumns: fallbackColumns) else { return }
+
+        var changed = false
+        if rendered.columns != columnCount {
+            columnCount = rendered.columns
+            changed = true
+        }
+        if abs(rendered.cardWidth - gridCardWidth) > 0.01 {
+            gridCardWidth = rendered.cardWidth
+            changed = true
+        }
+        if changed {
+            publishDebugState()
+            attemptPendingRestore()
+            attemptPendingLocate()
+        }
     }
 
     private func publishDebugState() {
@@ -336,11 +432,11 @@ struct AlbumGrid: View {
         let selectedFrameDelta = modelFrame.flatMap { model in
             actualFrame.map { frameDelta(model, $0) }
         }
-        let firstAlbumGap = albums.first.flatMap { album in
-            cardFrames[album.id].map { frame in
-                let gap = frame.minY - metrics.offset
-                return abs(gap) < 0.05 ? 0 : gap
-            }
+        let firstAlbumGap: CGFloat? = albums.first.flatMap { album -> CGFloat? in
+            guard let frame = cardFrames[album.id],
+                  isCurrentLayoutFrame(frame) else { return nil }
+            let gap = frame.minY - metrics.offset
+            return abs(gap) < 0.05 ? 0 : gap
         }
         let visibleDeltas = visibleFrameDeltas(for: gridLayout)
         let scrollID = scrollPosition.viewID.map { String(describing: $0) } ?? "nil"
@@ -387,9 +483,11 @@ struct AlbumGrid: View {
     }
 
     private var gridCardHeight: CGFloat {
+        if let sample = currentGridSampleFrame {
+            return sample.height
+        }
         let width = gridCardWidth > 0 ? gridCardWidth : 182
-        let textHeight = currentGridSampleFrame.map { max($0.height - $0.width, 0) } ?? 38
-        return width + textHeight
+        return width + 38
     }
 
     private var gridLayout: AlbumGridLayout {
@@ -413,8 +511,10 @@ struct AlbumGrid: View {
     }
 
     private var selectedActualFrame: CGRect? {
-        guard let id = selectedAlbumID else { return nil }
-        return cardFrames[id]
+        guard let id = selectedAlbumID,
+              let frame = cardFrames[id],
+              isCurrentLayoutFrame(frame) else { return nil }
+        return frame
     }
 
     private func modelFrame(at index: Int) -> CGRect {
@@ -625,7 +725,8 @@ struct AlbumGrid: View {
         var minimum: CGFloat?
         var maximum: CGFloat?
         for (id, actual) in cardFrames {
-            guard actual.maxY > metrics.offset + 0.5,
+            guard isCurrentLayoutFrame(actual),
+                  actual.maxY > metrics.offset + 0.5,
                   actual.minY < metrics.offset + metrics.viewportHeight - 0.5 else { continue }
             guard let index = albumIndexByID[id],
                   let computed = layout.frame(at: index) else { continue }
@@ -642,6 +743,7 @@ struct AlbumGrid: View {
         guard info.actualFrame == nil,
               let id = UUID(uuidString: info.requestedID),
               let actual = cardFrames[id],
+              isCurrentLayoutFrame(actual),
               let index = albumIndexByID[id],
               let computed = gridLayout.frame(at: index) else { return }
         info.actualFrame = actual
@@ -675,10 +777,6 @@ struct AlbumGrid: View {
                      title: album.title,
                      subtitle: "\(songs.count) songs",
                      artwork: album.artwork)
-    }
-
-    private func columns(for width: CGFloat) -> Int {
-        max(1, Int((width + 22) / (158 + 22)))
     }
 
     private func handleCardTap(_ album: Album) {
