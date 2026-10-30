@@ -29,13 +29,25 @@ final class DebugSettings: ObservableObject {
 
     private init() {
         let defaults = UserDefaults.standard
-        showFrames = defaults.object(forKey: "debug.showFrames") as? Bool ?? true
-        showFrameLabels = defaults.object(forKey: "debug.showFrameLabels") as? Bool ?? false
-        showAlbumGridLayout = defaults.object(forKey: "debug.showAlbumGridLayout") as? Bool ?? false
-        showAlbumGridInfo = defaults.object(forKey: "debug.showAlbumGridInfo") as? Bool ?? true
-        showViewInfo = defaults.object(forKey: "debug.showViewInfo") as? Bool ?? true
-        showPlaybackInfo = defaults.object(forKey: "debug.showPlaybackInfo") as? Bool ?? true
-        openWithApp = defaults.object(forKey: "debug.openWithApp") as? Bool ?? false
+
+        // Every debug overlay starts off. Missing keys are written once so the
+        // unchecked default is also the persisted value; later changes go
+        // through the property observers above.
+        func storedBool(_ key: String) -> Bool {
+            if let value = defaults.object(forKey: key) as? Bool {
+                return value
+            }
+            defaults.set(false, forKey: key)
+            return false
+        }
+
+        showFrames = storedBool("debug.showFrames")
+        showFrameLabels = storedBool("debug.showFrameLabels")
+        showAlbumGridLayout = storedBool("debug.showAlbumGridLayout")
+        showAlbumGridInfo = storedBool("debug.showAlbumGridInfo")
+        showViewInfo = storedBool("debug.showViewInfo")
+        showPlaybackInfo = storedBool("debug.showPlaybackInfo")
+        openWithApp = storedBool("debug.openWithApp")
     }
 }
 
