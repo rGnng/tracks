@@ -189,17 +189,23 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
 
         startedAt = Date()
         isRunning = !listeners.isEmpty
-        listeningSummary = started.joined(separator: ", ")
+        let endpoints = started.map { Self.endpointDescription(address: $0, port: port) }
+        let failedEndpoints = failures.map { Self.endpointDescription(address: $0, port: port) }
+        listeningSummary = endpoints.joined(separator: ", ")
         if listeners.isEmpty {
-            status = "Could not listen on \(failures.joined(separator: ", ")) :\(port)"
-            AppLog.mpd.error("Could not start MPD on \(failures.joined(separator: ", "), privacy: .public):\(port, privacy: .public)")
+            status = "Could not listen on \(failedEndpoints.joined(separator: ", "))"
+            AppLog.mpd.error("Could not start MPD on \(failedEndpoints.joined(separator: ", "), privacy: .public)")
         } else if failures.isEmpty {
-            status = "Listening on \(listeningSummary):\(port)"
-            AppLog.mpd.notice("MPD listening on \(self.listeningSummary, privacy: .public):\(port, privacy: .public)")
+            status = "Listening on \(listeningSummary)"
+            AppLog.mpd.notice("MPD listening on \(self.listeningSummary, privacy: .public)")
         } else {
-            status = "Listening on \(listeningSummary):\(port) (failed: \(failures.joined(separator: ", ")))"
-            AppLog.mpd.warning("MPD listening on \(self.listeningSummary, privacy: .public):\(port, privacy: .public); failed: \(failures.joined(separator: ", "), privacy: .public)")
+            status = "Listening on \(listeningSummary) (failed: \(failedEndpoints.joined(separator: ", ")))"
+            AppLog.mpd.warning("MPD listening on \(self.listeningSummary, privacy: .public); failed: \(failedEndpoints.joined(separator: ", "), privacy: .public)")
         }
+    }
+
+    private static func endpointDescription(address: String, port: UInt16) -> String {
+        address.contains(":") ? "[\(address)]:\(port)" : "\(address):\(port)"
     }
 
     private func stopServer() {

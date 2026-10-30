@@ -725,8 +725,7 @@ struct SettingsView: View {
 
     private var traySettings: some View {
         SettingsCard(title: "System Tray") {
-            SettingsRow(title: "Show icon",
-                        subtitle: "Shows a disc in the menu bar. On song or star changes it flips to the album cover and expands to show the track.") {
+            SettingsRow(title: "Show icon") {
                 Toggle("", isOn: $trayEnabled)
                     .labelsHidden()
                     .toggleStyle(.switch)
@@ -735,21 +734,21 @@ struct SettingsView: View {
 
             if trayEnabled {
                 SettingsDivider()
-                SettingsRow(title: "Show on song change") {
+                SettingsRow(title: "Song changes") {
                     Toggle("", isOn: $trayTrackChange)
                         .labelsHidden()
                         .toggleStyle(.switch)
                         .controlSize(.small)
                 }
                 SettingsDivider()
-                SettingsRow(title: "Show on star/unstar") {
+                SettingsRow(title: "Star/unstar") {
                     Toggle("", isOn: $trayStarChange)
                         .labelsHidden()
                         .toggleStyle(.switch)
                         .controlSize(.small)
                 }
                 SettingsDivider()
-                SettingsRow(title: "Play control action") {
+                SettingsRow(title: "Play control") {
                     Toggle("", isOn: $trayPlayControlAction)
                         .labelsHidden()
                         .toggleStyle(.switch)
@@ -809,15 +808,10 @@ struct SettingsView: View {
                 }
                 SettingsDivider()
                 SettingsRow(title: "Password") {
-                    HStack(spacing: 8) {
-                        SecureField("optional", text: $mpdPassword)
-                            .textFieldStyle(.roundedBorder)
-                            .font(SettingsTypography.body)
-                            .frame(width: 150)
-                        Button("Restart") { mpd.applyPreferences() }
-                            .controlSize(.small)
-                            .fixedSize()
-                    }
+                    SecureField("optional", text: $mpdPassword)
+                        .textFieldStyle(.roundedBorder)
+                        .font(SettingsTypography.body)
+                        .frame(width: 150)
                 }
                 Text(mpd.status)
                     .font(SettingsTypography.help)
