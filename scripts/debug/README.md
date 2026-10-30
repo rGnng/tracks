@@ -35,9 +35,14 @@ scripts/debug/audiactl key 3 cmd            # command-F
 scripts/debug/audiactl key 2 control option cmd  # control-option-command-D (Debug)
 scripts/debug/audiactl clear-flags
 
+# Mouse input
+scripts/debug/audiactl click 500 158
+scripts/debug/audiactl click 500 840 shift   # Shift-click range selection
+scripts/debug/audiactl rightclick 500 200    # Open a row context menu
+scripts/debug/audiactl drag 450 200 950 520
+
 # Layout helpers
 scripts/debug/audiactl resize 1040 820
-scripts/debug/audiactl drag 450 200 950 520
 
 # Album order helpers. The app sorts album titles with localizedStandardCompare;
 # the CLI applies the same ordering to the library database.

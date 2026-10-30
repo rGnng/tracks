@@ -79,16 +79,20 @@ private func walk(_ element: AXUIElement,
 }
 
 private func focusWindow(named title: String) {
-    guard let window = window(named: title) else {
-        fail("window not found: \(title)")
-    }
     _ = runningApp.activate(options: [.activateAllWindows])
-    AXUIElementSetAttributeValue(appElement,
-                                 kAXFocusedWindowAttribute as CFString,
-                                 window)
-    AXUIElementSetAttributeValue(window, kAXMainAttribute as CFString, kCFBooleanTrue)
-    AXUIElementSetAttributeValue(window, kAXFocusedAttribute as CFString, kCFBooleanTrue)
-    usleep(80_000)
+    for _ in 0..<8 {
+        if let window = window(named: title) {
+            AXUIElementSetAttributeValue(appElement,
+                                         kAXFocusedWindowAttribute as CFString,
+                                         window)
+            AXUIElementSetAttributeValue(window, kAXMainAttribute as CFString, kCFBooleanTrue)
+            AXUIElementSetAttributeValue(window, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+            usleep(80_000)
+            return
+        }
+        usleep(120_000)
+    }
+    fail("window not found: \(title)")
 }
 
 private func clearModifiers() {
@@ -359,6 +363,58 @@ private func moveMouse(_ type: CGEventType, _ point: CGPoint) {
             mouseButton: .left)?.post(tap: .cghidEventTap)
 }
 
+private func modifierKeyCode(for flag: CGEventFlags) -> CGKeyCode? {
+    if flag.contains(.maskShift) { return 56 }
+    if flag.contains(.maskCommand) { return 55 }
+    if flag.contains(.maskAlternate) { return 58 }
+    if flag.contains(.maskControl) { return 59 }
+    return nil
+}
+
+private func setModifier(_ flag: CGEventFlags, down: Bool) {
+    guard let key = modifierKeyCode(for: flag) else { return }
+    let source = CGEventSource(stateID: .hidSystemState)
+    if let event = CGEvent(keyboardEventSource: source, virtualKey: key, keyDown: down) {
+        event.type = .flagsChanged
+        event.flags = down ? flag : []
+        event.post(tap: .cghidEventTap)
+    }
+    usleep(20_000)
+}
+
+private func click(at point: CGPoint, modifiers: CGEventFlags, right: Bool = false) {
+    focusWindow(named: "Tracks")
+    let source = CGEventSource(stateID: .hidSystemState)
+    for flag in [CGEventFlags.maskShift, .maskCommand, .maskAlternate, .maskControl] where modifiers.contains(flag) {
+        setModifier(flag, down: true)
+    }
+    moveMouse(.mouseMoved, point)
+    usleep(40_000)
+    let button: CGMouseButton = right ? .right : .left
+    let downType: CGEventType = right ? .rightMouseDown : .leftMouseDown
+    let upType: CGEventType = right ? .rightMouseUp : .leftMouseUp
+    if let down = CGEvent(mouseEventSource: source,
+                          mouseType: downType,
+                          mouseCursorPosition: point,
+                          mouseButton: button) {
+        down.flags = modifiers
+        down.post(tap: .cghidEventTap)
+    }
+    usleep(right ? 300_000 : 40_000)
+    if let up = CGEvent(mouseEventSource: source,
+                        mouseType: upType,
+                        mouseCursorPosition: point,
+                        mouseButton: button) {
+        up.flags = modifiers
+        up.post(tap: .cghidEventTap)
+    }
+    usleep(60_000)
+    for flag in [CGEventFlags.maskShift, .maskCommand, .maskAlternate, .maskControl] where modifiers.contains(flag) {
+        setModifier(flag, down: false)
+    }
+    clearModifiers()
+}
+
 private func drag(from start: CGPoint, to end: CGPoint) {
     focusWindow(named: "Tracks")
     moveMouse(.mouseMoved, start)
@@ -446,6 +502,10 @@ private func usage() -> Never {
       type <window> <text>           Type into the first text field in a window.
       key <keycode> [cmd|shift|option|control]
                                      Send a key to Tracks and clear modifier state.
+      click <x> <y> [shift|cmd|option|control]
+                                     Left-click at screen coordinates with modifiers.
+      rightclick <x> <y> [shift|cmd|option|control]
+                                     Right-click at screen coordinates with modifiers.
       clear-flags                    Release synthetic modifier keys.
       resize <width> <height>        Resize the Tracks window.
       windows                        Print all window titles and frames.
@@ -525,6 +585,22 @@ case "windows":
     for window in windows() {
         print("\(stringAttribute(window, kAXTitleAttribute)) \(frameString(window))")
     }
+case "click", "rightclick":
+    guard rest.count >= 2,
+          let x = Double(rest[0]), let y = Double(rest[1]) else { usage() }
+    var flags: CGEventFlags = []
+    for modifier in rest.dropFirst(2) {
+        switch modifier {
+        case "cmd", "command": flags.insert(.maskCommand)
+        case "shift": flags.insert(.maskShift)
+        case "option", "alt": flags.insert(.maskAlternate)
+        case "control", "ctrl": flags.insert(.maskControl)
+        default: fail("unknown modifier: \(modifier)")
+        }
+    }
+    let right = command == "rightclick"
+    click(at: CGPoint(x: x, y: y), modifiers: flags, right: right)
+    print("\(right ? "right-clicked" : "clicked") \(x),\(y)")
 case "drag":
     guard rest.count == 4,
           let x1 = Double(rest[0]), let y1 = Double(rest[1]),
