@@ -797,6 +797,9 @@ struct NowPlayingView: View {
                 .padding(.leading, Self.artworkSize + contentInset)
                 .padding(.trailing, contentInset)
                 .frame(height: 30)
+                // Move the control/title block down without moving the artwork
+                // or the seek bar.
+                .offset(y: 1)
 
                 HStack(spacing: 6) {
                     Text(formatTime(player.elapsed))
@@ -820,7 +823,7 @@ struct NowPlayingView: View {
                 .padding(.leading, Self.artworkSize + contentInset - sideControlsOutset + sideControlIconInset)
                 .padding(.trailing, max(0, contentInset - sideControlsOutset + sideControlIconInset))
                 .frame(height: 10)
-                .offset(y: -3)
+                .offset(y: -2)
 
                 // Full-bleed seek bar: starts at the artwork's right edge and runs
                 // to the panel's right edge, with no padding.
