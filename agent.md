@@ -140,7 +140,7 @@ Sources/Audia/
   SidebarView.swift          Library and playlist sidebar
   ContentPane.swift          Content routing and album sort/view settings
   ContentViews.swift         Album grid, album detail, song table, Add Seq/Add Time, selection
-  AlbumGridLayout.swift      Pure album-grid index -> content-rect geometry
+  AlbumGridLayout.swift      Pure album-grid index -> content-rect geometry, fed by measured content width + rendered frames
   BrowserViews.swift         Artists/Genres master-detail browsers
   ContextMenus.swift         Shared album/song context menus
   KeyboardShortcut.swift     Standard AppKit shortcut recorder, matching, persistence
@@ -391,11 +391,10 @@ Important schema decisions:
   initializer path caused 22pt album-grid drift.
 - The saved viewport is the main list area only. Album detail and the
   Artists/Genres right-hand pane are not persisted.
-- Album-grid navigation and marquee hit testing use `AlbumGridLayout`, not the
-  cached GeometryReader frames. Cached frames are debug-only snapshots and can
-  be one row spacing off after lazy-grid jumps. LazyVGrid row spacing is baked
-  into each card cell (`spacing: 0` on the grid) so long jumps do not inject an
-  extra row gap.
+- Album-grid geometry, navigation, locator, and marquee hit testing use
+  `AlbumGridLayout`, not cached GeometryReader frames. See
+  **Album grid layout and navigation** below for the width basis, rendered-frame
+  correction, row-gap encoding, and debug rules.
 - Multi-disc albums are detected from their disc numbers even when the
   total-disc tag is missing. Album songs load disc-first and track-second,
   album detail shows the effective disc count and labels rows `disc-track`
@@ -520,6 +519,115 @@ Important schema decisions:
   bilinearly downsampled to 64 px, and kept in a 32-entry in-memory
   `NSCache`. The flip waits for that image so it never shows a blank back side;
   if an album has no artwork, its generated color gradient is shown instead.
+
+### Album grid layout and navigation
+
+`AlbumGrid` in `ContentViews.swift` renders a `LazyVGrid` of `AlbumCard`s. The
+visual grid uses one adaptive `GridItem` with `minimum: 158`, `maximum: 240`,
+and `spacing: 22`; the grid has 22pt content padding on all four sides and
+`spacing: 0` between rows. Every card except those in the last row carries 26pt
+bottom padding. Baking the 26pt gap into the non-final cells is deliberate:
+putting it back on `LazyVGrid` makes long lazy jumps inject an extra row gap.
+
+SwiftUI only realizes visible lazy cells. `AlbumCardFramesKey` therefore
+contains frames only for cards currently rendered, and those preferences can be
+missing or stale after a long jump or window resize. Navigation, marquee hit
+testing, `Go to Album`, the Debug locator, and viewport restore must work for
+offscreen albums, so they use the pure `AlbumGridLayout` model instead of the
+cached frames.
+
+#### Geometry
+
+`gridWidth` is the measured width of the padded grid view (outer width). The
+adaptive grid lays out its cells inside the horizontal padding, so:
+
+```text
+contentWidth = gridWidth - 2 * 22
+fallbackColumns = max(1, Int((contentWidth + 22) / (158 + 22)))
+fallbackCardWidth = (contentWidth - (fallbackColumns - 1) * 22) / fallbackColumns
+```
+
+The fallback is only used before a card has rendered. Once frames exist, the
+model follows the actual rendered layout:
+
+- Use the median rendered card width as `cardWidth`.
+- Cards in the same column share the same x. The index difference between
+  cards in adjacent rows is the actual column count.
+- A lazy jump can leave only every Nth row represented, making the observed
+  step a multiple of the real column count. The observed step must not exceed
+  the adaptive fallback; larger steps are treated as sparse-row artifacts and
+  fall back to `fallbackColumns`.
+- Use the rendered card height directly as `cardHeight`, rather than deriving
+  text height from a formula.
+- Frames whose width clearly belongs to a previous layout are ignored by
+  debug/locator consumers.
+
+The visual `LazyVGrid` is never resized to match the model. The model follows
+what SwiftUI actually rendered; changing the visual column/card sizing to match
+a stale model is not allowed.
+
+`AlbumGridLayout.frame(at:)` is:
+
+```text
+row    = index / columns
+column = index % columns
+x      = padding + column * (cardWidth + columnSpacing)
+y      = padding + row * (cardHeight + rowSpacing)
+```
+
+with `columnSpacing = 22`, `rowSpacing = 26`, and `padding = 22`.
+`AlbumGridLayout.index(at:)` is the inverse used by marquee/hit testing.
+
+#### Navigation and reveal
+
+- Arrow keys move by ±1 or ±`columnCount`.
+- Page Up/Down use the actual `cardHeight + 26` row height.
+- Home/End scroll to the content edges without changing selection.
+- `topVisibleAlbumIndex()` and `isOnScreen()` use model frames.
+- `revealSelection()` computes the target from the model frame and
+  `ListScroll.revealTarget`; it scrolls only enough to show the item plus the
+  22pt padding.
+- `Go to Album`/locator uses `layout.frame(at: index)`, scrolls to that target,
+  and reports the rendered frame and delta in Debug.
+- Viewport restore stores raw content offsets, not model frames or viewport
+  anchors.
+
+#### Marquee
+
+`updateMarqueeSelection()` iterates album indices and tests
+`modelFrame(at: index).intersects(rect)`. It never depends on which cards happen
+to be realized or on cached frame preferences.
+
+#### Debugging
+
+- Grid guides (`AlbumGridLayoutOverlay`) draw the model's column/row lines.
+  Blue is the model selected frame, green is the cached rendered frame,
+  red/orange are the viewport top/bottom, and purple is the reveal target.
+- `cache delta` compares the model frame with the cached rendered frame. It
+  should be ~0 at rest.
+- After a live window resize while scrolled far down, cached green frames can
+  lag until the lazy grid republishes them (for example after a small scroll or
+  locator jump). The blue guides and navigation use the updated model and remain
+  correct; the green frame is debug-only.
+- `Album Locator` reports columns/card/row/computed/cached/delta. Recheck it
+  after changing any layout constant or width calculation.
+- Test multiple widths around the adaptive thresholds (for example 1040, 1180,
+  1200, 1300, 1320, 1440, 1500, 1520, 1600) and test live resize while scrolled
+  near the bottom.
+
+#### Rules
+
+- Do not use the outer padded width directly in the adaptive column formula.
+  The old bug overcounted one column in a 44pt band per 180pt (for example an
+  outer grid width of 1239 produced 7 model columns while the real grid had 6),
+  which made guides drift and arrow navigation walk off the viewport.
+- Do not navigate or marquee from `cardFrames` alone; offscreen cards have no
+  frames.
+- Do not change the visual `LazyVGrid` column/card sizing to match a stale
+  model. Rendered frames are the source of truth for actual card size; the model
+  follows them.
+- Do not put the 26pt row gap back on `LazyVGrid`; keep it in non-final card
+  cells.
 
 ## 7. Artwork cache and Settings
 
