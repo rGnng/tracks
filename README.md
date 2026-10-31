@@ -32,6 +32,12 @@ queue, and history live on this Mac.
   are reviewed, not silently deleted. Removing a library index creates a
   database backup and never touches its audio files.
 
+## Screenshots
+
+![Albums grid while a song is playing](docs/screenshots/albums.png)
+
+![Album detail while a song is playing](docs/screenshots/album-detail.png)
+
 ## Library
 
 - **Recently Added**, **Albums**, **Artists**, **Songs**, and **Genres** in the
