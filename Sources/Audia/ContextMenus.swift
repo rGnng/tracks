@@ -15,7 +15,7 @@ struct AlbumContextMenu: ViewModifier {
             AddToPlaylistMenu(songs: album.songs)
             Button("Play Next") { player.playNext(album.songs) }
             Button("Play Later") { player.playLater(album.songs) }
-            Divider()
+            CopyUUIDURLMenuItem(uuid: album.id)
             Button("Get Info…") {
                 InfoCenter.shared.target = .album(album.id)
                 openWindow(id: "get-info")
@@ -48,7 +48,7 @@ struct SongContextMenu: ViewModifier {
             AddToPlaylistMenu(songs: targets)
             Button("Play Next") { player.playNext(targets) }
             Button("Play Later") { player.playLater(targets) }
-            Divider()
+            CopyUUIDURLMenuItem(uuid: song.id)
             Button("Get Info…") {
                 InfoCenter.shared.target = .song(song.id)
                 openWindow(id: "get-info")

@@ -175,6 +175,9 @@ struct SettingsView: View {
     @AppStorage(TrayController.DefaultsKey.playControlAction) private var trayPlayControlAction = true
     @AppStorage(TrayController.DefaultsKey.displayDurationMs)
     private var trayDisplayDurationMs = 1500
+    @AppStorage(UUIDURLDefaults.enabledKey) private var copyUUIDURLEnabled = false
+    @AppStorage(UUIDURLDefaults.prefixKey) private var copyUUIDURLPrefix = ""
+    @AppStorage(UUIDURLDefaults.styleKey) private var copyUUIDURLStyleRaw = UUIDURLStyle.uuid.rawValue
     @State private var shortcutBindings = KeyboardShortcutStore.loadBindings()
     @State private var showRawShortcutValues = false
     @State private var selectedInAppBindingID: UUID?
@@ -384,6 +387,7 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 22) {
                 traySettings
                 mpdSettings
+                copyUUIDURLSettings
             }
         }
     }
@@ -805,6 +809,63 @@ struct SettingsView: View {
                     .padding(.vertical, 9)
             } else {
                 SettingsFootnote("Disabled")
+            }
+        }
+    }
+
+    private var copyUUIDURLSettings: some View {
+        SettingsCard(title: "Copy UUID URL") {
+            SettingsRow(
+                title: "Enable Copy UUID URL",
+                subtitle: "Show Copy UUID URL above Get Info in song and album menus."
+            ) {
+                Toggle("", isOn: $copyUUIDURLEnabled)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+            }
+
+            if copyUUIDURLEnabled {
+                SettingsDivider()
+                SettingsRow(title: "URL Prefix") {
+                    TextField("", text: Binding(
+                        get: { copyUUIDURLPrefix },
+                        set: { value in
+                            copyUUIDURLPrefix = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                        }
+                    ))
+                    .textFieldStyle(.roundedBorder)
+                    .font(SettingsTypography.body)
+                    .frame(width: 260)
+                }
+
+                SettingsDivider()
+                SettingsRow(title: "Type") {
+                    HStack(spacing: 14) {
+                        ForEach(UUIDURLStyle.allCases) { style in
+                            let selected = copyUUIDURLStyleRaw == style.rawValue
+                            Button {
+                                copyUUIDURLStyleRaw = style.rawValue
+                            } label: {
+                                HStack(spacing: 5) {
+                                    Image(systemName: selected
+                                          ? "largecircle.fill.circle"
+                                          : "circle")
+                                        .font(.system(size: 13))
+                                        .foregroundColor(selected
+                                                         ? Theme.highlight
+                                                         : Theme.secondaryText)
+                                    Text(style.title)
+                                        .font(SettingsTypography.body)
+                                        .foregroundColor(Theme.primaryText)
+                                }
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel(style.title)
+                        }
+                    }
+                }
             }
         }
     }

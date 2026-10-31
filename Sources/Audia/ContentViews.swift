@@ -228,7 +228,7 @@ struct AlbumGrid: View {
             AddToPlaylistMenu(songs: contextSongs(for: album))
             Button("Play Next") { player.playNext(contextSongs(for: album)) }
             Button("Play Later") { player.playLater(contextSongs(for: album)) }
-            Divider()
+            CopyUUIDURLMenuItem(uuid: album.id)
             Button("Get Info…") {
                 InfoCenter.shared.target = .album(album.id)
                 openWindow(id: "get-info")
@@ -2104,7 +2104,7 @@ struct SongTable: View {
             AddToPlaylistMenu(lazySongs: { contextSongs(for: song) })
             Button("Play Next") { player.playNext(contextSongs(for: song)) }
             Button("Play Later") { player.playLater(contextSongs(for: song)) }
-            Divider()
+            CopyUUIDURLMenuItem(uuid: song.id)
             Button("Get Info…") {
                 InfoCenter.shared.target = .song(song.id)
                 openWindow(id: "get-info")

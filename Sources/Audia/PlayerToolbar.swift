@@ -962,8 +962,7 @@ private struct NowPlayingMenu: View {
                 }
             }
 
-            Divider()
-
+            CopyUUIDURLMenuItem(uuid: song.id)
             Button("Get Info…") {
                 InfoCenter.shared.target = .song(song.id)
                 openWindow(id: "get-info")
