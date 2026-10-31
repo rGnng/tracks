@@ -254,8 +254,6 @@ struct MusicLibrary: Identifiable, Hashable {
     /// The identifier snapshot used for deterministic song UUIDs. It changes
     /// only when the library is explicitly rekeyed.
     var idNamespace: String
-    /// 0 = legacy absolute-path song IDs, 1 = namespace + relative-path IDs.
-    var idSchemeVersion: Int
     var isEnabled: Bool
 
     init(id: UUID,
@@ -263,14 +261,12 @@ struct MusicLibrary: Identifiable, Hashable {
          name: String,
          identifier: String,
          idNamespace: String,
-         idSchemeVersion: Int,
          isEnabled: Bool = true) {
         self.id = id
         self.path = path
         self.name = name
         self.identifier = identifier
         self.idNamespace = idNamespace
-        self.idSchemeVersion = idSchemeVersion
         self.isEnabled = isEnabled
     }
 

@@ -77,12 +77,10 @@ and its `-wal`/`-shm` sidecars in that folder.
   - 10 starred songs
   - 0 persisted queue rows (the test queue was cleared)
 - Libraries table:
-  - Read-only: `/Volumes/New Volume/MusicLocal` identifier `library1`
-  - The legacy internal record is deleted on first open; its `Music/` folder is
-    left on disk and is not registered automatically.
+  - Read-only: `/Volumes/New Volume/MusicLocal` identifier `OHYEAH`,
+    namespace `ohyeah`, ID scheme version 1.
 - All 20,669 current songs belong to the read-only library.
-- `internalLibraryPath` in UserDefaults has been replaced by
-  `databaseFolderPath`; the migrated value is `/Users/n/Music/Tracks`.
+- Database folder preference: `databaseFolderPath = /Users/n/Music/Tracks`.
 - Stored playlists:
   - `337845818`: 10 songs
   - `McStone`: 27 songs
@@ -137,7 +135,7 @@ Sources/Audia/
   Theme.swift                Light/dark colors and layout constants
   Models.swift               Artwork, Song, Album, Playlist, MusicLibrary, sidebar models
   Library.swift              Library singleton, database location, scanning, playlists
-  LibraryDatabase.swift      SQLite schema/migrations, sync, rekey, playlists, queue, index cleanup
+  LibraryDatabase.swift      SQLite schema, sync, rekey, playlists, queue, index cleanup
   SongIdentity.swift         Identifier/path normalization and deterministic UUID formulas
   RekeyProgress.swift        ReKey progress window, phase/progress state, INFO/ERROR log
   FLACLibrary.swift          FLAC/AVFoundation metadata readers and LibraryScanner
@@ -189,15 +187,13 @@ Sources/Audia/
   three SQLite file paths, not directory containment.
 - Every music library is read-only. Tracks never copies, moves, renames, writes
   tags/artwork into, or deletes files inside a library.
-- Each library has a unique `identifier` stored in `libraries.identifier`.
-  Missing values are backfilled as `library1`, `library2`, etc. Identifiers are
-  user-renameable and enforced uniquely with a case-insensitive index.
+- Each library has a unique `identifier` stored in `libraries.identifier`,
+  assigned as `library1`, `library2`, etc. when the library is added.
+  Identifiers are user-renameable and enforced uniquely with a case-insensitive
+  index.
 - `libraries.id_namespace` is the identifier snapshot used for deterministic
   song UUIDs. Renaming an identifier leaves the namespace unchanged until an
-  explicit rekey. `id_scheme_version` is 0 for legacy absolute-path IDs and 1
-  for namespace + relative-path IDs. Existing libraries stay at version 0 and
-  keep receiving legacy song IDs until they are rekeyed; new libraries start at
-  version 1.
+  explicit rekey.
 - **Danger Zone > ReKey Database > ReKey All IDs** stops playback, clears the
   queue and playback history, rescans current files, recomputes song/album/artist
   UUIDs, remaps playlist items, and moves the artwork cache. A dedicated progress
@@ -209,19 +205,14 @@ Sources/Audia/
 - Deleting a library index is available only while disabled, requires a second
   destructive confirmation, creates a millisecond-timestamped SQLite Online
   Backup first, and deletes only Tracks index data.
-- The legacy `libraries.kind = 'internal'` record is removed automatically on
-  open, together with its indexed songs and playlist references. Its `Music`
-  folder and files are left untouched and are not registered automatically.
 - Paths are canonicalized with `resolvingSymlinksInPath()` on both sides.
 - Albums and artists are not isolated per library; rows merge across libraries.
 
 ### Stable IDs
 
-- Legacy song ID (`id_scheme_version = 0`): `stableUUID(path)` with no prefix.
-- New song ID (`id_scheme_version = 1`):
-  `stableUUID("song|" + id_namespace + "|" + relativePath)`, where the
-  namespace is NFC-normalized and lowercased and the path is relative to the
-  library root.
+- Song ID: `stableUUID("song|" + id_namespace + "|" + relativePath)`, where
+  the namespace is NFC-normalized and lowercased and the path is relative to
+  the library root.
 - Artist ID: `stableUUID("artist|" + NFC(lowercased(name)))`.
 - Album ID: `stableUUID("album|" + artistID + "|" + NFC(lowercased(title)))`.
 - Library ID: `stableUUID("library|" + path)`.
@@ -241,8 +232,7 @@ songs(id TEXT PK, path TEXT UNIQUE, library_id, title, artist_id, album_id,
       duration, date_added, play_count, rating, loved, last_played,
       skip_count, mtime, file_size)
 libraries(id TEXT PK, path TEXT UNIQUE, kind TEXT DEFAULT 'external', name TEXT,
-          identifier TEXT UNIQUE COLLATE NOCASE, id_namespace TEXT,
-          id_scheme_version INTEGER NOT NULL DEFAULT 0, date_added,
+          identifier TEXT UNIQUE COLLATE NOCASE, id_namespace TEXT, date_added,
           enabled INTEGER NOT NULL DEFAULT 1)
 playlists(id TEXT PK, name TEXT, date_created REAL, date_modified REAL)
 playlist_items(playlist_id, song_id, position,
@@ -257,9 +247,8 @@ Important schema decisions:
 - `songs.library_id` identifies the owning source; `libraries.enabled` controls
   whether its songs appear in the normal library and playlists. Disabling does
   not delete or rewrite songs or playlist items.
-- `createSchema()` defines the base schema. On open, migrations add the
-  `libraries.identifier` column, backfill missing identifiers, remove legacy
-  internal records, and create the case-insensitive unique index.
+- `createSchema()` defines the current schema, including the unique
+  case-insensitive index on `libraries.identifier`.
 - `playlists.date_modified` is maintained for MPD `Last-Modified`.
 - `playlist_items` has a primary key on `(playlist_id, song_id)`, so a stored
   playlist cannot contain duplicate copies of the same song.
@@ -1055,10 +1044,8 @@ by AppKit's title-bar layout pass.
    - Never write, move, rename, or delete files inside a music library.
    - Index cleanup is allowed only through the missing-file review or the
      disabled-library delete flow, both of which leave audio files untouched.
-   - Legacy internal files are ignored, not migrated or restored.
 10. Current user data:
     - Original stored playlists, queue, and stars should be preserved.
-    - The legacy internal library record is removed on first open.
 11. Testing:
     - Use temporary files/playlists and temporary databases for destructive tests.
     - Keep system output muted during playback automation.
@@ -1181,8 +1168,6 @@ server.
 
 The current MPD server is enabled on all interfaces at port 6600, supports album
 art, stored playlists, the virtual Stared playlist, and MPD 0.24 `added` timestamps.
-The legacy internal library record is removed automatically; its old files on
-disk are ignored.
 
 For the next change: read this file, inspect the relevant source file, build with
 `swift build`, package with `bash scripts/build.sh` (which also signs the bundle),

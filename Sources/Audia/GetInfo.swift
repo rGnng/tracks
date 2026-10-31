@@ -149,6 +149,7 @@ struct GetInfoView: View {
     @State private var disc = ""
     @State private var discTotal = ""
     @State private var comments = ""
+    @State private var uuidText = ""
     @State private var mixedFields: Set<DetailField> = []
 
     @State private var headerTitle = ""
@@ -302,6 +303,15 @@ struct GetInfoView: View {
                         .foregroundColor(Theme.secondaryText)
                 }
 
+                infoRow("UUID") {
+                    Text(uuidText)
+                        .font(.system(size: 11.5, design: .monospaced))
+                        .foregroundColor(Theme.primaryText)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
+                }
+
                 Spacer(minLength: 0)
             }
             .padding(20)
@@ -447,6 +457,7 @@ struct GetInfoView: View {
         artworkData = nil
         artworkPreview = nil
         mixedFields = []
+        uuidText = ""
         locationPath = ""
         revealTarget = nil
         revealIsFolder = false
@@ -455,6 +466,7 @@ struct GetInfoView: View {
         case .album(let id):
             guard let album = library.album(withID: id) else { return }
             let songs = album.songs
+            uuidText = album.id.uuidString
             headerTitle = album.title
             headerArtist = album.artist
             headerAlbum = album.title
@@ -486,6 +498,7 @@ struct GetInfoView: View {
         case .song(let id):
             guard let result = library.song(withID: id) else { return }
             let song = result.song
+            uuidText = song.id.uuidString
             headerTitle = song.title
             headerArtist = song.artist
             headerAlbum = song.album

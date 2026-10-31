@@ -493,78 +493,6 @@ final class LibraryWorkflowTests: XCTestCase {
     }
 
     @MainActor
-    func testLegacyInternalRecordsAreRemovedAndIdentifiersBackfilled() throws {
-        let fixture = try makeFixture()
-        defer { try? FileManager.default.removeItem(at: fixture) }
-        let databasePath = fixture.appendingPathComponent("library.sqlite").path
-        let internalID = UUID()
-        let externalID = UUID()
-        let secondExternalID = UUID()
-        try runSQLite(databasePath, """
-            CREATE TABLE libraries (
-                id TEXT PRIMARY KEY,
-                path TEXT NOT NULL UNIQUE,
-                kind TEXT NOT NULL,
-                name TEXT NOT NULL,
-                date_added REAL NOT NULL,
-                enabled INTEGER NOT NULL DEFAULT 1
-            );
-            INSERT INTO libraries VALUES (
-                '\(internalID.uuidString)', '\(fixture.appendingPathComponent("old-internal").path)',
-                'internal', 'Old Internal', 1, 1
-            );
-            INSERT INTO libraries VALUES (
-                '\(externalID.uuidString)', '\(fixture.appendingPathComponent("read-only").path)',
-                'external', 'Read Only', 2, 1
-            );
-            INSERT INTO libraries VALUES (
-                '\(secondExternalID.uuidString)', '\(fixture.appendingPathComponent("second").path)',
-                'external', 'Second', 3, 1
-            );
-            """)
-
-        let database = LibraryDatabase(path: databasePath)
-        defer { database.closeForTermination() }
-
-        let libraries = database.loadLibraries()
-        XCTAssertEqual(libraries.map(\.path), [
-            fixture.appendingPathComponent("read-only").path,
-            fixture.appendingPathComponent("second").path,
-        ])
-        XCTAssertEqual(libraries.map(\.identifier), ["library1", "library2"])
-        XCTAssertEqual(libraries.map(\.idNamespace), ["library1", "library2"])
-        XCTAssertEqual(libraries.map(\.idSchemeVersion), [0, 0])
-        XCTAssertEqual(database.nextLibraryIdentifier(), "library3")
-        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.appendingPathComponent("Music").path),
-                       "Legacy cleanup must not create a Music folder")
-    }
-
-    @MainActor
-    func testLegacyInternalSongsAreRemovedWithTheirLibraryRecord() throws {
-        let fixture = try makeFixture()
-        defer { try? FileManager.default.removeItem(at: fixture) }
-        let databasePath = fixture.appendingPathComponent("library.sqlite").path
-        let internalID = UUID()
-
-        let initial = LibraryDatabase(path: databasePath)
-        initial.closeForTermination()
-
-        try runSQLite(databasePath, """
-            INSERT INTO libraries(id, path, kind, name, date_added)
-            VALUES('\(internalID.uuidString)', '\(fixture.appendingPathComponent("old").path)',
-                   'internal', 'Old Internal', 1);
-            INSERT INTO songs(id, path, library_id, title, artist_id, album_id, date_added)
-            VALUES('\(UUID().uuidString)', '\(fixture.appendingPathComponent("old/song.wav").path)',
-                   '\(internalID.uuidString)', 'Old Song', 'artist', 'album', 1);
-            """)
-
-        let reopened = LibraryDatabase(path: databasePath)
-        defer { reopened.closeForTermination() }
-        XCTAssertTrue(reopened.loadLibraries().isEmpty)
-        XCTAssertEqual(LibraryDatabase.inspect(path: databasePath)?.songCount, 0)
-    }
-
-    @MainActor
     func testLibraryIdentifiersAreUniqueAndRenameable() throws {
         let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture) }
@@ -579,7 +507,6 @@ final class LibraryWorkflowTests: XCTestCase {
                                                 identifier: database.nextLibraryIdentifier())
         XCTAssertEqual([first.identifier, second.identifier], ["library1", "library2"])
         XCTAssertEqual([first.idNamespace, second.idNamespace], ["library1", "library2"])
-        XCTAssertEqual([first.idSchemeVersion, second.idSchemeVersion], [1, 1])
 
         XCTAssertThrowsError(try database.ensureLibrary(
             path: fixture.appendingPathComponent("three").path,
@@ -643,7 +570,6 @@ final class LibraryWorkflowTests: XCTestCase {
                                                  name: "Media",
                                                  identifier: "Favorites")
         XCTAssertEqual(library.idNamespace, "favorites")
-        XCTAssertEqual(library.idSchemeVersion, 1)
 
         let track = makeTrack(path: audioURL.resolvingSymlinksInPath().path,
                               title: "Song")
@@ -666,22 +592,17 @@ final class LibraryWorkflowTests: XCTestCase {
         let databasePath = fixture.appendingPathComponent("library.sqlite").path
 
         var database = LibraryDatabase(path: databasePath)
-        _ = try database.ensureLibrary(path: mediaRoot.path,
-                                       name: "Media",
-                                       identifier: "library1")
-        database.closeForTermination()
-        try runSQLite(databasePath, "UPDATE libraries SET id_scheme_version = 0;")
-        database = LibraryDatabase(path: databasePath)
-        let legacyLibrary = try XCTUnwrap(database.loadLibraries().first)
-        XCTAssertEqual(legacyLibrary.idSchemeVersion, 0)
-        XCTAssertEqual(legacyLibrary.idNamespace, "library1")
-        try database.setLibraryIdentifier(legacyLibrary.id, identifier: "Favorites")
+        let library = try database.ensureLibrary(path: mediaRoot.path,
+                                                 name: "Media",
+                                                 identifier: "library1")
+        try database.setLibraryIdentifier(library.id, identifier: "Favorites")
         XCTAssertEqual(database.loadLibraries().first?.idNamespace, "library1")
 
         let track = makeTrack(path: canonicalAudioPath, title: "Song", album: "Test Album")
-        _ = database.sync(tracks: [track], libraries: [legacyLibrary])
+        _ = database.sync(tracks: [track], libraries: [library])
         let oldSong = try XCTUnwrap(database.loadLibrary().albums.first?.songs.first)
-        let oldSongID = LibraryScanner.stableUUID(canonicalAudioPath)
+        let oldSongID = SongIdentity.songID(namespace: "library1",
+                                            relativePath: "song.wav")
         XCTAssertEqual(oldSong.id, oldSongID)
 
         let dateAdded = oldSong.dateAdded
@@ -739,7 +660,6 @@ final class LibraryWorkflowTests: XCTestCase {
         XCTAssertEqual(queue.entries.map(\.id), [5])
         XCTAssertEqual(queue.currentIndex, 0)
         XCTAssertEqual(queue.elapsed, 12, accuracy: 0.001)
-        XCTAssertEqual(database.loadLibraries().first?.idSchemeVersion, 1)
         XCTAssertEqual(database.loadLibraries().first?.idNamespace, "favorites")
 
         XCTAssertTrue(FileManager.default.fileExists(atPath: audioURL.path))

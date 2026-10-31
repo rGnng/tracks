@@ -112,7 +112,6 @@ final class LibraryDatabase {
         exec("PRAGMA journal_mode=WAL;")
         exec("PRAGMA foreign_keys=ON;")
         createSchema()
-        migrateLibraries()
     }
 
     private func checkpointAndClose() {
@@ -215,7 +214,9 @@ final class LibraryDatabase {
         ]),
         columns(in: "albums").isSuperset(of: ["id", "title", "artist_id"]),
         columns(in: "artists").isSuperset(of: ["id", "name"]),
-        columns(in: "libraries").isSuperset(of: ["id", "path", "kind", "name", "enabled"]),
+        columns(in: "libraries").isSuperset(of: [
+            "id", "path", "kind", "name", "identifier", "id_namespace", "enabled",
+        ]),
         columns(in: "playlists").isSuperset(of: ["id", "name"]),
         columns(in: "playlist_items").isSuperset(of: ["playlist_id", "song_id", "position"]) else {
             return nil
@@ -280,7 +281,6 @@ final class LibraryDatabase {
             name TEXT NOT NULL,
             identifier TEXT NOT NULL DEFAULT '',
             id_namespace TEXT NOT NULL DEFAULT '',
-            id_scheme_version INTEGER NOT NULL DEFAULT 0,
             date_added REAL NOT NULL,
             enabled INTEGER NOT NULL DEFAULT 1
         );
@@ -310,159 +310,9 @@ final class LibraryDatabase {
         CREATE INDEX IF NOT EXISTS idx_songs_artist ON songs(artist_id);
         CREATE INDEX IF NOT EXISTS idx_songs_library ON songs(library_id);
         CREATE INDEX IF NOT EXISTS idx_playlist_items ON playlist_items(playlist_id, position);
-        """)
-    }
-
-    // MARK: Library migrations
-
-    private func migrateLibraries() {
-        if !tableHasColumn("libraries", column: "identifier") {
-            exec("ALTER TABLE libraries ADD COLUMN identifier TEXT;")
-        }
-        cleanupLegacyInternalLibraries()
-        normalizeLibraryIdentifiers()
-        if !tableHasColumn("libraries", column: "id_namespace") {
-            exec("ALTER TABLE libraries ADD COLUMN id_namespace TEXT;")
-        }
-        if !tableHasColumn("libraries", column: "id_scheme_version") {
-            exec("ALTER TABLE libraries ADD COLUMN id_scheme_version INTEGER NOT NULL DEFAULT 0;")
-        }
-        backfillLibraryNamespaces()
-        exec("""
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_libraries_identifier
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_libraries_identifier
             ON libraries(identifier COLLATE NOCASE);
-            """)
-    }
-
-    /// Existing libraries keep legacy song IDs until an explicit rekey. The
-    /// namespace is still recorded so the rekey flow can use it.
-    private func backfillLibraryNamespaces() {
-        var rows: [(id: String, identifier: String, namespace: String)] = []
-        guard let stmt = prepare("""
-            SELECT id, COALESCE(identifier, ''), COALESCE(id_namespace, '')
-            FROM libraries
-            """) else { return }
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            guard let id = text(stmt, 0) else { continue }
-            rows.append((id, text(stmt, 1) ?? "", text(stmt, 2) ?? ""))
-        }
-        sqlite3_finalize(stmt)
-
-        for row in rows {
-            let namespace = SongIdentity.normalizeIdentifier(row.identifier)
-            guard !namespace.isEmpty,
-                  row.namespace.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                continue
-            }
-            guard let update = prepare("UPDATE libraries SET id_namespace = ? WHERE id = ?") else {
-                continue
-            }
-            bind(update, 1, namespace)
-            bind(update, 2, row.id)
-            sqlite3_step(update)
-            sqlite3_finalize(update)
-        }
-    }
-
-    private func tableHasColumn(_ table: String, column: String) -> Bool {
-        guard let stmt = prepare("PRAGMA table_info(\(table))") else { return false }
-        defer { sqlite3_finalize(stmt) }
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            if text(stmt, 1)?.caseInsensitiveCompare(column) == .orderedSame {
-                return true
-            }
-        }
-        return false
-    }
-
-    /// Removes the obsolete Internal Library record and its indexed songs.
-    /// Audio files are never touched: the old `Music` folder is deliberately
-    /// left on disk for the user to handle.
-    private func cleanupLegacyInternalLibraries() {
-        var identifiers: [String] = []
-        guard let stmt = prepare("SELECT id FROM libraries WHERE kind = 'internal'") else { return }
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            if let id = text(stmt, 0) { identifiers.append(id) }
-        }
-        sqlite3_finalize(stmt)
-        guard !identifiers.isEmpty else { return }
-
-        do {
-            _ = try backup()
-        } catch {
-            AppLog.database.error("Could not back up the database before legacy Internal Library cleanup: \(error.localizedDescription, privacy: .public)")
-        }
-
-        do {
-            try executeThrowing("BEGIN IMMEDIATE;")
-            for libraryID in identifiers {
-                var songIDs: [String] = []
-                if let songStmt = prepare("SELECT id FROM songs WHERE library_id = ?") {
-                    bind(songStmt, 1, libraryID)
-                    while sqlite3_step(songStmt) == SQLITE_ROW {
-                        if let songID = text(songStmt, 0) { songIDs.append(songID) }
-                    }
-                    sqlite3_finalize(songStmt)
-                }
-                if !songIDs.isEmpty {
-                    try deleteSongRows(songIDs)
-                }
-                guard let deleteStmt = prepare("DELETE FROM libraries WHERE id = ?") else {
-                    throw LibraryDatabaseError.transactionFailed("Could not prepare legacy Internal Library cleanup")
-                }
-                bind(deleteStmt, 1, libraryID)
-                let result = sqlite3_step(deleteStmt)
-                sqlite3_finalize(deleteStmt)
-                guard result == SQLITE_DONE else {
-                    throw LibraryDatabaseError.transactionFailed(databaseErrorMessage)
-                }
-            }
-            try executeThrowing("COMMIT;")
-            AppLog.library.notice("Removed legacy Internal Library records (\(identifiers.count, privacy: .public))")
-        } catch {
-            exec("ROLLBACK;")
-            AppLog.database.error("Could not remove legacy Internal Library records: \(error.localizedDescription, privacy: .public)")
-        }
-    }
-
-    /// Gives every library a unique identifier. Existing rows get `libraryN`
-    /// after the legacy Internal Library has been removed.
-    private func normalizeLibraryIdentifiers() {
-        var rows: [(id: String, identifier: String)] = []
-        guard let stmt = prepare("SELECT id, COALESCE(identifier, '') FROM libraries ORDER BY date_added, rowid") else {
-            return
-        }
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            guard let id = text(stmt, 0) else { continue }
-            rows.append((id, text(stmt, 1) ?? ""))
-        }
-        sqlite3_finalize(stmt)
-        guard !rows.isEmpty else { return }
-
-        var used = Set<String>()
-        var nextNumber = 1
-        for row in rows {
-            let trimmed = row.identifier.trimmingCharacters(in: .whitespacesAndNewlines)
-            let key = trimmed.lowercased()
-            if !trimmed.isEmpty, used.insert(key).inserted {
-                if let numeric = Self.libraryIdentifierNumber(trimmed) {
-                    nextNumber = max(nextNumber, numeric + 1)
-                }
-                continue
-            }
-            var candidate = "library\(nextNumber)"
-            while used.contains(candidate.lowercased()) {
-                nextNumber += 1
-                candidate = "library\(nextNumber)"
-            }
-            nextNumber += 1
-            used.insert(candidate.lowercased())
-            guard let update = prepare("UPDATE libraries SET identifier = ? WHERE id = ?") else { continue }
-            bind(update, 1, candidate)
-            bind(update, 2, row.id)
-            sqlite3_step(update)
-            sqlite3_finalize(update)
-        }
+        """)
     }
 
     private static func libraryIdentifierNumber(_ identifier: String) -> Int? {
@@ -899,9 +749,7 @@ final class LibraryDatabase {
             }
 
             for library in libraries {
-                guard let stmt = prepare("""
-                    UPDATE libraries SET id_namespace = ?, id_scheme_version = 1 WHERE id = ?
-                    """) else {
+                guard let stmt = prepare("UPDATE libraries SET id_namespace = ? WHERE id = ?") else {
                     throw LibraryDatabaseError.transactionFailed("Could not prepare library rekey update")
                 }
                 bind(stmt, 1, SongIdentity.normalizeIdentifier(library.identifier))
@@ -956,7 +804,7 @@ final class LibraryDatabase {
     func loadLibraries() -> [MusicLibrary] {
         var result: [MusicLibrary] = []
         guard let stmt = prepare("""
-            SELECT id, path, name, identifier, id_namespace, id_scheme_version, enabled
+            SELECT id, path, name, identifier, id_namespace, enabled
             FROM libraries
             ORDER BY identifier COLLATE NOCASE, name COLLATE NOCASE
             """) else { return result }
@@ -971,8 +819,7 @@ final class LibraryDatabase {
                                        name: name,
                                        identifier: identifier,
                                        idNamespace: text(stmt, 4) ?? "",
-                                       idSchemeVersion: int(stmt, 5),
-                                       isEnabled: int(stmt, 6) != 0))
+                                       isEnabled: int(stmt, 5) != 0))
         }
         sqlite3_finalize(stmt)
         return result
@@ -983,9 +830,8 @@ final class LibraryDatabase {
         let libraryID = LibraryScanner.stableUUID("library|" + path).uuidString
         let namespace = SongIdentity.normalizeIdentifier(identifier)
         guard let stmt = prepare("""
-            INSERT INTO libraries(id, path, kind, name, identifier, id_namespace,
-                                  id_scheme_version, date_added)
-            VALUES(?, ?, 'external', ?, ?, ?, 1, ?)
+            INSERT INTO libraries(id, path, kind, name, identifier, id_namespace, date_added)
+            VALUES(?, ?, 'external', ?, ?, ?, ?)
             ON CONFLICT(path) DO UPDATE SET kind = 'external', name = excluded.name
             """) else {
             throw LibraryDatabaseError.transactionFailed("Could not prepare library insert")
@@ -1005,7 +851,7 @@ final class LibraryDatabase {
             throw LibraryDatabaseError.transactionFailed(databaseErrorMessage)
         }
         if let select = prepare("""
-            SELECT id, path, name, identifier, id_namespace, id_scheme_version, enabled
+            SELECT id, path, name, identifier, id_namespace, enabled
             FROM libraries WHERE path = ?
             """) {
             bind(select, 1, path)
@@ -1016,15 +862,13 @@ final class LibraryDatabase {
                let storedIdentifier = text(select, 3) {
                 let id = UUID(uuidString: idString) ?? LibraryScanner.stableUUID("library|" + storedPath)
                 let storedNamespace = text(select, 4) ?? namespace
-                let schemeVersion = int(select, 5)
-                let isEnabled = int(select, 6) != 0
+                let isEnabled = int(select, 5) != 0
                 sqlite3_finalize(select)
                 return MusicLibrary(id: id,
                                     path: storedPath,
                                     name: storedName,
                                     identifier: storedIdentifier,
                                     idNamespace: storedNamespace,
-                                    idSchemeVersion: schemeVersion,
                                     isEnabled: isEnabled)
             }
             sqlite3_finalize(select)
@@ -1034,7 +878,6 @@ final class LibraryDatabase {
                             name: name,
                             identifier: identifier,
                             idNamespace: namespace,
-                            idSchemeVersion: 1,
                             isEnabled: true)
     }
 
@@ -1337,7 +1180,6 @@ final class LibraryDatabase {
                             dateAdded: TimeInterval) {
         let songID: String
         if let ownerLibrary,
-           ownerLibrary.idSchemeVersion >= 1,
            let relative = SongIdentity.relativePath(filePath: track.path,
                                                     libraryRoot: ownerLibrary.path) {
             songID = SongIdentity.songID(namespace: ownerLibrary.idNamespace,

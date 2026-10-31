@@ -165,7 +165,6 @@ final class Library: ObservableObject {
 
     private static let databaseFolderKey = "databaseFolderPath"
     private static let databaseSetupPendingKey = "databaseSetupPending"
-    private static let legacyInternalPathKey = "internalLibraryPath"
 
     init() {
         albums = []
@@ -198,13 +197,6 @@ final class Library: ObservableObject {
         let defaults = UserDefaults.standard
         if let raw = defaults.string(forKey: databaseFolderKey),
            let folder = normalizedFolder(raw) {
-            defaults.removeObject(forKey: databaseSetupPendingKey)
-            return DatabaseLocationResolution(folder: folder, isNewInstall: false)
-        }
-        if let raw = defaults.string(forKey: legacyInternalPathKey),
-           let folder = normalizedFolder(raw) {
-            defaults.set(folder.path, forKey: databaseFolderKey)
-            defaults.removeObject(forKey: legacyInternalPathKey)
             defaults.removeObject(forKey: databaseSetupPendingKey)
             return DatabaseLocationResolution(folder: folder, isNewInstall: false)
         }
@@ -274,7 +266,6 @@ final class Library: ObservableObject {
         }
         UserDefaults.standard.set(folder.path, forKey: Self.databaseFolderKey)
         UserDefaults.standard.removeObject(forKey: Self.databaseSetupPendingKey)
-        UserDefaults.standard.removeObject(forKey: Self.legacyInternalPathKey)
         databaseFolderPath = folder.path
         needsDatabaseSetup = false
         if removeEmptyDefault, oldPath != newPath {
