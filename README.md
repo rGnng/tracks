@@ -11,7 +11,8 @@ library, native window behavior, and first-class keyboard navigation.
 
 Tracks is deliberately local-first. There is no web view, cloud service,
 account system, or document model. The library, playlists, stars, play counts,
-queue, and history live on this Mac.
+queue, and history live on this Mac. The optional WebTracks companion is a
+separate project; Tracks itself still has no web view.
 
 - **Product name:** Tracks
 - **Internal module / executable:** Audia
@@ -19,6 +20,8 @@ queue, and history live on this Mac.
 - **UI:** native SwiftUI + AppKit, no WebView
 - **Minimum macOS:** 15
 - **App icon:** `Resources/AppIcon.icns` (source: `design/app-icon.svg` / `design/app-icon.png`)
+- **Companion web player:** [`../webtracks`](../webtracks), optional and
+  separate; shares the database schema and stable UUIDs
 
 ## Design principles
 
@@ -55,8 +58,9 @@ queue, and history live on this Mac.
 - Double-clicking a sidebar playlist, Albums, or Recently Added plays it in the
   current content-view sort order.
 - Context menus provide Play, Shuffle, Add to Playlist, Play Next, Play Later,
-  Get Info, and Go to Album/Artist. User playlists can also receive album and
-  song drops.
+  Copy UUID URL, Get Info, and Go to Album/Artist. Copy UUID URL is optional and
+  configured under **Settings > Services**. User playlists can also receive
+  album and song drops.
 
 ## Playback
 
@@ -94,13 +98,14 @@ queue, and history live on this Mac.
   libraries default to `library1`, `library2`, and so on; both identifier and
   namespace collisions are checked on add and rename, and ReKey preflights all
   namespaces before making changes.
-- Song UUIDs use an internal library namespace plus the file's relative path.
-  Renaming the identifier does not change song IDs until **Danger Zone > ReKey
-  Database > ReKey All IDs** is run, which stops playback, clears the queue and
-  playback history, and recomputes song, album, and artist UUIDs while
-  preserving playlists, play counts, and stars. A progress window reports each
-  phase with timestamped INFO/ERROR entries. Tracks restarts automatically
-  afterward so in-memory IDs are reloaded.
+- Song, album, artist, and library UUIDs are deterministic and stable across
+  databases. Renaming the identifier does not change existing IDs until
+  **Danger Zone > ReKey Database > ReKey All IDs** is run, which stops playback,
+  clears the queue and playback history, and recomputes song, album, and artist
+  UUIDs while preserving playlists, play counts, and stars. A progress window
+  reports each phase with timestamped INFO/ERROR entries. Tracks restarts
+  automatically afterward so in-memory IDs are reloaded. The exact derivation
+  is shared with WebTracks; see [WebTracks interoperability](#webtracks-interoperability).
 - The Database is located on first launch; **Settings > Library > Database >
   Open/Create Database…** can open another existing Tracks database or create a
   new one. Database and library folders are allowed to overlap.
@@ -113,14 +118,64 @@ queue, and history live on this Mac.
   song IDs, playlists, stars, and play counts. Unmatched tracks use the same
   review flow.
 - **Get Info** is a read-only details window with Details, Artwork, and File
-  tabs. Mixed-value fields use italic placeholders and remain selectable and
-  copyable.
+  tabs. Details includes a copyable UUID row for the current song or album, and
+  the File tab shows the file or album-folder modification date. Mixed-value
+  fields use italic placeholders and remain selectable and copyable.
 - Stars, play counts, playlists, queue, and history are Tracks metadata stored
   in the database, so they remain editable even though library files are not.
 - Disabling a library hides its songs, stops playback, and clears the global
   queue and History, but keeps its indexed rows for later re-enable. Deleting a
   disabled library creates a timestamped SQLite Online Backup first and removes
   only Tracks index data.
+
+## WebTracks interoperability
+
+Tracks has an optional companion web player in [`../webtracks`](../webtracks).
+The two projects share the same SQLite schema, artwork cache naming, and
+deterministic UUID algorithm, but they do **not** share a live database:
+WebTracks keeps its own `library.sqlite` and `Artwork/` directory under its
+configured `database_dir` and never reads or writes Tracks'
+`~/Music/Tracks/library.sqlite` or `~/Library/Caches/com.audia.tracks/Artwork`.
+The interaction is through stable IDs and URL links.
+
+### Stable IDs
+
+Both apps derive IDs from MD5 bytes, without applying UUID version bits:
+
+```text
+library = "library|" + canonicalPath
+song    = "song|"    + normalized(namespace) + "|" + NFC(relativePath)
+artist  = "artist|"  + lowercase(NFC(name))
+album   = "album|"   + artistID + "|" + lowercase(NFC(title))
+```
+
+`normalized(namespace)` is trimmed, NFC-normalized, and lowercased. Relative
+paths are library-root relative, NFC-normalized, and drop a leading `/`. The
+namespace is a snapshot of the library identifier: renaming the identifier does
+not change existing IDs until ReKey runs. Because each app owns a database
+copy, ReKey in one app does not update the other; run it in both when the
+namespaces must stay aligned.
+
+### Links between the apps
+
+WebTracks accepts album, song, and playlist tokens as a normal UUID, a compact
+32-character hex UUID, or the URL-safe Base64 encoding of the 16 UUID bytes:
+
+```text
+#/album/<token>
+#/song/<token>
+#/playlist/<token>
+#/<token>          # resolved as an album first, then a song
+```
+
+To copy a matching link from Tracks, enable **Settings > Services > Copy UUID
+URL**, set a URL prefix ending with `/`, such as `https://music.example/#/`, and
+choose **UUID** or **URL safe BASE64**. Album and song context menus and the Now
+Playing menu then include **Copy UUID URL**, which copies the prefix followed by
+the token. A bare `#/` prefix works for both albums and songs because WebTracks
+resolves the token as an album first and then as a song. WebTracks' own **Copy
+Album Link** and **Copy Song Link** actions build links from its configured host
+and `url_id_format`; both token formats remain valid for incoming links.
 
 ## Interaction details
 
@@ -238,8 +293,12 @@ queue, and history live on this Mac.
   Defaults: mute `m`, volume down `-`, volume up `=`, play/pause Space, go to
   current album `j`; system-wide show/hide Tracks `F17` and star/unstar the
   current song `F18`. **Shuffle Play All** shuffles every song in the enabled
-  libraries but is unassigned by default. The star action targets the playing
-  song, not the row selection.
+  libraries; it is unassigned by default and can be recorded in the Shortcuts
+  table. The star action targets the playing song, not the row selection.
+- **Services** hosts the menu-bar card, the MPD server, and **Copy UUID URL**.
+  Copy UUID URL adds a link-ready item to album and song context menus and the
+  Now Playing menu; set a URL prefix and choose UUID or URL-safe BASE64. See
+  [WebTracks interoperability](#webtracks-interoperability).
 - Opening Settings does not focus a text field or beep. The JPEG-quality field
   commits on Return or focus loss and clamps to 15–100.
 - The status bar summarizes the current selection with item count, total
@@ -262,7 +321,8 @@ queue, and history live on this Mac.
 
 Tracks includes an optional MPD-compatible TCP server, disabled by default. It
 can listen on loopback or all interfaces, on a configurable port (default 6600),
-with an optional password. Treat exposure beyond a trusted LAN as unsafe.
+with an optional password. Settings changes apply automatically; there is no
+separate restart button. Treat exposure beyond a trusted LAN as unsafe.
 
 Supported areas include status/current song/queue, library browse and search,
 stored playlists, album art, idle notifications, audio outputs, and the virtual
@@ -310,8 +370,9 @@ Requires Xcode 16+ and Swift 6 on macOS 15+.
   **Action > Include Info Messages** / **Include Debug Messages** for verbose
   output.
 - `scripts/debug/audiactl` is the reusable Accessibility test CLI. It can read
-  Debug metrics, locate album UUIDs, send keys, resize windows, drag selections
-  and map album indices. See `scripts/debug/README.md`.
+  Debug metrics, locate album UUIDs, send keys, click and right-click, resize
+  windows, drag selections, and map album indices. See
+  `scripts/debug/README.md`.
 
 ```bash
 scripts/debug/audiactl metrics AlbumGrid
@@ -340,7 +401,8 @@ The default database location is:
 
 The folder is chosen on first launch. Existing installations keep their current
 database location. Tracks manages only `library.sqlite` and its `-wal`/`-shm`
-sidecars in that folder.
+sidecars in that folder. WebTracks keeps a separate copy under its own
+`database_dir`; see [WebTracks interoperability](#webtracks-interoperability).
 
 Artwork is cached as JPEG files up to 500×500 under:
 
@@ -356,12 +418,13 @@ elapsed time are stored in the singleton `player_queue` table.
 
 ```text
 Sources/Audia/
-  App and chrome        AudiaApp, ContentView, PlayerToolbar, StatusBarView,
-                        SidebarView, SidebarVisibility, WindowMode, Components
+  App and chrome        AudiaApp, AppLog, LogViewer, ContentView, PlayerToolbar,
+                        StatusBarView, SidebarView, SidebarVisibility, WindowMode,
+                        Components
   Content views         ContentPane, ContentViews, BrowserViews, ContextMenus,
                         PlaylistActions, MarqueeSelection, ListScroll
   Library and data      Library, LibraryDatabase, SongIdentity,
-                        LibraryRelocationMatcher, Models
+                        LibraryRelocationMatcher, RekeyProgress, UUIDURL, Models
   Metadata and artwork  FLACLibrary, ArtworkCache, GetInfo
   Playback              PlayerState, AudioDevices, SystemVolume, SystemNowPlaying
   Input and navigation  DragController, NavigationRouter, NavigationCenter,
@@ -376,6 +439,7 @@ Sources/Audia/
 Assets/AccentColors.xcassets  Static Graphite accent for native menus
 Resources/AppIcon.icns        Built app icon
 design/                       Icon source and previews
+docs/screenshots/             README screenshots
 scripts/build.sh              App bundle build and signing
 scripts/make-icon.sh          Icon regeneration
 ```
