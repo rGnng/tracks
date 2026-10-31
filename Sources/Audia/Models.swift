@@ -240,47 +240,33 @@ struct PersistedPlayerQueue {
     let elapsed: TimeInterval
 }
 
-/// One of the two kinds of music library.
+/// A read-only music library owned by another application.
 ///
-/// - `internal`: the single, writable library whose database lives inside the
-///   same folder (and whose music lives in its `Music` subfolder).
-/// - `external`: a folder managed by another application (iTunes, etc.). It is
-///   indexed read-only; tag edits are never written back.
+/// `identifier` is a user-visible, globally unique label stored in the
+/// database. It is intentionally separate from `id`: the UUID remains the
+/// stable internal key, while the identifier can be renamed without breaking
+/// songs, playlists, or the playback queue.
 struct MusicLibrary: Identifiable, Hashable {
-    enum Kind: String {
-        case internalLibrary = "internal"
-        case external = "external"
-    }
-
     let id: UUID
     var path: String
     var name: String
-    var kind: Kind
+    var identifier: String
     var isEnabled: Bool
 
-    init(id: UUID, path: String, name: String, kind: Kind, isEnabled: Bool = true) {
+    init(id: UUID, path: String, name: String, identifier: String, isEnabled: Bool = true) {
         self.id = id
         self.path = path
         self.name = name
-        self.kind = kind
+        self.identifier = identifier
         self.isEnabled = isEnabled
     }
 
-    var isReadOnly: Bool { kind == .external }
-    var isInternal: Bool { kind == .internalLibrary }
-    var isExternal: Bool { kind == .external }
+    var scanPath: String { path }
+}
 
-    /// The folder that is actually scanned: `Music` for the internal library,
-    /// the root itself for external libraries.
-    var scanPath: String {
-        isInternal
-            ? URL(fileURLWithPath: path).appendingPathComponent("Music").path
-            : path
-    }
-
-    var musicPath: String {
-        URL(fileURLWithPath: path).appendingPathComponent("Music").path
-    }
+struct LibraryAddition {
+    let path: String
+    let identifier: String?
 }
 
 struct ArtistSummary: Identifiable, Hashable {

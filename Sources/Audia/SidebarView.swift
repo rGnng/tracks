@@ -6,7 +6,6 @@ struct SidebarView: View {
 
     @ObservedObject private var library = Library.shared
     @ObservedObject private var drag = DragController.shared
-    @ObservedObject private var importer = MediaImporter.shared
     @AppStorage("albumSort") private var albumSort = GridSort.album.rawValue
     @AppStorage("albumSortDirection") private var albumSortDirection =
         GridSortDirection.ascending.rawValue
@@ -237,12 +236,6 @@ struct SidebarView: View {
     }
 
     private var sidebarActivity: (title: String, progress: Double?, detail: String?)? {
-        if importer.isImporting {
-            let detail = importer.importTotal > 0
-                ? "\(importer.importCompleted)/\(importer.importTotal)"
-                : nil
-            return ("Importing", importer.importProgress, detail)
-        }
         if library.isScanning {
             return (library.scanPhase.rawValue,
                     library.scanActivityProgress,

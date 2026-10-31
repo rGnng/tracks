@@ -98,7 +98,8 @@ and therefore does not persist the active viewport.
 
 ## Album index mapping
 
-With `--db` omitted, the CLI checks:
+With `--db` omitted, the CLI checks the configured
+`com.audia.tracks.databaseFolderPath`, then:
 
 ```text
 ~/Music/Tracks/library.sqlite

@@ -17,6 +17,7 @@ struct ContentView: View {
     @State private var searchText = ""
     @State private var pendingAlbumID: UUID?
     @State private var didOpenDebugWindow = false
+    @State private var didOpenDatabaseSetup = false
 
     var body: some View {
         libraryView
@@ -39,12 +40,12 @@ struct ContentView: View {
                 openWindow(id: "debug")
             }
 
-            // Invite the user to create the writable Internal Library. Doing it
-            // from a window (and later via NSOpenPanel) is also what gives the
-            // app permission to work inside ~/Music.
-            if library.shouldAutoPromptSetup {
-                library.markSetupPromptShown()
-                openWindow(id: "setup")
+            // A fresh install chooses where its database lives before the main
+            // window is useful. Adding music libraries is handled separately in
+            // Settings for now.
+            if library.needsDatabaseSetup, !didOpenDatabaseSetup {
+                didOpenDatabaseSetup = true
+                openWindow(id: "database-setup")
             }
         }
         .onChange(of: navigation.albumToOpen) { _, id in
@@ -100,27 +101,22 @@ struct ContentView: View {
             pendingAlbumID = nil
             StatusBarCenter.shared.context = .library
         }
-        .onReceive(NotificationCenter.default.publisher(for: .openSetupWindow)) { _ in
-            openWindow(id: "setup")
-        }
         .alert(
-            playback.missingFilePauseMessage == nil ? "Library Opened" : "Playback Paused",
+            "Playback Paused",
             isPresented: Binding(
-                get: { library.openWarning != nil || playback.missingFilePauseMessage != nil },
+                get: { playback.missingFilePauseMessage != nil },
                 set: {
                     if !$0 {
-                        library.clearOpenWarning()
                         PlayerState.shared.dismissMissingFilePauseNotice()
                     }
                 }
             )
         ) {
             Button("OK") {
-                library.clearOpenWarning()
                 PlayerState.shared.dismissMissingFilePauseNotice()
             }
         } message: {
-            Text(playback.missingFilePauseMessage ?? library.openWarning ?? "")
+            Text(playback.missingFilePauseMessage ?? "")
         }
     }
 

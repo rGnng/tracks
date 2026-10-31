@@ -15,7 +15,7 @@ final class InfoCenter: ObservableObject {
 
 /// Borderless AppKit text field used by the Details tab. Unlike a disabled
 /// SwiftUI TextField, a non-editable field remains selectable so values can be
-/// copied from read-only external libraries.
+/// copied from read-only libraries.
 private struct GetInfoTextField: NSViewRepresentable {
     @Binding var text: String
     let isEditable: Bool
@@ -156,17 +156,11 @@ struct GetInfoView: View {
     @State private var headerAlbum = ""
 
     @State private var artworkData: Data?
-    @State private var originalArtworkData: Data?
     @State private var artworkPreview: NSImage?
     @State private var duration: TimeInterval = 0
     @State private var plays = 0
-    @State private var resetPlays = false
-    @State private var readOnly = false
-    @State private var isSaving = false
-    @State private var saveError: String?
     @State private var targetAlbumID: UUID?
     @State private var artworkRequestID = UUID()
-    @State private var artworkLoaded = false
 
     @State private var locationPath = ""
     @State private var revealTarget: URL?
@@ -199,22 +193,9 @@ struct GetInfoView: View {
 
             Divider()
             HStack(spacing: 10) {
-                if tab == .artwork, artworkData != nil {
-                    Button("Remove Artwork") {
-                        artworkData = nil
-                        artworkPreview = nil
-                    }
-                    .disabled(readOnly)
-                }
                 Spacer(minLength: 0)
-                Button("Cancel") { close() }
-                    .keyboardShortcut(.cancelAction)
-                    .disabled(isSaving)
-                Button(isSaving ? "Saving…" : "OK") {
-                    Task { await save() }
-                }
-                .keyboardShortcut(.defaultAction)
-                .disabled(readOnly || isSaving || !artworkLoaded)
+                Button("Done") { close() }
+                    .keyboardShortcut(.defaultAction)
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 14)
@@ -230,17 +211,7 @@ struct GetInfoView: View {
             let data = await ArtworkCache.shared.fullData(albumID: id)
             guard !Task.isCancelled, targetAlbumID == id else { return }
             artworkData = data
-            originalArtworkData = data
             artworkPreview = data.flatMap(NSImage.init(data:))
-            artworkLoaded = true
-        }
-        .alert("Could not write tags", isPresented: Binding(
-            get: { saveError != nil },
-            set: { if !$0 { saveError = nil } }
-        )) {
-            Button("OK") { saveError = nil }
-        } message: {
-            Text(saveError ?? "")
         }
     }
 
@@ -326,19 +297,9 @@ struct GetInfoView: View {
                 }
 
                 infoRow("Play count") {
-                    HStack(spacing: 10) {
-                        Text("\(plays)")
-                            .font(.system(size: 12))
-                            .foregroundColor(Theme.secondaryText)
-                        Button("Reset") {
-                            plays = 0
-                            resetPlays = true
-                        }
-                        .buttonStyle(.borderless)
-                        .font(.system(size: 11.5))
-                        .foregroundColor(Theme.highlight)
-                        .disabled(readOnly || plays == 0)
-                    }
+                    Text("\(plays)")
+                        .font(.system(size: 12))
+                        .foregroundColor(Theme.secondaryText)
                 }
 
                 Spacer(minLength: 0)
@@ -349,7 +310,7 @@ struct GetInfoView: View {
 
     private func detailTextField(_ text: Binding<String>, field: DetailField) -> some View {
         let prompt = mixedFields.contains(field) ? "Mixed" : ""
-        return GetInfoTextField(text: text, isEditable: !readOnly, prompt: prompt)
+        return GetInfoTextField(text: text, isEditable: false, prompt: prompt)
             .frame(maxWidth: .infinity)
             .frame(height: 22)
             .padding(.horizontal, 6)
@@ -483,13 +444,8 @@ struct GetInfoView: View {
 
     private func load() {
         guard let target = info.target else { return }
-        saveError = nil
-        isSaving = false
-        artworkLoaded = false
         artworkData = nil
-        originalArtworkData = nil
         artworkPreview = nil
-        resetPlays = false
         mixedFields = []
         locationPath = ""
         revealTarget = nil
@@ -499,7 +455,6 @@ struct GetInfoView: View {
         case .album(let id):
             guard let album = library.album(withID: id) else { return }
             let songs = album.songs
-            readOnly = library.isReadOnly(albumID: id)
             headerTitle = album.title
             headerArtist = album.artist
             headerAlbum = album.title
@@ -531,7 +486,6 @@ struct GetInfoView: View {
         case .song(let id):
             guard let result = library.song(withID: id) else { return }
             let song = result.song
-            readOnly = library.isReadOnly(songID: id)
             headerTitle = song.title
             headerArtist = song.artist
             headerAlbum = song.album
@@ -565,115 +519,6 @@ struct GetInfoView: View {
             return ""
         }
         return unique.first ?? ""
-    }
-
-    private func resolved(_ field: DetailField, ui: String, original: String) -> String {
-        if mixedFields.contains(field), ui.isEmpty { return original }
-        return ui
-    }
-
-    private func resolvedInt(_ field: DetailField, ui: String, original: Int) -> Int {
-        if mixedFields.contains(field), ui.isEmpty { return original }
-        return Int(ui) ?? 0
-    }
-
-    private func save() async {
-        guard !readOnly, !isSaving else { return }
-        guard let target = info.target else { return }
-        isSaving = true
-        defer { isSaving = false }
-        do {
-            switch target {
-            case .album(let id):
-                guard let album = library.album(withID: id) else { return }
-                let albumTitleValue = resolved(.album, ui: albumTitle, original: album.title)
-                let albumArtistValue = resolved(.albumArtist, ui: albumArtist, original: album.artist)
-                let genreValue = resolved(.genre, ui: genre, original: album.genre)
-                let yearValue = resolved(.year, ui: year, original: album.year)
-
-                let updatedSongs = album.songs.map { song -> Song in
-                    Song(id: song.id,
-                         title: resolved(.name, ui: title, original: song.title),
-                         artist: resolved(.artist, ui: artist, original: song.artist),
-                         album: resolved(.album, ui: albumTitle, original: song.album),
-                         albumArtist: resolved(.albumArtist, ui: albumArtist, original: song.albumArtist),
-                         genre: resolved(.genre, ui: genre, original: song.genre),
-                         duration: song.duration,
-                         trackNumber: resolvedInt(.track, ui: track, original: song.trackNumber),
-                         trackTotal: resolvedInt(.trackTotal,
-                                                  ui: trackTotal,
-                                                  original: song.trackTotal),
-                         discNumber: resolvedInt(.disc, ui: disc, original: song.discNumber),
-                         discTotal: resolvedInt(.discTotal, ui: discTotal, original: song.discTotal),
-                         comments: resolved(.comments, ui: comments, original: song.comments),
-                         year: resolved(.year, ui: year, original: song.year),
-                         plays: resetPlays ? 0 : song.plays,
-                         dateAdded: song.dateAdded,
-                         fileURL: song.fileURL,
-                         fileSize: song.fileSize,
-                         isStarred: song.isStarred)
-                }
-
-                let artwork = Artwork(colors: album.artwork.colors, imageData: artworkData)
-                let updated = Album(id: album.id,
-                                    title: albumTitleValue,
-                                    artist: albumArtistValue,
-                                    genre: genreValue,
-                                    year: yearValue,
-                                    artwork: artwork,
-                                    songs: updatedSongs)
-                if !updated.hasSameTagMetadata(as: album)
-                    || artworkData != originalArtworkData {
-                    try await library.updateAlbum(updated)
-                }
-                if resetPlays {
-                    library.resetPlayCount(songIDs: updatedSongs.map(\.id))
-                }
-
-            case .song(let id):
-                guard let result = library.song(withID: id) else { return }
-                let song = result.song
-                if artworkData != originalArtworkData {
-                    let artwork = Artwork(colors: result.album.artwork.colors, imageData: artworkData)
-                    let updatedAlbum = Album(id: result.album.id,
-                                             title: result.album.title,
-                                             artist: result.album.artist,
-                                             genre: result.album.genre,
-                                             year: result.album.year,
-                                             artwork: artwork,
-                                             songs: result.album.songs)
-                    try await library.updateAlbum(updatedAlbum)
-                }
-
-                let updatedSong = Song(id: song.id,
-                                       title: title.isEmpty ? song.title : title,
-                                       artist: artist,
-                                       album: albumTitle.isEmpty ? song.album : albumTitle,
-                                       albumArtist: albumArtist.isEmpty ? song.albumArtist : albumArtist,
-                                       genre: genre,
-                                       duration: song.duration,
-                                       trackNumber: Int(track) ?? 0,
-                                       trackTotal: Int(trackTotal) ?? 0,
-                                       discNumber: Int(disc) ?? 0,
-                                       discTotal: Int(discTotal) ?? 0,
-                                       comments: comments,
-                                       year: resolved(.year, ui: year, original: song.year),
-                                       plays: resetPlays ? 0 : song.plays,
-                                       dateAdded: song.dateAdded,
-                                       fileURL: song.fileURL,
-                                       fileSize: song.fileSize,
-                                       isStarred: song.isStarred)
-                if !updatedSong.hasSameTagMetadata(as: song) {
-                    try await library.updateSong(updatedSong)
-                }
-                if resetPlays {
-                    library.resetPlayCount(songIDs: [song.id])
-                }
-            }
-            close()
-        } catch {
-            saveError = error.localizedDescription
-        }
     }
 
     private func close() {

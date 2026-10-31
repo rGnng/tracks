@@ -29,13 +29,6 @@ struct AudiaApp: App {
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1320, height: 860)
         .commands {
-            CommandGroup(replacing: .newItem) {
-                Button("Import Media…") {
-                    MediaImporter.shared.chooseAndImport()
-                }
-                .keyboardShortcut("o", modifiers: .command)
-            }
-
             // Keep SwiftUI's per-window entries out of the Window menu. The
             // explicit Library and MiniPlayer commands below are the supported
             // window switchers for this app.
@@ -127,11 +120,11 @@ struct AudiaApp: App {
         .defaultLaunchBehavior(.suppressed)
         .restorationBehavior(.disabled)
 
-        Window("Set Up Tracks Library", id: "setup") {
-            InternalLibrarySetupView()
+        Window("Open/Create Database", id: "database-setup") {
+            DatabaseSetupView()
                 .accentColor(highlightColor)
         }
-        .defaultSize(width: 540, height: 410)
+        .defaultSize(width: 540, height: 360)
         .windowResizability(.contentSize)
     }
 }
@@ -139,7 +132,6 @@ struct AudiaApp: App {
 private enum SettingsAlert: Identifiable {
     case error(String)
     case shortcutConflict(String)
-    case confirmOpen(String)
     case confirmDisable(MusicLibrary)
     case confirmDelete(MusicLibrary)
     case notice(title: String, message: String)
@@ -148,33 +140,10 @@ private enum SettingsAlert: Identifiable {
         switch self {
         case .error(let message): return "error:\(message)"
         case .shortcutConflict(let message): return "shortcut-conflict:\(message)"
-        case .confirmOpen(let path): return "open:\(path)"
         case .confirmDisable(let library): return "disable:\(library.id)"
         case .confirmDelete(let library): return "delete:\(library.id)"
         case .notice(let title, let message): return "notice:\(title):\(message)"
         }
-    }
-}
-
-@MainActor
-private enum LibraryFolderPicker {
-    static func choose() -> String? {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = true
-        panel.allowsMultipleSelection = false
-        panel.prompt = "Open"
-        panel.message = "Choose a Tracks library folder (it contains library.sqlite and Music), or select its library.sqlite file."
-        panel.directoryURL = FileManager.default.urls(for: .musicDirectory, in: .userDomainMask).first
-        guard panel.runModal() == .OK, let url = panel.url else { return nil }
-
-        var isDirectory: ObjCBool = false
-        FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory)
-        if isDirectory.boolValue { return url.path }
-        if url.lastPathComponent == "library.sqlite" {
-            return url.deletingLastPathComponent().path
-        }
-        return url.path
     }
 }
 
@@ -272,38 +241,27 @@ struct SettingsView: View {
                     message: Text(message),
                     dismissButton: .default(Text("OK"))
                 )
-            case .confirmOpen(let path):
+            case .confirmDisable(let libraryToDisable):
                 return Alert(
-                    title: Text("Open Another Library?"),
-                    message: Text("The current library will be replaced in Tracks. Its folder and files are not deleted."),
-                    primaryButton: .default(Text("Open")) {
-                        // Let the confirmation alert dismiss before a potential
-                        // error alert is presented.
-                        DispatchQueue.main.async { performOpen(path) }
-                    },
-                    secondaryButton: .cancel()
-                )
-            case .confirmDisable(let externalLibrary):
-                return Alert(
-                    title: Text("Disable External Library?"),
-                    message: Text("Disabling “\(externalLibrary.name)” stops playback and clears the playback queue and History. Its songs will be hidden throughout Tracks. Library and playlist data remain stored and can be restored by enabling it again."),
+                    title: Text("Disable Library?"),
+                    message: Text("Disabling “\(libraryToDisable.identifier)” stops playback and clears the playback queue and History. Its songs will be hidden throughout Tracks. Library and playlist data remain stored and can be restored by enabling it again."),
                     primaryButton: .destructive(Text("Disable")) {
                         do {
-                            try library.setExternalLibrary(externalLibrary.id, enabled: false)
+                            try library.setLibrary(libraryToDisable.id, enabled: false)
                         } catch {
                             self.alert = .error(error.localizedDescription)
                         }
                     },
                     secondaryButton: .cancel()
                 )
-            case .confirmDelete(let externalLibrary):
+            case .confirmDelete(let libraryToDelete):
                 return Alert(
-                    title: Text("Delete External Library Index?"),
-                    message: Text("This removes “\(externalLibrary.name)” and its indexed songs from Tracks, including their playlist entries, play counts, and stars. User-created playlists remain, even if empty. Audio files on the external drive are not deleted. A timestamped database backup will be created first."),
+                    title: Text("Delete Library Index?"),
+                    message: Text("This removes “\(libraryToDelete.identifier)” and its indexed songs from Tracks, including their playlist entries, play counts, and stars. User-created playlists remain, even if empty. Audio files are not deleted. A timestamped database backup will be created first."),
                     primaryButton: .destructive(Text("Delete Index")) {
                         do {
-                            let backup = try library.deleteDisabledExternalLibrary(externalLibrary.id)
-                            self.alert = .notice(title: "External Library Deleted",
+                            let backup = try library.deleteDisabledLibrary(libraryToDelete.id)
+                            self.alert = .notice(title: "Library Index Deleted",
                                                  message: "The library index was deleted. Backup saved at:\n\(backup.path)")
                         } catch {
                             self.alert = .error(error.localizedDescription)
@@ -475,8 +433,8 @@ struct SettingsView: View {
 
     private var librarySettings: some View {
         VStack(alignment: .leading, spacing: 22) {
-            internalLibrarySection
-            externalLibrariesSection
+            databaseSection
+            librariesSection
             artworkCacheSection
         }
     }
@@ -862,148 +820,55 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: Internal library
+    // MARK: Database
 
-    private var internalLibrarySection: some View {
-        SettingsCard(title: "Internal Library") {
-            if let warning = library.openWarning {
-                HStack(alignment: .top, spacing: 6) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 10))
-                        .foregroundColor(.orange)
-                    Text(warning)
-                        .font(SettingsTypography.help)
+    private var databaseSection: some View {
+        SettingsCard(title: "Database") {
+            HStack(spacing: 8) {
+                Image(systemName: "externaldrive")
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Location")
+                        .font(SettingsTypography.body)
+                        .foregroundColor(Theme.primaryText)
+                    Text(library.databaseFolderPath)
+                        .font(SettingsTypography.caption)
                         .foregroundColor(Theme.secondaryText)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Spacer(minLength: 0)
-                    Button {
-                        library.clearOpenWarning()
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 11))
-                            .foregroundColor(.secondary)
-                    }
-                    .buttonStyle(.borderless)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
                 }
-                .padding(10)
-                .background(Color.orange.opacity(0.10))
-                SettingsDivider()
+                Spacer(minLength: 12)
+                Button("Reveal in Finder") {
+                    NSWorkspace.shared.open(URL(fileURLWithPath: library.databaseFolderPath))
+                }
+                .controlSize(.small)
+                Button("Open/Create Database…") {
+                    openWindow(id: "database-setup")
+                    NSApp.activate(ignoringOtherApps: true)
+                }
+                .controlSize(.small)
             }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
+        }
+    }
 
-            if let internalLibrary = library.internalLibrary {
-                HStack(spacing: 8) {
-                    Image(systemName: "folder")
-                        .font(.system(size: 12))
-                        .foregroundColor(.secondary)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Location")
-                            .font(SettingsTypography.body)
-                            .foregroundColor(Theme.primaryText)
-                        Text(internalLibrary.path)
-                            .font(SettingsTypography.caption)
-                            .foregroundColor(Theme.secondaryText)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                            .textSelection(.enabled)
-                    }
-                    Spacer(minLength: 12)
-                    Button("Quick Scan") {
-                        library.rescan(internalLibrary)
-                    }
-                    .controlSize(.small)
-                    .disabled(library.isScanning || !internalLibrary.isEnabled)
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 9)
+    // MARK: Libraries
 
-                SettingsDivider()
-
-                HStack(spacing: 8) {
-                    Spacer()
-                    Button("Open Music Folder") {
-                        openMusicFolder(internalLibrary)
-                    }
-                    .controlSize(.small)
-                    Button("Full Scan") {
-                        runFullScan(internalLibrary)
-                    }
-                    .controlSize(.small)
-                    .disabled(library.isScanning || !internalLibrary.isEnabled)
-                    Button("Open Another Library…") {
-                        chooseOpenLibrary()
-                    }
-                    .controlSize(.small)
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-
-                SettingsFootnote("The database lives in this folder. Music belongs in its Music subfolder.")
+    private var librariesSection: some View {
+        SettingsCard(title: "Libraries (Read Only)") {
+            if library.libraries.isEmpty {
+                SettingsFootnote("No libraries.")
             } else {
-                SettingsRow(title: "Not set up yet",
-                            subtitle: "Create one folder for your Tracks database and music.") {
-                    EmptyView()
-                }
-                SettingsDivider()
-                HStack(spacing: 8) {
-                    Spacer()
-                    Button("Set Up Internal Library…") {
-                        openWindow(id: "setup")
-                        NSApp.activate(ignoringOtherApps: true)
-                    }
-                    .controlSize(.small)
-                    Button("Open Existing Library…") {
-                        chooseOpenLibrary()
-                    }
-                    .controlSize(.small)
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-            }
-        }
-    }
-
-    private func openMusicFolder(_ internalLibrary: MusicLibrary) {
-        let music = URL(fileURLWithPath: internalLibrary.musicPath)
-        if FileManager.default.fileExists(atPath: music.path) {
-            NSWorkspace.shared.open(music)
-        } else {
-            // Do not recreate a missing Music folder here: that would allow a
-            // later scan to prune songs whose files have not been restored yet.
-            NSWorkspace.shared.open(URL(fileURLWithPath: internalLibrary.path))
-        }
-    }
-
-    private func chooseOpenLibrary() {
-        guard let path = LibraryFolderPicker.choose() else { return }
-        if library.internalLibrary != nil || !library.allSongs.isEmpty {
-            alert = .confirmOpen(path)
-        } else {
-            performOpen(path)
-        }
-    }
-
-    private func performOpen(_ path: String) {
-        do {
-            try library.openInternalLibrary(atPath: path)
-        } catch {
-            alert = .error(error.localizedDescription)
-        }
-    }
-
-    // MARK: External libraries
-
-    private var externalLibrariesSection: some View {
-        SettingsCard(title: "External Libraries (Read Only)") {
-            if library.externalLibraries.isEmpty {
-                SettingsFootnote("No external libraries.")
-            } else {
-                ForEach(Array(library.externalLibraries.enumerated()), id: \.element.id) { index, externalLibrary in
+                ForEach(Array(library.libraries.enumerated()), id: \.element.id) { index, mediaLibrary in
                     if index > 0 {
                         SettingsDivider()
                     }
-                    SettingsRow(title: externalLibrary.name,
-                                subtitle: externalLibrary.path) {
-                        Toggle("", isOn: externalLibraryEnabledBinding(externalLibrary))
+                    SettingsRow(title: mediaLibrary.identifier,
+                                subtitle: mediaLibrary.path) {
+                        Toggle("", isOn: libraryEnabledBinding(mediaLibrary))
                             .labelsHidden()
                             .toggleStyle(.switch)
                             .controlSize(.small)
@@ -1011,28 +876,33 @@ struct SettingsView: View {
 
                     HStack(spacing: 8) {
                         Button("Quick Scan") {
-                            library.rescan(externalLibrary)
+                            library.rescan(mediaLibrary)
                         }
                         .controlSize(.small)
-                        .disabled(library.isScanning || !externalLibrary.isEnabled)
+                        .disabled(library.isScanning || !mediaLibrary.isEnabled)
                         Button("Full Scan") {
-                            runFullScan(externalLibrary)
+                            runFullScan(mediaLibrary)
                         }
                         .controlSize(.small)
-                        .disabled(library.isScanning || !externalLibrary.isEnabled)
+                        .disabled(library.isScanning || !mediaLibrary.isEnabled)
                         Button("Change Location…") {
-                            chooseRelocation(for: externalLibrary)
+                            chooseRelocation(for: mediaLibrary)
                         }
                         .controlSize(.small)
-                        .disabled(library.isScanning || !externalLibrary.isEnabled)
+                        .disabled(library.isScanning || !mediaLibrary.isEnabled)
+                        Button("Rename Identifier…") {
+                            renameLibraryIdentifier(mediaLibrary)
+                        }
+                        .controlSize(.small)
+                        .disabled(library.isScanning)
                         Spacer()
                         Button(role: .destructive) {
-                            alert = .confirmDelete(externalLibrary)
+                            alert = .confirmDelete(mediaLibrary)
                         } label: {
-                            Label("Delete", systemImage: "trash")
+                            Label("Delete Index", systemImage: "trash")
                         }
                         .controlSize(.small)
-                        .disabled(externalLibrary.isEnabled || library.isScanning)
+                        .disabled(mediaLibrary.isEnabled || library.isScanning)
                     }
                     .padding(.horizontal, 14)
                     .padding(.bottom, 8)
@@ -1048,8 +918,8 @@ struct SettingsView: View {
                 }
                 .controlSize(.small)
                 .disabled(library.isScanning)
-                Button("Add External Library…") {
-                    addExternalLibraries()
+                Button("Add Library…") {
+                    addLibraries()
                 }
                 .controlSize(.small)
             }
@@ -1058,36 +928,88 @@ struct SettingsView: View {
         }
     }
 
-    private func externalLibraryEnabledBinding(_ externalLibrary: MusicLibrary) -> Binding<Bool> {
+    private func libraryEnabledBinding(_ mediaLibrary: MusicLibrary) -> Binding<Bool> {
         Binding(
-            get: { externalLibrary.isEnabled },
+            get: { mediaLibrary.isEnabled },
             set: { enabled in
                 if enabled {
                     do {
-                        try library.setExternalLibrary(externalLibrary.id, enabled: true)
+                        try library.setLibrary(mediaLibrary.id, enabled: true)
                     } catch {
                         alert = .error(error.localizedDescription)
                     }
                 } else {
-                    alert = .confirmDisable(externalLibrary)
+                    alert = .confirmDisable(mediaLibrary)
                 }
             }
         )
     }
 
-    private func addExternalLibraries() {
+    private func addLibraries() {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = true
         panel.prompt = "Add"
-        panel.message = "Choose folders managed by another music app. They will be indexed read-only."
+        panel.message = "Choose music folders. They will be indexed read-only."
         guard panel.runModal() == .OK else { return }
 
-        let errors = library.addExternalLibraries(panel.urls.map(\.path))
+        let urls = panel.urls
+        guard !urls.isEmpty else { return }
+        var additions: [LibraryAddition] = []
+        if urls.count == 1 {
+            let identifier = promptForLibraryIdentifier(defaultValue: library.suggestedLibraryIdentifier())
+            guard let identifier else { return }
+            additions = [LibraryAddition(path: urls[0].path, identifier: identifier)]
+        } else {
+            additions = urls.map { LibraryAddition(path: $0.path, identifier: nil) }
+        }
+
+        let errors = library.addLibraries(additions)
         if !errors.isEmpty {
             alert = .error(errors.joined(separator: "\n"))
         }
+    }
+
+    private func promptForLibraryIdentifier(defaultValue: String) -> String? {
+        let alert = NSAlert()
+        alert.messageText = "Library Identifier"
+        alert.informativeText = "Choose a unique identifier for this library. Leave it unchanged to use “\(defaultValue)”."
+        alert.addButton(withTitle: "Add")
+        alert.addButton(withTitle: "Cancel")
+
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        field.stringValue = defaultValue
+        field.placeholderString = defaultValue
+        alert.accessoryView = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+        return field.stringValue
+    }
+
+    private func renameLibraryIdentifier(_ mediaLibrary: MusicLibrary) {
+        let alert = NSAlert()
+        alert.messageText = "Rename Library Identifier"
+        alert.informativeText = "Identifiers are unique and can be changed at any time."
+        alert.addButton(withTitle: "Rename")
+        alert.addButton(withTitle: "Cancel")
+
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        field.stringValue = mediaLibrary.identifier
+        alert.accessoryView = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        do {
+            try library.renameLibraryIdentifier(mediaLibrary.id, to: field.stringValue)
+        } catch {
+            alertError(error.localizedDescription)
+        }
+    }
+
+    private func alertError(_ message: String) {
+        let alert = NSAlert()
+        alert.messageText = "Library Error"
+        alert.informativeText = message
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
     }
 
     private func runFullScan(_ mediaLibrary: MusicLibrary) {
@@ -1448,118 +1370,80 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
     }
 }
 
-struct InternalLibrarySetupView: View {
+struct DatabaseSetupView: View {
     @ObservedObject private var library = Library.shared
     @Environment(\.dismissWindow) private var dismissWindow
 
-    @State private var rootPath = InternalLibrarySetupView.defaultRootPath
+    @State private var folderPath = Library.defaultDatabaseFolderPath
     @State private var errorMessage: String?
-    @State private var existingLibraryAtRoot = false
-
-    private static var defaultRootPath: String {
-        let music = FileManager.default.urls(for: .musicDirectory, in: .userDomainMask).first
-            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Music")
-        return music.appendingPathComponent("Tracks").path
-    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 12) {
-                Image(systemName: "internaldrive.fill")
+                Image(systemName: "externaldrive.fill")
                     .font(.system(size: 28))
                     .foregroundColor(Theme.highlight)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Set Up Your Tracks Library")
+                    Text("Open/Create Database")
                         .font(.system(size: 17, weight: .semibold))
                         .foregroundColor(Theme.primaryText)
-                    Text("One folder holds your library database and your music.")
+                    Text("Open an existing Tracks database or create a new one.")
                         .font(.system(size: 12))
                         .foregroundColor(Theme.secondaryText)
                 }
                 Spacer()
             }
 
-            if let internalLibrary = library.internalLibrary {
-                Text("Your Internal Library is already set up at:")
-                    .font(.system(size: 12))
-                Text(internalLibrary.path)
-                    .font(.system(size: 11.5))
-                    .textSelection(.enabled)
-                    .padding(8)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(boxBackground)
-                Spacer()
-                HStack {
-                    Spacer()
-                    Button("Done") { dismissWindow(id: "setup") }
-                        .keyboardShortcut(.defaultAction)
-                }
-            } else {
-                Text(existingLibraryAtRoot
-                     ? "A Tracks library already exists in this folder. Opening it uses its existing database and Music folder, so a library copied from another Mac can be used right away."
-                     : "Tracks will create a Music folder inside this library and keep its database there. Creating the folder in your Music folder also lets macOS grant Tracks access to it.")
-                    .font(.system(size: 11.5))
+            Text("If the folder contains library.sqlite, Tracks checks its schema and opens it. Otherwise Tracks creates a new database there. Music library folders are never modified.")
+                .font(.system(size: 11.5))
+                .foregroundColor(Theme.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Database folder")
+                    .font(.system(size: 11, weight: .medium))
                     .foregroundColor(Theme.secondaryText)
+                HStack(spacing: 8) {
+                    Text(folderPath)
+                        .font(.system(size: 11.5))
+                        .foregroundColor(Theme.primaryText)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
+                    Spacer(minLength: 0)
+                    Button("Choose…") { chooseFolder() }
+                }
+                .padding(8)
+                .background(boxBackground)
+                Text("Default: ~/Music/Tracks")
+                    .font(.system(size: 10.5))
+                    .foregroundColor(Theme.secondaryText)
+            }
+
+            if let errorMessage {
+                Text(errorMessage)
+                    .font(.system(size: 11))
+                    .foregroundColor(.red)
                     .fixedSize(horizontal: false, vertical: true)
+            }
 
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Library folder")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(Theme.secondaryText)
-                    HStack(spacing: 8) {
-                        Text(rootPath)
-                            .font(.system(size: 11.5))
-                            .foregroundColor(Theme.primaryText)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                            .textSelection(.enabled)
-                        Spacer(minLength: 0)
-                        Button("Choose…") { chooseFolder() }
-                    }
-                    .padding(8)
-                    .background(boxBackground)
-                    Text("Default: ~/Music/Tracks")
-                        .font(.system(size: 10.5))
-                        .foregroundColor(Theme.secondaryText)
+            Spacer(minLength: 0)
+
+            HStack(spacing: 10) {
+                Spacer()
+                Button("Open/Create") {
+                    completeSetup()
                 }
-
-                if let errorMessage {
-                    Text(errorMessage)
-                        .font(.system(size: 11))
-                        .foregroundColor(.red)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                Spacer(minLength: 0)
-
-                HStack(spacing: 10) {
-                    Button("Not Now") {
-                        library.deferInternalSetup()
-                        dismissWindow(id: "setup")
-                    }
-                    Button("Open Existing Library…") {
-                        openExistingLibrary(at: nil)
-                    }
-                    Spacer()
-                    if existingLibraryAtRoot {
-                        Button("Open Library") {
-                            openExistingLibrary(at: rootPath)
-                        }
-                        .keyboardShortcut(.defaultAction)
-                    } else {
-                        Button("Create Library") {
-                            createLibrary()
-                        }
-                        .keyboardShortcut(.defaultAction)
-                    }
-                }
+                .keyboardShortcut(.defaultAction)
             }
         }
         .padding(22)
-        .frame(width: 540, height: 410, alignment: .topLeading)
+        .frame(width: 540, height: 360, alignment: .topLeading)
         .onAppear {
             NSApp.activate(ignoringOtherApps: true)
-            refreshExistingLibrary()
+            if !library.databaseFolderPath.isEmpty {
+                folderPath = library.databaseFolderPath
+            }
         }
     }
 
@@ -1579,44 +1463,17 @@ struct InternalLibrarySetupView: View {
         panel.allowsMultipleSelection = false
         panel.canCreateDirectories = true
         panel.prompt = "Choose"
-        panel.message = "Choose or create the folder that will hold your Tracks library."
-        panel.directoryURL = FileManager.default.urls(for: .musicDirectory, in: .userDomainMask).first
+        panel.message = "Choose or create the folder that will hold library.sqlite."
+        panel.directoryURL = URL(fileURLWithPath: folderPath)
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        rootPath = url.path
+        folderPath = url.path
         errorMessage = nil
-        refreshExistingLibrary()
     }
 
-    private func refreshExistingLibrary() {
-        let databasePath = URL(fileURLWithPath: rootPath)
-            .appendingPathComponent("library.sqlite").path
-        existingLibraryAtRoot = FileManager.default.fileExists(atPath: databasePath)
-            && LibraryDatabase.inspect(path: databasePath) != nil
-    }
-
-    private func openExistingLibrary(at path: String?) {
-        let selected: String
-        if let path {
-            selected = path
-        } else {
-            guard let picked = LibraryFolderPicker.choose() else { return }
-            selected = picked
-            rootPath = picked
-            refreshExistingLibrary()
-        }
-
+    private func completeSetup() {
         do {
-            try library.openInternalLibrary(atPath: selected)
-            dismissWindow(id: "setup")
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-
-    private func createLibrary() {
-        do {
-            try library.createInternalLibrary(atPath: rootPath)
-            dismissWindow(id: "setup")
+            try library.completeDatabaseSetup(folder: folderPath)
+            dismissWindow(id: "database-setup")
         } catch {
             errorMessage = error.localizedDescription
         }

@@ -20,11 +20,6 @@ struct AlbumContextMenu: ViewModifier {
                 InfoCenter.shared.target = .album(album.id)
                 openWindow(id: "get-info")
             }
-            Divider()
-            Button("Delete…") {
-                LibraryDeletion.confirmDelete(albums: [album])
-            }
-            .disabled(!LibraryDeletion.canDelete(albums: [album]))
         }
     }
 }
@@ -58,11 +53,6 @@ struct SongContextMenu: ViewModifier {
                 InfoCenter.shared.target = .song(song.id)
                 openWindow(id: "get-info")
             }
-            Divider()
-            Button("Delete…") {
-                LibraryDeletion.confirmDelete(songs: targets)
-            }
-            .disabled(!LibraryDeletion.canDelete(songs: targets))
         }
     }
 }

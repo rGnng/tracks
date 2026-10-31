@@ -435,10 +435,13 @@ private func drag(from start: CGPoint, to end: CGPoint) {
 
 private func defaultLibraryPath() -> String? {
     let home = FileManager.default.homeDirectoryForCurrentUser
-    let candidates = [
-        home.appendingPathComponent("Music/Tracks/library.sqlite").path,
-        home.appendingPathComponent("Library/Application Support/Tracks/library.sqlite").path
-    ]
+    var candidates: [String] = []
+    if let folder = UserDefaults(suiteName: "com.audia.tracks")?
+        .string(forKey: "databaseFolderPath"), !folder.isEmpty {
+        candidates.append(URL(fileURLWithPath: folder).appendingPathComponent("library.sqlite").path)
+    }
+    candidates.append(home.appendingPathComponent("Music/Tracks/library.sqlite").path)
+    candidates.append(home.appendingPathComponent("Library/Application Support/Tracks/library.sqlite").path)
     return candidates.first { path in
         let attributes = try? FileManager.default.attributesOfItem(atPath: path)
         let size = (attributes?[.size] as? NSNumber)?.intValue ?? 0

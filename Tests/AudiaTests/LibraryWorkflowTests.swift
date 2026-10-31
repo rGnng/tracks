@@ -101,13 +101,11 @@ final class LibraryWorkflowTests: XCTestCase {
         let databasePath = fixture.appendingPathComponent("library.sqlite").path
 
         let database = LibraryDatabase(path: databasePath)
-        let library = database.ensureLibrary(path: mediaRoot.path,
-                                             kind: .external,
-                                             name: "Playlist Test")
+        let library = try database.ensureLibrary(path: mediaRoot.path,
+                                                    name: "Playlist Test",
+                                                    identifier: "library1")
         let track = makeTrack(path: audioURL.path, title: "Persisted Song")
-        _ = database.sync(tracks: [track],
-                          internalMusicRoot: nil,
-                          libraries: [library])
+        _ = database.sync(tracks: [track], libraries: [library])
         let song = try XCTUnwrap(database.loadLibrary().albums.first?.songs.first)
         let playlist = database.createPlaylist(name: "Persist Me")
         database.addSongsToPlaylist(playlist.id, songIDs: [song.id])
@@ -138,17 +136,15 @@ final class LibraryWorkflowTests: XCTestCase {
         let database = LibraryDatabase(path: fixture.appendingPathComponent("library.sqlite").path)
         defer { database.closeForTermination() }
 
-        let library = database.ensureLibrary(path: mediaRoot.path,
-                                             kind: .external,
-                                             name: "Test Media")
-        let otherLibrary = database.ensureLibrary(path: otherRoot.path,
-                                                  kind: .external,
-                                                  name: "Other Media")
+        let library = try database.ensureLibrary(path: mediaRoot.path,
+                                                    name: "Test Media",
+                                                    identifier: "library1")
+        let otherLibrary = try database.ensureLibrary(path: otherRoot.path,
+                                                              name: "Other Media",
+                                                              identifier: "library2")
         let track = makeTrack(path: audioURL.path, title: "Test Song")
         let otherTrack = makeTrack(path: otherAudioURL.path, title: "Other Song", album: "Other Album")
-        _ = database.sync(tracks: [track, otherTrack],
-                          internalMusicRoot: nil,
-                          libraries: [library, otherLibrary])
+        _ = database.sync(tracks: [track, otherTrack], libraries: [library, otherLibrary])
         let song = try XCTUnwrap(database.loadLibrary().albums
             .flatMap(\.songs).first { $0.title == "Test Song" })
         let otherSong = try XCTUnwrap(database.loadLibrary().albums
@@ -197,15 +193,13 @@ final class LibraryWorkflowTests: XCTestCase {
 
         let database = LibraryDatabase(path: fixture.appendingPathComponent("library.sqlite").path)
         defer { database.closeForTermination() }
-        let library = database.ensureLibrary(path: oldRoot.path,
-                                             kind: .external,
-                                             name: "Move Me")
+        let library = try database.ensureLibrary(path: oldRoot.path,
+                                                    name: "Move Me",
+                                                    identifier: "library1")
         let track = makeTrack(path: oldAudio.path, title: "Move Me")
         let missingTrack = makeTrack(path: oldMissingAudio.path, title: "Keep Missing")
         let deletedTrack = makeTrack(path: oldDeletedAudio.path, title: "Delete Missing")
-        _ = database.sync(tracks: [track, missingTrack, deletedTrack],
-                          internalMusicRoot: nil,
-                          libraries: [library])
+        _ = database.sync(tracks: [track, missingTrack, deletedTrack], libraries: [library])
         let allSongs = database.loadLibrary().albums.flatMap(\.songs)
         let song = try XCTUnwrap(allSongs.first { $0.title == "Move Me" })
         let missingSong = try XCTUnwrap(allSongs.first { $0.title == "Keep Missing" })
@@ -238,7 +232,7 @@ final class LibraryWorkflowTests: XCTestCase {
         XCTAssertEqual(database.loadLibraries().first?.path, newRoot.path)
 
         XCTAssertThrowsError(try database.deleteLibraryAndSongs(id: library.id),
-                             "An enabled external library must not be deleted")
+                             "An enabled library must not be deleted")
         try database.setLibraryEnabled(library.id, enabled: false)
         try database.deleteLibraryAndSongs(id: library.id)
         let deleted = database.loadLibrary()
@@ -247,7 +241,7 @@ final class LibraryWorkflowTests: XCTestCase {
         XCTAssertTrue(deleted.playlists[0].songs.isEmpty)
         XCTAssertEqual(database.playlistSongIDs(playlist.id), [])
         XCTAssertTrue(FileManager.default.fileExists(atPath: newAudio.path),
-                      "Deleting an external library index must never delete its audio files")
+                      "Deleting a library index must never delete its audio files")
     }
 
     func testRelocationMatchesFullRelativePathRatherThanBasename() throws {
@@ -343,9 +337,9 @@ final class LibraryWorkflowTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: fixture) }
         let database = LibraryDatabase(path: fixture.appendingPathComponent("library.sqlite").path)
         defer { database.closeForTermination() }
-        let library = database.ensureLibrary(path: fixture.path,
-                                             kind: .external,
-                                             name: "Multi Disc Test")
+        let library = try database.ensureLibrary(path: fixture.path,
+                                                    name: "Multi Disc Test",
+                                                    identifier: "library1")
         let discOne = makeTrack(path: fixture.appendingPathComponent("disc1.wav").path,
                                 title: "Disc 1",
                                 album: "Multi Disc",
@@ -359,9 +353,7 @@ final class LibraryWorkflowTests: XCTestCase {
                                 discNumber: 2,
                                 discTotal: 0)
 
-        _ = database.sync(tracks: [discTwo, discOne],
-                          internalMusicRoot: nil,
-                          libraries: [library])
+        _ = database.sync(tracks: [discTwo, discOne], libraries: [library])
         let album = try XCTUnwrap(database.loadLibrary().albums.first { $0.title == "Multi Disc" })
 
         XCTAssertEqual(album.songs.map(\.title), ["Disc 1", "Disc 2"])
@@ -498,6 +490,149 @@ final class LibraryWorkflowTests: XCTestCase {
         let full = await LibraryScanner.scan(folders: [root.path], known: known, mode: .full)
         XCTAssertTrue(full.isComplete, full.errors.joined(separator: "\n"))
         XCTAssertEqual(full.tracks.count, 1)
+    }
+
+    @MainActor
+    func testLegacyInternalRecordsAreRemovedAndIdentifiersBackfilled() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        let databasePath = fixture.appendingPathComponent("library.sqlite").path
+        let internalID = UUID()
+        let externalID = UUID()
+        let secondExternalID = UUID()
+        try runSQLite(databasePath, """
+            CREATE TABLE libraries (
+                id TEXT PRIMARY KEY,
+                path TEXT NOT NULL UNIQUE,
+                kind TEXT NOT NULL,
+                name TEXT NOT NULL,
+                date_added REAL NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1
+            );
+            INSERT INTO libraries VALUES (
+                '\(internalID.uuidString)', '\(fixture.appendingPathComponent("old-internal").path)',
+                'internal', 'Old Internal', 1, 1
+            );
+            INSERT INTO libraries VALUES (
+                '\(externalID.uuidString)', '\(fixture.appendingPathComponent("read-only").path)',
+                'external', 'Read Only', 2, 1
+            );
+            INSERT INTO libraries VALUES (
+                '\(secondExternalID.uuidString)', '\(fixture.appendingPathComponent("second").path)',
+                'external', 'Second', 3, 1
+            );
+            """)
+
+        let database = LibraryDatabase(path: databasePath)
+        defer { database.closeForTermination() }
+
+        let libraries = database.loadLibraries()
+        XCTAssertEqual(libraries.map(\.path), [
+            fixture.appendingPathComponent("read-only").path,
+            fixture.appendingPathComponent("second").path,
+        ])
+        XCTAssertEqual(libraries.map(\.identifier), ["library1", "library2"])
+        XCTAssertEqual(database.nextLibraryIdentifier(), "library3")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.appendingPathComponent("Music").path),
+                       "Legacy cleanup must not create a Music folder")
+    }
+
+    @MainActor
+    func testLegacyInternalSongsAreRemovedWithTheirLibraryRecord() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        let databasePath = fixture.appendingPathComponent("library.sqlite").path
+        let internalID = UUID()
+
+        let initial = LibraryDatabase(path: databasePath)
+        initial.closeForTermination()
+
+        try runSQLite(databasePath, """
+            INSERT INTO libraries(id, path, kind, name, date_added)
+            VALUES('\(internalID.uuidString)', '\(fixture.appendingPathComponent("old").path)',
+                   'internal', 'Old Internal', 1);
+            INSERT INTO songs(id, path, library_id, title, artist_id, album_id, date_added)
+            VALUES('\(UUID().uuidString)', '\(fixture.appendingPathComponent("old/song.wav").path)',
+                   '\(internalID.uuidString)', 'Old Song', 'artist', 'album', 1);
+            """)
+
+        let reopened = LibraryDatabase(path: databasePath)
+        defer { reopened.closeForTermination() }
+        XCTAssertTrue(reopened.loadLibraries().isEmpty)
+        XCTAssertEqual(LibraryDatabase.inspect(path: databasePath)?.songCount, 0)
+    }
+
+    @MainActor
+    func testLibraryIdentifiersAreUniqueAndRenameable() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        let database = LibraryDatabase(path: fixture.appendingPathComponent("library.sqlite").path)
+        defer { database.closeForTermination() }
+
+        let first = try database.ensureLibrary(path: fixture.appendingPathComponent("one").path,
+                                               name: "One",
+                                               identifier: database.nextLibraryIdentifier())
+        let second = try database.ensureLibrary(path: fixture.appendingPathComponent("two").path,
+                                                name: "Two",
+                                                identifier: database.nextLibraryIdentifier())
+        XCTAssertEqual([first.identifier, second.identifier], ["library1", "library2"])
+
+        XCTAssertThrowsError(try database.ensureLibrary(
+            path: fixture.appendingPathComponent("three").path,
+            name: "Three",
+            identifier: "LIBRARY1"
+        ))
+
+        try database.setLibraryIdentifier(first.id, identifier: "Favorites")
+        XCTAssertEqual(database.loadLibraries().first { $0.id == first.id }?.identifier,
+                       "Favorites")
+        XCTAssertThrowsError(try database.setLibraryIdentifier(second.id, identifier: "favorites"))
+    }
+
+    @MainActor
+    func testDatabaseFolderValidationOnlyChecksSQLiteFiles() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture) }
+
+        let folder = fixture.appendingPathComponent("database-location", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let database = LibraryDatabase(path: folder.appendingPathComponent("library.sqlite").path)
+        database.closeForTermination()
+
+        let validated = try Library.validateDatabaseFolder(folder.path)
+        XCTAssertEqual(validated.path, folder.path)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: folder.appendingPathComponent("Music").path))
+
+        let emptyFolder = fixture.appendingPathComponent("empty", isDirectory: true)
+        try FileManager.default.createDirectory(at: emptyFolder, withIntermediateDirectories: true)
+        XCTAssertEqual(try Library.validateDatabaseFolder(emptyFolder.path).path, emptyFolder.path)
+
+        let invalidSchema = fixture.appendingPathComponent("invalid-schema", isDirectory: true)
+        try FileManager.default.createDirectory(at: invalidSchema, withIntermediateDirectories: true)
+        try runSQLite(invalidSchema.appendingPathComponent("library.sqlite").path,
+                      "CREATE TABLE songs (id TEXT PRIMARY KEY);")
+        XCTAssertThrowsError(try Library.validateDatabaseFolder(invalidSchema.path)) { error in
+            XCTAssertTrue(error.localizedDescription.contains("schema"),
+                          error.localizedDescription)
+        }
+
+        let sidecarOnly = fixture.appendingPathComponent("sidecar-only", isDirectory: true)
+        try FileManager.default.createDirectory(at: sidecarOnly, withIntermediateDirectories: true)
+        try Data().write(to: sidecarOnly.appendingPathComponent("library.sqlite-wal"))
+        XCTAssertThrowsError(try Library.validateDatabaseFolder(sidecarOnly.path))
+    }
+
+    private func runSQLite(_ path: String, _ sql: String) throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
+        process.arguments = [path, sql]
+        let errorPipe = Pipe()
+        process.standardError = errorPipe
+        try process.run()
+        process.waitUntilExit()
+        let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+        XCTAssertEqual(process.terminationStatus, 0,
+                       String(data: errorData, encoding: .utf8) ?? "sqlite3 failed")
     }
 
     private func makeFixture() throws -> URL {

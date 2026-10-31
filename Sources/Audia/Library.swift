@@ -1,49 +1,38 @@
 import SwiftUI
 
 enum LibraryError: LocalizedError {
-    case internalAlreadyExists
     case notDirectory(String)
-    case overlapsInternal(String)
-    case overlapsExternal(String)
+    case notReadable(String)
+    case overlapsLibrary(String)
     case alreadyAdded(String)
-    case destinationHasLibrary(String)
-    case cannotCreate(String)
-    case notLibraryFolder(String)
-    case libraryNotFound(String)
-    case invalidLibrary(String)
-    case readOnlyLibrary(String)
+    case invalidDatabase(String)
+    case leftoverDatabaseFiles(String)
+    case cannotCreateDatabaseFolder(String)
+    case identifierInUse(String)
+    case invalidIdentifier
 
     var errorDescription: String? {
         switch self {
-        case .internalAlreadyExists:
-            return "An Internal Library is already set up."
         case .notDirectory(let path):
             return "“\(path)” is not a folder."
-        case .overlapsInternal(let name):
-            return "That folder overlaps the Internal Library “\(name)”. Choose a separate folder."
-        case .overlapsExternal(let name):
-            return "That folder overlaps the external library “\(name)”."
+        case .notReadable(let path):
+            return "“\(path)” cannot be read."
+        case .overlapsLibrary(let name):
+            return "That folder overlaps the library “\(name)”."
         case .alreadyAdded(let name):
             return "“\(name)” is already in your libraries."
-        case .destinationHasLibrary(let path):
-            return "That folder already contains a Tracks library database (\(path)). Choose another folder."
-        case .cannotCreate(let message):
-            return "Could not create the library folder: \(message). If macOS blocked access, click Choose… and pick the folder in the system dialog."
-        case .notLibraryFolder(let path):
-            return "“\(path)” is not a Tracks library. Choose the library folder, or its library.sqlite file."
-        case .libraryNotFound(let path):
-            return "No library.sqlite was found in \(path)."
-        case .invalidLibrary(let path):
-            return "\(path) is not a valid Tracks library database."
-        case .readOnlyLibrary(let path):
-            return "The library folder \(path) is read-only. An Internal Library must be writable."
+        case .invalidDatabase(let path):
+            return "Database schema error: \(path) does not contain a valid Tracks schema. Choose another folder."
+        case .leftoverDatabaseFiles(let path):
+            return "\(path) contains SQLite sidecar files without a library.sqlite. Choose another folder or remove the leftover files first."
+        case .cannotCreateDatabaseFolder(let message):
+            return "Could not create the database folder: \(message)."
+        case .identifierInUse(let identifier):
+            return "The library identifier “\(identifier)” is already in use."
+        case .invalidIdentifier:
+            return "A library identifier must be non-empty and contain no control characters."
         }
     }
-}
-
-struct LibraryDeletionResult {
-    let deleted: Int
-    let failures: [String]
 }
 
 struct LibraryMissingReport: Identifiable {
@@ -122,10 +111,9 @@ struct LibraryCatalog {
 
 /// SQLite-backed music library modeled on iTunes.
 ///
-/// There is at most one **Internal Library**: a writable folder holding both
-/// the database and a `Music` subfolder. Any number of **External Libraries**
-/// can be added; they are indexed read-only because another application owns
-/// those files.
+/// Tracks owns one database folder. Any number of read-only music libraries
+/// can be registered; audio files, tags, artwork, and folder structure inside
+/// those libraries are never modified.
 @MainActor
 final class Library: ObservableObject {
     static let shared = Library()
@@ -148,14 +136,14 @@ final class Library: ObservableObject {
         let saved = UserDefaults.standard.double(forKey: "library.starredPlaylistModifiedAt")
         return saved > 0 ? saved : Date().timeIntervalSince1970
     }()
-    @Published private(set) var internalLibrary: MusicLibrary?
-    @Published private(set) var externalLibraries: [MusicLibrary]
+    @Published private(set) var libraries: [MusicLibrary]
+    @Published private(set) var databaseFolderPath: String
+    @Published private(set) var needsDatabaseSetup: Bool
     @Published private(set) var isScanning = false
     @Published private(set) var scanCompleted = 0
     @Published private(set) var scanTotal = 0
     @Published private(set) var scanProgress: Double = 0
     @Published private(set) var scanPhase: ScanPhase = .findingFiles
-    @Published var openWarning: String?
     @Published private(set) var scanError: String?
 
     var scanActivityProgress: Double? {
@@ -171,20 +159,20 @@ final class Library: ObservableObject {
     private let db: LibraryDatabase
     private var catalog = LibraryCatalog(albums: [])
     private var scanTask: Task<Void, Never>?
-    private var didAutoPromptSetup = false
 
-    private static let internalPathKey = "internalLibraryPath"
-    private static let setupDismissedKey = "internalSetupDismissed"
+    private static let databaseFolderKey = "databaseFolderPath"
+    private static let databaseSetupPendingKey = "databaseSetupPending"
+    private static let legacyInternalPathKey = "internalLibraryPath"
 
     init() {
         albums = []
         playlists = []
         starredSongIDs = []
-        internalLibrary = nil
-        externalLibraries = []
-        isScanning = false
-        openWarning = nil
-        db = LibraryDatabase(path: Self.databaseURL.path)
+        libraries = []
+        let resolution = Self.resolveDatabaseLocation()
+        databaseFolderPath = resolution.folder.path
+        needsDatabaseSetup = resolution.isNewInstall
+        db = LibraryDatabase(path: resolution.folder.appendingPathComponent("library.sqlite").path)
         bootstrapLibraries()
         reload()
         rescanAll()
@@ -192,61 +180,118 @@ final class Library: ObservableObject {
 
     // MARK: Database location
 
-    private static var appSupportDatabaseURL: URL {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-            .appendingPathComponent("Tracks", isDirectory: true)
-        try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
-        return base.appendingPathComponent("library.sqlite")
+    private struct DatabaseLocationResolution {
+        let folder: URL
+        let isNewInstall: Bool
     }
 
-    private static func configuredInternalPath() -> String? {
-        guard let raw = UserDefaults.standard.string(forKey: internalPathKey) else { return nil }
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : NSString(string: trimmed).expandingTildeInPath
+    static var defaultDatabaseFolderPath: String {
+        let music = FileManager.default.urls(for: .musicDirectory, in: .userDomainMask).first
+            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Music")
+        return music.appendingPathComponent("Tracks", isDirectory: true).path
     }
 
-    /// The database lives next to the internal library's `Music` folder. Until
-    /// an Internal Library exists it lives in Application Support.
-    private static var databaseURL: URL {
-        guard let root = configuredInternalPath() else {
-            return appSupportDatabaseURL
+    private static func resolveDatabaseLocation() -> DatabaseLocationResolution {
+        let defaults = UserDefaults.standard
+        if let raw = defaults.string(forKey: databaseFolderKey),
+           let folder = normalizedFolder(raw) {
+            defaults.removeObject(forKey: databaseSetupPendingKey)
+            return DatabaseLocationResolution(folder: folder, isNewInstall: false)
         }
-        let rootURL = URL(fileURLWithPath: root)
-        try? FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
-        // Do not create Music here: a library opened from another machine may
-        // temporarily be missing its Music folder, and we must not make the
-        // folder exist (which would let a scan prune its still-missing songs).
-        return rootURL.appendingPathComponent("library.sqlite")
+        if let raw = defaults.string(forKey: legacyInternalPathKey),
+           let folder = normalizedFolder(raw) {
+            defaults.set(folder.path, forKey: databaseFolderKey)
+            defaults.removeObject(forKey: legacyInternalPathKey)
+            defaults.removeObject(forKey: databaseSetupPendingKey)
+            return DatabaseLocationResolution(folder: folder, isNewInstall: false)
+        }
+        let setupPending = defaults.bool(forKey: databaseSetupPendingKey)
+        let folder = URL(fileURLWithPath: defaultDatabaseFolderPath, isDirectory: true)
+        if !setupPending,
+           FileManager.default.fileExists(atPath: folder.appendingPathComponent("library.sqlite").path) {
+            defaults.set(folder.path, forKey: databaseFolderKey)
+            defaults.removeObject(forKey: databaseSetupPendingKey)
+            return DatabaseLocationResolution(folder: folder, isNewInstall: false)
+        }
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("Tracks", isDirectory: true)
+        if !setupPending,
+           FileManager.default.fileExists(atPath: appSupport.appendingPathComponent("library.sqlite").path) {
+            defaults.set(appSupport.path, forKey: databaseFolderKey)
+            defaults.removeObject(forKey: databaseSetupPendingKey)
+            return DatabaseLocationResolution(folder: appSupport, isNewInstall: false)
+        }
+        defaults.set(true, forKey: databaseSetupPendingKey)
+        return DatabaseLocationResolution(folder: folder, isNewInstall: true)
     }
 
-    // MARK: Server setup
+    private static func normalizedFolder(_ raw: String) -> URL? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let expanded = NSString(string: trimmed).expandingTildeInPath
+        return URL(fileURLWithPath: expanded, isDirectory: true)
+            .resolvingSymlinksInPath()
+    }
+
+    /// Only the three SQLite files managed by Tracks are checked. Overlapping
+    /// the database folder with a music library is allowed.
+    static func validateDatabaseFolder(_ rawPath: String) throws -> URL {
+        guard let folder = normalizedFolder(rawPath) else {
+            throw LibraryError.cannotCreateDatabaseFolder("The path is empty.")
+        }
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: folder.path, isDirectory: &isDirectory),
+              isDirectory.boolValue else {
+            throw LibraryError.notDirectory(folder.path)
+        }
+        let database = folder.appendingPathComponent("library.sqlite")
+        let wal = URL(fileURLWithPath: database.path + "-wal")
+        let shm = URL(fileURLWithPath: database.path + "-shm")
+        if FileManager.default.fileExists(atPath: database.path) {
+            guard LibraryDatabase.inspect(path: database.path) != nil else {
+                throw LibraryError.invalidDatabase(database.path)
+            }
+        } else if FileManager.default.fileExists(atPath: wal.path)
+                    || FileManager.default.fileExists(atPath: shm.path) {
+            throw LibraryError.leftoverDatabaseFiles(folder.path)
+        }
+        return folder
+    }
+
+    func completeDatabaseSetup(folder rawPath: String) throws {
+        let folder = try Self.validateDatabaseFolder(rawPath)
+        let newPath = folder.appendingPathComponent("library.sqlite").path
+        let oldPath = db.path
+        let removeEmptyDefault = needsDatabaseSetup && libraries.isEmpty && allSongs.isEmpty
+        if oldPath != newPath {
+            try db.switchTo(path: newPath)
+            PlayerState.shared.stopAndClear()
+            PlayerState.shared.clearHistory()
+        }
+        UserDefaults.standard.set(folder.path, forKey: Self.databaseFolderKey)
+        UserDefaults.standard.removeObject(forKey: Self.databaseSetupPendingKey)
+        UserDefaults.standard.removeObject(forKey: Self.legacyInternalPathKey)
+        databaseFolderPath = folder.path
+        needsDatabaseSetup = false
+        if removeEmptyDefault, oldPath != newPath {
+            try? FileManager.default.removeItem(atPath: oldPath)
+            try? FileManager.default.removeItem(atPath: oldPath + "-wal")
+            try? FileManager.default.removeItem(atPath: oldPath + "-shm")
+        }
+        bootstrapLibraries()
+        reload()
+        rescanAll()
+    }
+
+    // MARK: Library registry
 
     private func bootstrapLibraries() {
-        if let path = Self.configuredInternalPath() {
-            let canonical = canonicalPath(path)
-            let library = db.ensureLibrary(path: canonical,
-                                           kind: .internalLibrary,
-                                           name: displayName(for: canonical))
-            internalLibrary = library
-        }
-
-        externalLibraries = db.loadLibraries().filter { $0.kind == .external }
+        libraries = db.loadLibraries()
     }
 
-    // MARK: Setup state
-
-    var shouldAutoPromptSetup: Bool {
-        internalLibrary == nil &&
-        !UserDefaults.standard.bool(forKey: Self.setupDismissedKey) &&
-        !didAutoPromptSetup
-    }
-
-    func markSetupPromptShown() {
-        didAutoPromptSetup = true
-    }
-
-    func deferInternalSetup() {
-        UserDefaults.standard.set(true, forKey: Self.setupDismissedKey)
+    func suggestedLibraryIdentifier() -> String {
+        db.nextLibraryIdentifier()
     }
 
     // MARK: Derived collections
@@ -302,31 +347,30 @@ final class Library: ObservableObject {
     // MARK: Library locations
 
     private var scanRoots: [String] {
-        var roots: [String] = []
-        if let internalLibrary, internalLibrary.isEnabled { roots.append(internalLibrary.scanPath) }
-        roots.append(contentsOf: externalLibraries.filter(\.isEnabled).map(\.path))
-        return roots
+        libraries.filter(\.isEnabled).map(\.path)
     }
 
     private var hasLibraries: Bool {
-        (internalLibrary?.isEnabled ?? false) || externalLibraries.contains(where: \.isEnabled)
+        libraries.contains(where: \.isEnabled)
     }
 
-    var internalMusicPath: String? { internalLibrary?.musicPath }
-
     @discardableResult
-    func addExternalLibraries(_ rawPaths: [String]) -> [String] {
+    func addLibraries(_ additions: [LibraryAddition]) -> [String] {
         scanTask?.cancel()
         isScanning = false
         var errors: [String] = []
-        var pending = externalLibraries
+        var pending = libraries
         var added = false
 
-        for raw in rawPaths {
-            let path = canonicalPath(NSString(string: raw).expandingTildeInPath)
+        for addition in additions {
+            let path = canonicalPath(NSString(string: addition.path).expandingTildeInPath)
             do {
-                try validateExternalLibrary(path, existing: pending)
-                let library = db.ensureLibrary(path: path, kind: .external, name: displayName(for: path))
+                try validateLibrary(path, existing: pending)
+                let identifier = try normalizedIdentifier(addition.identifier,
+                                                          existing: pending)
+                let library = try db.ensureLibrary(path: path,
+                                                   name: displayName(for: path),
+                                                   identifier: identifier)
                 pending.append(library)
                 added = true
             } catch {
@@ -335,237 +379,83 @@ final class Library: ObservableObject {
         }
 
         if added {
-            externalLibraries = db.loadLibraries().filter { $0.kind == .external }
+            libraries = db.loadLibraries()
             rescanAll()
         }
         return errors
     }
 
-    private func validateExternalLibrary(_ path: String, existing: [MusicLibrary]) throws {
+    private func validateLibrary(_ path: String, existing: [MusicLibrary]) throws {
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory),
               isDirectory.boolValue else {
             throw LibraryError.notDirectory(path)
         }
-        if let internalLibrary, overlaps(path, internalLibrary.path) {
-            throw LibraryError.overlapsInternal(internalLibrary.name)
+        guard FileManager.default.isReadableFile(atPath: path) else {
+            throw LibraryError.notReadable(path)
         }
         if let library = existing.first(where: { canonicalPath($0.path) == path }) {
             throw LibraryError.alreadyAdded(library.name)
         }
         if let library = existing.first(where: { overlaps(path, $0.path) }) {
-            throw LibraryError.overlapsExternal(library.name)
+            throw LibraryError.overlapsLibrary(library.name)
         }
     }
 
-    func setExternalLibrary(_ id: UUID, enabled: Bool) throws {
-        guard let library = externalLibraries.first(where: { $0.id == id }),
+    private func normalizedIdentifier(_ raw: String?, existing: [MusicLibrary]) throws -> String {
+        let value = (raw ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if value.isEmpty {
+            return db.nextLibraryIdentifier()
+        }
+        guard !value.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else {
+            throw LibraryError.invalidIdentifier
+        }
+        if existing.contains(where: { $0.identifier.caseInsensitiveCompare(value) == .orderedSame }) {
+            throw LibraryError.identifierInUse(value)
+        }
+        return value
+    }
+
+    func setLibrary(_ id: UUID, enabled: Bool) throws {
+        guard let library = libraries.first(where: { $0.id == id }),
               library.isEnabled != enabled else { return }
         scanTask?.cancel()
         isScanning = false
         try db.setLibraryEnabled(id, enabled: enabled)
-        externalLibraries = db.loadLibraries().filter { $0.kind == .external }
+        libraries = db.loadLibraries()
         if !enabled {
             PlayerState.shared.stopAndClear()
             PlayerState.shared.clearHistory()
         }
         reload()
-        if enabled, let updated = externalLibraries.first(where: { $0.id == id }) {
+        if enabled, let updated = libraries.first(where: { $0.id == id }) {
             rescan(updated)
         }
     }
 
     @discardableResult
-    func deleteDisabledExternalLibrary(_ id: UUID) throws -> URL {
-        guard let library = externalLibraries.first(where: { $0.id == id }),
+    func deleteDisabledLibrary(_ id: UUID) throws -> URL {
+        guard let library = libraries.first(where: { $0.id == id }),
               !library.isEnabled else {
-            throw LibraryDatabaseError.transactionFailed("Disable the external library before deleting it.")
+            throw LibraryDatabaseError.transactionFailed("Disable the library before deleting it.")
         }
         scanTask?.cancel()
         isScanning = false
         let backupURL = try db.backup()
         try db.deleteLibraryAndSongs(id: id)
-        externalLibraries = db.loadLibraries().filter { $0.kind == .external }
+        libraries = db.loadLibraries()
         reload()
         return backupURL
     }
 
-    func createInternalLibrary(atPath rawPath: String) throws {
-        guard internalLibrary == nil else { throw LibraryError.internalAlreadyExists }
-        scanTask?.cancel()
-        isScanning = false
-        let path = canonicalPath(NSString(string: rawPath).expandingTildeInPath)
-
-        for library in externalLibraries where overlaps(path, library.path) {
-            throw LibraryError.overlapsExternal(library.name)
+    func renameLibraryIdentifier(_ id: UUID, to rawIdentifier: String) throws {
+        let value = rawIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { throw LibraryError.invalidIdentifier }
+        guard !value.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else {
+            throw LibraryError.invalidIdentifier
         }
-
-        let rootURL = URL(fileURLWithPath: path)
-        let newDatabaseURL = rootURL.appendingPathComponent("library.sqlite")
-        if db.path != newDatabaseURL.path,
-           FileManager.default.fileExists(atPath: newDatabaseURL.path) {
-            throw LibraryError.destinationHasLibrary(newDatabaseURL.path)
-        }
-
-        do {
-            try FileManager.default.createDirectory(
-                at: rootURL.appendingPathComponent("Music", isDirectory: true),
-                withIntermediateDirectories: true
-            )
-        } catch {
-            throw LibraryError.cannotCreate(error.localizedDescription)
-        }
-
-        if db.path != newDatabaseURL.path {
-            try db.relocate(to: newDatabaseURL.path)
-        }
-        UserDefaults.standard.set(path, forKey: Self.internalPathKey)
-        UserDefaults.standard.removeObject(forKey: Self.setupDismissedKey)
-
-        let library = db.ensureLibrary(path: path, kind: .internalLibrary, name: displayName(for: path))
-        internalLibrary = library
-        externalLibraries = db.loadLibraries().filter { $0.kind == .external }
-        reload()
-        rescanAll()
-    }
-
-    /// Opens an existing Tracks library in place. The selected URL may be the
-    /// library folder or its `library.sqlite` file.
-    ///
-    /// Song paths are rebased from the library's old root to the new folder so
-    /// a library folder can be copied to another computer. Persistent song IDs
-    /// do not change, so playlists and play counts survive the move.
-    func openInternalLibrary(atPath rawPath: String) throws {
-        let expanded = NSString(string: rawPath).expandingTildeInPath
-        let url = URL(fileURLWithPath: expanded)
-        var isDirectory: ObjCBool = false
-        let exists = FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory)
-
-        let folderURL: URL
-        if exists && isDirectory.boolValue {
-            folderURL = url
-        } else if url.lastPathComponent == "library.sqlite" {
-            folderURL = url.deletingLastPathComponent()
-        } else {
-            throw LibraryError.notLibraryFolder(url.path)
-        }
-
-        let folder = canonicalPath(folderURL.path)
-        let newDatabasePath = URL(fileURLWithPath: folder)
-            .appendingPathComponent("library.sqlite").path
-        guard FileManager.default.fileExists(atPath: newDatabasePath) else {
-            throw LibraryError.libraryNotFound(folder)
-        }
-        guard FileManager.default.isWritableFile(atPath: newDatabasePath),
-              FileManager.default.isWritableFile(atPath: folder) else {
-            throw LibraryError.readOnlyLibrary(folder)
-        }
-        var inspection: LibraryInspection?
-        for attempt in 0..<3 {
-            inspection = LibraryDatabase.inspect(path: newDatabasePath)
-            if inspection != nil { break }
-            if attempt < 2 { Thread.sleep(forTimeInterval: 0.05) }
-        }
-        guard let inspection else {
-            throw LibraryError.invalidLibrary(newDatabasePath)
-        }
-
-        scanTask?.cancel()
-        isScanning = false
-        openWarning = nil
-
-        let oldDefaults = UserDefaults.standard.string(forKey: Self.internalPathKey)
-        let oldDismissed = UserDefaults.standard.bool(forKey: Self.setupDismissedKey)
-        let oldDatabasePath = db.path
-        let oldInternal = internalLibrary
-        let oldExternal = externalLibraries
-        let switchingDatabase = oldDatabasePath != newDatabasePath
-
-        do {
-            if switchingDatabase {
-                try db.switchTo(path: newDatabasePath)
-            }
-
-            if let oldRoot = inspection.internalLibraryPath, !oldRoot.isEmpty {
-                db.rebaseSongs(from: oldRoot, to: folder)
-            }
-
-            let opened = db.ensureLibrary(path: folder,
-                                          kind: .internalLibrary,
-                                          name: displayName(for: folder))
-            UserDefaults.standard.set(folder, forKey: Self.internalPathKey)
-            UserDefaults.standard.removeObject(forKey: Self.setupDismissedKey)
-            internalLibrary = opened
-            externalLibraries = db.loadLibraries().filter { $0.kind == .external }
-
-            if switchingDatabase {
-                PlayerState.shared.stopAndClear()
-            }
-            reload()
-            if switchingDatabase {
-                NotificationCenter.default.post(name: .libraryDidChange, object: nil)
-            }
-
-            var messages: [String] = []
-            var shouldScan = true
-
-            if inspection.internalLibraryPath == nil && inspection.songCount > 0 {
-                messages.append("This database has no Internal Library record. Its songs were opened without relinking, so some files may be missing.")
-                shouldScan = false
-            } else {
-                let musicRoot = canonicalPath(opened.musicPath)
-                let internalSongs = allSongs.filter { song in
-                    guard let path = song.fileURL?.path else { return false }
-                    return isUnder(canonicalPath(path), root: musicRoot)
-                }
-                let missing = internalSongs.filter { song in
-                    guard let path = song.fileURL?.path else { return true }
-                    return !FileManager.default.fileExists(atPath: path)
-                }
-                if !missing.isEmpty {
-                    messages.append("\(missing.count) song\(missing.count == 1 ? "" : "s") could not be found in \(opened.musicPath). They have been kept in the database. Restore the Music folder and choose Scan to refresh.")
-                    // Do not scan here: pruning would remove the missing entries
-                    // before the user has a chance to restore the Music folder.
-                    shouldScan = false
-                }
-            }
-
-            let unavailableExternal = externalLibraries.filter {
-                !FileManager.default.fileExists(atPath: $0.path)
-            }
-            if !unavailableExternal.isEmpty {
-                messages.append("\(unavailableExternal.count) external librar\(unavailableExternal.count == 1 ? "y is" : "ies are") not available on this Mac. You can remove them in Settings, or add them again from their new location.")
-            }
-
-            openWarning = messages.isEmpty ? nil : messages.joined(separator: "\n\n")
-            AppLog.library.notice("Opened internal library")
-            if shouldScan {
-                rescanAll()
-            }
-        } catch {
-            if let oldDefaults {
-                UserDefaults.standard.set(oldDefaults, forKey: Self.internalPathKey)
-            } else {
-                UserDefaults.standard.removeObject(forKey: Self.internalPathKey)
-            }
-            UserDefaults.standard.set(oldDismissed, forKey: Self.setupDismissedKey)
-            if switchingDatabase && db.path != oldDatabasePath {
-                do {
-                    try db.switchTo(path: oldDatabasePath)
-                } catch {
-                    AppLog.library.error("Could not restore the previous library database: \(error.localizedDescription, privacy: .public)")
-                }
-            }
-            internalLibrary = oldInternal
-            externalLibraries = oldExternal
-            reload()
-            AppLog.library.error("Could not open internal library: \(error.localizedDescription, privacy: .public)")
-            throw error
-        }
-    }
-
-    func clearOpenWarning() {
-        openWarning = nil
+        try db.setLibraryIdentifier(id, identifier: value)
+        libraries = db.loadLibraries()
     }
 
     /// Called on app termination so the SQLite WAL is checkpointed and the
@@ -621,9 +511,7 @@ final class Library: ObservableObject {
                 return
             }
             self.beginLibraryUpdate()
-            let artwork = self.db.sync(tracks: result.tracks,
-                                       internalMusicRoot: self.internalLibrary?.musicPath,
-                                       libraries: libraries)
+            let artwork = self.db.sync(tracks: result.tracks, libraries: libraries)
             await ArtworkCache.shared.importArtwork(artwork)
             PlayerState.shared.clearMissingFiles(foundPaths: Set(result.discoveredFiles.keys))
             self.reload()
@@ -636,15 +524,13 @@ final class Library: ObservableObject {
     /// Quick-scans one enabled library. Modified files and missing files require
     /// an explicit Full Scan.
     func rescan(_ location: MusicLibrary) {
-        let stillConfigured = location.isInternal
-            ? internalLibrary?.id == location.id
-            : externalLibraries.contains { $0.id == location.id && $0.isEnabled }
+        let stillConfigured = libraries.contains { $0.id == location.id && $0.isEnabled }
         guard stillConfigured, location.isEnabled else { return }
 
         scanTask?.cancel()
         let root = location.scanPath
         let known = db.knownFiles()
-        AppLog.library.notice("Library rescan started (single \(location.isInternal ? "internal" : "external", privacy: .public) library)")
+        AppLog.library.notice("Library rescan started (single library)")
         isScanning = true
         scanError = nil
         scanPhase = .findingFiles
@@ -669,9 +555,7 @@ final class Library: ObservableObject {
                 return
             }
             self.beginLibraryUpdate()
-            let artwork = self.db.sync(tracks: result.tracks,
-                                       internalMusicRoot: self.internalLibrary?.musicPath,
-                                       libraries: self.enabledLibraries)
+            let artwork = self.db.sync(tracks: result.tracks, libraries: self.enabledLibraries)
             await ArtworkCache.shared.importArtwork(artwork)
             PlayerState.shared.clearMissingFiles(foundPaths: Set(result.discoveredFiles.keys))
             self.reload()
@@ -711,9 +595,7 @@ final class Library: ObservableObject {
         }
 
         beginLibraryUpdate()
-        let artwork = db.sync(tracks: result.tracks,
-                              internalMusicRoot: internalLibrary?.musicPath,
-                              libraries: enabledLibraries)
+        let artwork = db.sync(tracks: result.tracks, libraries: enabledLibraries)
         await ArtworkCache.shared.importArtwork(artwork)
         let discovered = Set(result.discoveredFiles.keys)
         let missingIDs = db.missingSongIDs(libraryID: location.id, discoveredPaths: discovered)
@@ -733,13 +615,11 @@ final class Library: ObservableObject {
     }
 
     func previewRelocation(of location: MusicLibrary, to rawRoot: String) async -> LibraryMissingReport? {
-        guard location.isExternal,
-              enabledLibraries.contains(where: { $0.id == location.id }) else { return nil }
+        guard enabledLibraries.contains(where: { $0.id == location.id }) else { return nil }
         scanError = nil
         let newRoot = canonicalPath(NSString(string: rawRoot).expandingTildeInPath)
         do {
-            try validateExternalLibrary(newRoot,
-                                        existing: externalLibraries.filter { $0.id != location.id })
+            try validateLibrary(newRoot, existing: libraries.filter { $0.id != location.id })
         } catch {
             scanError = error.localizedDescription
             return nil
@@ -811,7 +691,7 @@ final class Library: ObservableObject {
 
     func applyRelocation(_ report: LibraryMissingReport, removingMissingIDs: Set<UUID>) async throws -> URL {
         guard let plan = report.relocation,
-              externalLibraries.contains(where: { $0.id == plan.libraryID }) else {
+              libraries.contains(where: { $0.id == plan.libraryID }) else {
             throw LibraryDatabaseError.transactionFailed("The relocation preview is no longer valid.")
         }
         isScanning = true
@@ -823,10 +703,8 @@ final class Library: ObservableObject {
                                to: plan.newRoot,
                                songPaths: plan.matchedSongPaths,
                                removingSongIDs: validMissingIDs)
-        externalLibraries = db.loadLibraries().filter { $0.kind == .external }
-        let artwork = db.sync(tracks: plan.scannedTracks,
-                              internalMusicRoot: internalLibrary?.musicPath,
-                              libraries: enabledLibraries)
+        libraries = db.loadLibraries()
+        let artwork = db.sync(tracks: plan.scannedTracks, libraries: enabledLibraries)
         await ArtworkCache.shared.importArtwork(artwork)
         PlayerState.shared.removeSongs(withIDs: validMissingIDs)
         reload()
@@ -847,7 +725,7 @@ final class Library: ObservableObject {
     }
 
     private var enabledLibraries: [MusicLibrary] {
-        ([internalLibrary].compactMap { $0 } + externalLibraries).filter(\.isEnabled)
+        libraries.filter(\.isEnabled)
     }
 
     private func makeProgressHandler() -> @Sendable (ScanPhase, Int, Int) async -> Void {
@@ -899,81 +777,6 @@ final class Library: ObservableObject {
             songsByID[song.id.uuidString] = song
         }
         playlists = db.loadPlaylists(songsByID: songsByID)
-    }
-
-    // MARK: Read-only rules
-
-    /// Only music inside the Internal Library's `Music` folder can be edited.
-    func isReadOnly(songID: UUID) -> Bool {
-        guard let song = song(withID: songID)?.song else { return true }
-        return isReadOnly(song: song)
-    }
-
-    func isReadOnly(song: Song) -> Bool {
-        guard let filePath = song.fileURL?.path,
-              let internalLibrary else { return true }
-        return !isUnder(canonicalPath(filePath), root: canonicalPath(internalLibrary.musicPath))
-    }
-
-    /// An album is editable only when every track belongs to the Internal
-    /// Library. Mixed or external albums stay read-only.
-    func isReadOnly(albumID: UUID) -> Bool {
-        guard let album = album(withID: albumID) else { return true }
-        return isReadOnly(album: album)
-    }
-
-    func isReadOnly(album: Album) -> Bool {
-        guard !album.songs.isEmpty else { return true }
-        return album.songs.contains { isReadOnly(song: $0) }
-    }
-
-    /// Moves the given Internal Library files to the Trash and removes their
-    /// rows from the database. Files that cannot be moved are left in place and
-    /// reported in `failures`.
-    @discardableResult
-    func deleteSongs(_ songs: [Song]) -> LibraryDeletionResult {
-        var seen = Set<UUID>()
-        let unique = songs.filter { seen.insert($0.id).inserted }
-        guard !unique.isEmpty else { return LibraryDeletionResult(deleted: 0, failures: []) }
-        guard unique.allSatisfy({ !isReadOnly(song: $0) }) else {
-            return LibraryDeletionResult(
-                deleted: 0,
-                failures: ["Only tracks in the Internal Library can be deleted."]
-            )
-        }
-
-        var deletedIDs: [UUID] = []
-        var failures: [String] = []
-        for song in unique {
-            guard let url = song.fileURL else {
-                deletedIDs.append(song.id)
-                continue
-            }
-            if FileManager.default.fileExists(atPath: url.path) {
-                do {
-                    try FileManager.default.trashItem(at: url, resultingItemURL: nil)
-                    deletedIDs.append(song.id)
-                } catch {
-                    failures.append("\(song.title): \(error.localizedDescription)")
-                }
-            } else {
-                // The database row can still be pruned when the file is gone.
-                deletedIDs.append(song.id)
-            }
-        }
-
-        guard !deletedIDs.isEmpty else {
-            return LibraryDeletionResult(deleted: 0, failures: failures)
-        }
-
-        db.deleteSongs(withIDs: deletedIDs)
-        PlayerState.shared.removeSongs(withIDs: Set(deletedIDs))
-        reload()
-        AppLog.library.notice("Deleted \(deletedIDs.count, privacy: .public) songs (\(failures.count, privacy: .public) failures)")
-        if !failures.isEmpty {
-            AppLog.library.warning("Some songs could not be deleted: \(failures.joined(separator: "; "), privacy: .public)")
-        }
-        return LibraryDeletionResult(deleted: deletedIDs.count, failures: failures)
     }
 
     // MARK: Playback bookkeeping
@@ -1074,132 +877,11 @@ final class Library: ObservableObject {
         PlayerState.shared.applyUpdatedSongs(allSongs)
     }
 
-    // MARK: Tag editing
-
-    func updateSong(_ updated: Song) async throws {
-        guard !isReadOnly(songID: updated.id) else { return }
-        let albumID = song(withID: updated.id)?.album.id
-        let artwork: Data? = if let albumID {
-            await ArtworkCache.shared.fullData(albumID: albumID)
-        } else {
-            nil
-        }
-        if let url = updated.fileURL {
-            let fields = TagFields(title: updated.title,
-                                   artist: updated.artist,
-                                   albumArtist: updated.albumArtist,
-                                   album: updated.album,
-                                   genre: updated.genre,
-                                   year: updated.year.isEmpty ? nil : updated.year,
-                                   track: updated.trackNumber > 0 ? updated.trackNumber : nil,
-                                   trackTotal: updated.trackTotal > 0 ? updated.trackTotal : nil,
-                                   discNumber: updated.discNumber > 0 ? updated.discNumber : nil,
-                                   discTotal: updated.discTotal > 0 ? updated.discTotal : nil,
-                                   comments: updated.comments.isEmpty ? nil : updated.comments,
-                                   artwork: artwork)
-            do {
-                try await writeTags(fields, to: url)
-                updateFileStats(for: url)
-            } catch {
-                AppLog.metadata.error("Tag write failed for song \(updated.id.uuidString, privacy: .public): \(error.localizedDescription, privacy: .public)")
-                throw error
-            }
-        }
-        db.updateSong(updated)
-        do {
-            try organizeInternalSongs([updated])
-        } catch {
-            reload()
-            throw error
-        }
-        reload()
-        PlayerState.shared.applyUpdatedSongs(allSongs)
-    }
-
-    func updateAlbum(_ updated: Album) async throws {
-        guard !isReadOnly(albumID: updated.id) else { return }
-        for song in updated.songs {
-            guard let url = song.fileURL else { continue }
-            let fields = TagFields(title: song.title,
-                                   artist: song.artist,
-                                   albumArtist: song.albumArtist,
-                                   album: song.album,
-                                   genre: song.genre,
-                                   year: song.year.isEmpty ? nil : song.year,
-                                   track: song.trackNumber > 0 ? song.trackNumber : nil,
-                                   trackTotal: song.trackTotal > 0 ? song.trackTotal : nil,
-                                   discNumber: song.discNumber > 0 ? song.discNumber : nil,
-                                   discTotal: song.discTotal > 0 ? song.discTotal : nil,
-                                   comments: song.comments.isEmpty ? nil : song.comments,
-                                   artwork: updated.artwork.imageData)
-            do {
-                try await writeTags(fields, to: url)
-                updateFileStats(for: url)
-            } catch {
-                AppLog.metadata.error("Tag write failed for song \(song.id.uuidString, privacy: .public) in album \(updated.id.uuidString, privacy: .public): \(error.localizedDescription, privacy: .public)")
-                throw error
-            }
-        }
-        db.updateAlbum(updated)
-        db.updateSongMetadata(updated.songs)
-        do {
-            try organizeInternalSongs(updated.songs)
-        } catch {
-            await ArtworkCache.shared.storeArtwork(updated.artwork.imageData, albumID: updated.id)
-            reload()
-            throw error
-        }
-        await ArtworkCache.shared.storeArtwork(updated.artwork.imageData, albumID: updated.id)
-        reload()
-        PlayerState.shared.applyUpdatedSongs(allSongs)
-    }
-
-    /// Moves edited Internal Library files to the canonical artist/album path.
-    /// Song IDs, stars, playlists and added dates are preserved because the
-    /// database path is updated in place rather than re-inserting the row.
-    private func organizeInternalSongs(_ songs: [Song]) throws {
-        guard let internalLibrary else { return }
-        let root = URL(fileURLWithPath: internalLibrary.musicPath)
-        for song in songs {
-            guard let url = song.fileURL, !isReadOnly(songID: song.id),
-                  let desired = LibraryOrganizer.destination(for: song, musicRoot: root) else { continue }
-            let source = url.resolvingSymlinksInPath()
-            if source.path == desired.path { continue }
-            try FileManager.default.createDirectory(
-                at: desired.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
-            var destination = desired
-            if FileManager.default.fileExists(atPath: destination.path) {
-                destination = LibraryOrganizer.uniqueDestination(destination)
-            }
-            try FileManager.default.moveItem(at: source, to: destination)
-            let values = try? destination.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
-            db.updateSongPath(songID: song.id,
-                              path: destination.path,
-                              mtime: values?.contentModificationDate?.timeIntervalSince1970 ?? 0,
-                              size: Int64(values?.fileSize ?? 0))
-        }
-    }
-
     func resetPlayCount(songIDs: [UUID]) {
         guard !songIDs.isEmpty else { return }
         db.resetPlayCount(songIDs: songIDs.map(\.uuidString))
         reload()
         PlayerState.shared.applyUpdatedSongs(allSongs)
-    }
-
-    private func writeTags(_ fields: TagFields, to url: URL) async throws {
-        try await Task.detached(priority: .userInitiated) {
-            try await AudioTagWriter.write(fields, to: url)
-        }.value
-    }
-
-    private func updateFileStats(for url: URL) {
-        let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
-        db.updateFileStats(path: url.path,
-                           mtime: values?.contentModificationDate?.timeIntervalSince1970 ?? 0,
-                           size: Int64(values?.fileSize ?? 0))
     }
 
     // MARK: Playlists

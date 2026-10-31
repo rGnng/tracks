@@ -22,15 +22,15 @@ queue, and history live on this Mac.
   keys, full-screen behavior, and the MiniPlayer are AppKit-native. Custom
   drawing is reserved for places where the stock control would get in the way.
 - **Local first.** Everything is stored in SQLite plus a disk artwork cache.
-  External libraries are indexed in place and never modified.
+  Music libraries are indexed in place and never modified.
 - **Keyboard and pointer are peers.** Main lists support arrows, Page Up/Down,
   Home/End, in-app section shortcuts, and native text editing/commands. The
   mouse adds marquee selection, item dragging, and direct manipulation.
 - **Restrained motion.** Animations are short and functional: the menu-bar card
   flip, the MiniPlayer chrome, album-detail transitions, and list reveals.
-- **Non-destructive management.** Missing tracks are reviewed, not silently
-  deleted. Deletion moves files to the Trash. Removing an External Library
-  creates a database backup and never touches its audio files.
+- **Non-destructive management.** Music libraries are read-only. Missing tracks
+  are reviewed, not silently deleted. Removing a library index creates a
+  database backup and never touches its audio files.
 
 ## Library
 
@@ -51,8 +51,8 @@ queue, and history live on this Mac.
 - Double-clicking a sidebar playlist, Albums, or Recently Added plays it in the
   current content-view sort order.
 - Context menus provide Play, Shuffle, Add to Playlist, Play Next, Play Later,
-  Get Info, Go to Album/Artist, and a conditional Delete item. Internal
-  playlists can also receive album and song drops.
+  Get Info, and Go to Album/Artist. User playlists can also receive album and
+  song drops.
 
 ## Playback
 
@@ -82,35 +82,32 @@ queue, and history live on this Mac.
 
 ## Library management
 
-- One writable **Internal Library** and any number of read-only **External
-  Libraries**. Tracks owns the Internal Library's `library.sqlite` and `Music/`
-  folder; it never writes into an External Library.
-- **Quick Scan** discovers and imports new paths only. **Full Scan** also
-  refreshes files whose modification time or size changed. File contents are
-  never hashed.
+- One **Database** folder and any number of read-only music libraries. Tracks
+  owns only `library.sqlite`, `library.sqlite-wal`, and `library.sqlite-shm` in
+  the Database folder; it never modifies music-library files, tags, artwork, or
+  folder structure.
+- Each library has a unique, user-editable identifier. New libraries default to
+  `library1`, `library2`, and so on; the identifier can be renamed later.
+- The Database is located on first launch; **Settings > Library > Database >
+  Open/Create Database…** can open another existing Tracks database or create a
+  new one. Database and library folders are allowed to overlap.
+- **Quick Scan** discovers new paths only. **Full Scan** also refreshes files
+  whose modification time or size changed. File contents are never hashed.
 - Missing files found by Full Scan are shown in a searchable review table. Only
   explicitly selected rows are removed from the Tracks index; Cancel changes
   nothing.
 - **Relocate** matches the full relative path under a new library root, keeping
   song IDs, playlists, stars, and play counts. Unmatched tracks use the same
   review flow.
-- Internal imports use a canonical
-  `<Album Artist>/<Album>/[disc-]track.title-artist.ext` layout. Tag edits write
-  back to the file and relocate it while preserving the song ID and play data.
-- **Get Info** has Details, Artwork, and File tabs. Mixed-value fields use
-  italic placeholders; submitting an empty mixed field preserves the underlying
-  value. Read-only fields remain selectable and copyable. OK with no edits does
-  not rewrite tags or artwork.
-- Multi-disc albums are ordered by disc then track. Album detail shows the
-  effective disc count and `disc-track` labels. Get Info keeps the stored track
-  and disc totals as-is so saving does not fill intentionally empty tags.
-- **Delete** is available only for Internal Library files, requires
-  confirmation, and moves files to the macOS Trash before removing their index
-  rows.
-- Disabling an External Library hides its songs, stops playback, and clears the
-  global queue and History, but keeps its indexed rows for later re-enable.
-  Deleting a disabled External Library creates a timestamped SQLite Online
-  Backup first and removes only Tracks index data.
+- **Get Info** is a read-only details window with Details, Artwork, and File
+  tabs. Mixed-value fields use italic placeholders and remain selectable and
+  copyable.
+- Stars, play counts, playlists, queue, and history are Tracks metadata stored
+  in the database, so they remain editable even though library files are not.
+- Disabling a library hides its songs, stops playback, and clears the global
+  queue and History, but keeps its indexed rows for later re-enable. Deleting a
+  disabled library creates a timestamped SQLite Online Backup first and removes
+  only Tracks index data.
 
 ## Interaction details
 
@@ -295,7 +292,7 @@ Requires Xcode 16+ and Swift 6 on macOS 15+.
   panel checkboxes start unchecked and remember their state across launches.
 - **Window > Log** opens Console.app, macOS's built-in unified-log viewer.
   Tracks logs under subsystem `com.audia.tracks` with categories `app`,
-  `library`, `database`, `metadata`, `artwork`, `playback`, `import`, `mpd`, and
+  `library`, `database`, `metadata`, `artwork`, `playback`, `mpd`, and
   `shortcuts`. Filter Console by the Tracks process or the subsystem, and use
   **Action > Include Info Messages** / **Include Debug Messages** for verbose
   output.
@@ -322,17 +319,15 @@ This writes `Resources/AppIcon.icns`, which the build script and app bundle use.
 
 ## Data
 
-The primary database is:
+The default database location is:
 
 ```text
 ~/Music/Tracks/library.sqlite
 ```
 
-The fallback location, when no Internal Library exists, is:
-
-```text
-~/Library/Application Support/Tracks/library.sqlite
-```
+The folder is chosen on first launch. Existing installations keep their current
+database location. Tracks manages only `library.sqlite` and its `-wal`/`-shm`
+sidecars in that folder.
 
 Artwork is cached as JPEG files up to 500×500 under:
 
@@ -352,10 +347,9 @@ Sources/Audia/
                         SidebarView, SidebarVisibility, WindowMode, Components
   Content views         ContentPane, ContentViews, BrowserViews, ContextMenus,
                         PlaylistActions, MarqueeSelection, ListScroll
-  Library and data      Library, LibraryDatabase, LibraryOrganizer,
-                        LibraryDeletion, LibraryRelocationMatcher, Models
-  Metadata and artwork  FLACLibrary, ArtworkCache, MediaImporter, TagWriter,
-                        GetInfo
+  Library and data      Library, LibraryDatabase, LibraryRelocationMatcher,
+                        Models
+  Metadata and artwork  FLACLibrary, ArtworkCache, GetInfo
   Playback              PlayerState, AudioDevices, SystemVolume, SystemNowPlaying
   Input and navigation  DragController, NavigationRouter, NavigationCenter,
                         KeyboardShortcut, SystemWideShortcuts

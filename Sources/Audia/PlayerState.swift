@@ -905,8 +905,8 @@ final class PlayerState: ObservableObject {
         }
 
         // Resolve persisted history IDs against the current library. Prune
-        // entries whose songs no longer exist (for example after removing an
-        // external library).
+        // entries whose songs no longer exist (for example after removing a
+        // library index).
         let resolved = historyIDs.compactMap { byID[$0] }
         if resolved.count != historyIDs.count {
             historyIDs = resolved.map(\.id)

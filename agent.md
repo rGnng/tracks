@@ -55,8 +55,11 @@ sqlite3 ~/Music/Tracks/library.sqlite \
   "select count(*) from songs; select count(*) from albums; select * from libraries;"
 ```
 
-If no Internal Library exists, the fallback database path is
-`~/Library/Application Support/Tracks/library.sqlite`.
+Existing installations keep their current database path. New installations
+choose a folder on first launch, defaulting to `~/Music/Tracks/library.sqlite`.
+Settings > Library > Database > **Open/Create Database…** can switch to another
+Tracks database or create a new one later. Tracks manages only `library.sqlite`
+and its `-wal`/`-shm` sidecars in that folder.
 
 ## 3. Current runtime snapshot
 
@@ -74,13 +77,12 @@ If no Internal Library exists, the fallback database path is
   - 10 starred songs
   - 0 persisted queue rows (the test queue was cleared)
 - Libraries table:
-  - Internal: `/Users/n/Music/Tracks` (`Tracks`)
-  - External: `/Volumes/New Volume/MusicLocal/Media.localized` (`Media.localized`)
-- All 20,669 current songs are from the External Library. The Internal Library
-  `Music/` folder is currently empty at the database level.
-- The previous Internal Library audio files appear in the macOS Trash. This is
-  consistent with the Delete feature having been used. Do **not** restore or rescan
-  those files unless the user explicitly asks.
+  - Read-only: `/Volumes/New Volume/MusicLocal` identifier `library1`
+  - The legacy internal record is deleted on first open; its `Music/` folder is
+    left on disk and is not registered automatically.
+- All 20,669 current songs belong to the read-only library.
+- `internalLibraryPath` in UserDefaults has been replaced by
+  `databaseFolderPath`; the migrated value is `/Users/n/Music/Tracks`.
 - Stored playlists:
   - `337845818`: 10 songs
   - `McStone`: 27 songs
@@ -105,8 +107,8 @@ If no Internal Library exists, the fallback database path is
 
 - All diagnostics go through `AppLog` (`Sources/Audia/AppLog.swift`), which wraps
   `os.Logger` with subsystem `com.audia.tracks` and categories `app`, `library`,
-  `database`, `metadata`, `artwork`, `playback`, `import`, `mpd`, and
-  `shortcuts`. Do not use `print` or ad-hoc `NSLog`.
+  `database`, `metadata`, `artwork`, `playback`, `mpd`, and `shortcuts`. Do not
+  use `print` or ad-hoc `NSLog`.
 - **Window > Log** calls `LogViewer.openConsole()` (`Sources/Audia/LogViewer.swift`),
   which opens Console.app (`/System/Applications/Utilities/Console.app`).
 - Use `.notice` for lifecycle events, `.info`/`.debug` for routine detail,
@@ -131,16 +133,12 @@ scripts/build.sh
 scripts/make-icon.sh
 scripts/generate_library.swift
 Sources/Audia/
-  AudiaApp.swift             App entry, AppDelegate, menus, Settings window, setup window
+  AudiaApp.swift             App entry, AppDelegate, menus, Settings, Open/Create Database window
   Theme.swift                Light/dark colors and layout constants
   Models.swift               Artwork, Song, Album, Playlist, MusicLibrary, sidebar models
-  Library.swift              Library singleton, scanning, playlists, read-only rules, delete API
-  LibraryDatabase.swift      SQLite schema, sync, playlists, queue, song deletion
-  LibraryOrganizer.swift     Canonical file names and tag-driven file relocation
-  LibraryDeletion.swift      Delete confirmation UI and partial-failure alert
+  Library.swift              Library singleton, database location, scanning, playlists
+  LibraryDatabase.swift      SQLite schema/migrations, sync, playlists, queue, index cleanup
   FLACLibrary.swift          FLAC/AVFoundation metadata readers and LibraryScanner
-  MediaImporter.swift        Import into Internal Library with organizer naming
-  TagWriter.swift            Tag/artwork writeback for supported formats
   ArtworkCache.swift         500x500 JPEG disk cache, quality, size, rebuild
   MPDServer.swift            Custom MPD TCP server, queue/playlists/album art
   PlayerState.swift          AVPlayer engine, queue, history, shuffle/repeat
@@ -163,7 +161,7 @@ Sources/Audia/
   TrayController.swift       Menu-bar icon/cover flip, inline track and star strip
   LibraryFocusSink.swift     Initial first responder for the Library window
   SettingsFocusSink.swift    Invisible initial first responder for Settings
-  GetInfo.swift              Details/Artwork/File inspector and tag editing
+  GetInfo.swift              Read-only Details/Artwork/File inspector
   StatusBarView.swift        Bottom status bar and status context
   DragController.swift       Long-press drag, marquee, native file drag
   MarqueeSelection.swift     Reusable marquee selection modifier
@@ -178,28 +176,32 @@ Sources/Audia/
 
 ## 5. Library model and database
 
-### Internal and External Libraries
+### Database and Libraries
 
-- There is at most one Internal Library. It is writable and owns both:
-  - `<root>/library.sqlite`
-  - `<root>/Music/`
-- External Libraries are read-only indexes of folders managed by other apps.
-  Tracks never writes their audio files.
-- External Libraries have a persisted enabled state. Disabling one hides its
-  songs from all content views, stops playback, and clears the global queue and
-  History. Song and playlist rows remain in SQLite for re-enable.
-- Deleting an External Library is available only while disabled, requires a
-  second destructive confirmation, creates a millisecond-timestamped SQLite
-  Online Backup first, and deletes only Tracks index data.
-- Read-only rules:
-  - `Library.isReadOnly(song:)`: true unless the file is under the Internal
-    Library's `Music/` directory.
-  - `Library.isReadOnly(album:)`: true if any track in the album is read-only.
-  - UI disables editing, and the update methods also guard against writes.
+- Tracks manages one database folder. The only files it writes there are
+  `library.sqlite`, `library.sqlite-wal`, and `library.sqlite-shm` (plus
+  timestamped backups). The folder is chosen on first launch and can be changed
+  later from Settings; existing installations keep their current path unless
+  the user opens or creates another database.
+- Database and music-library folders may overlap. Validation checks only the
+  three SQLite file paths, not directory containment.
+- Every music library is read-only. Tracks never copies, moves, renames, writes
+  tags/artwork into, or deletes files inside a library.
+- Each library has a unique `identifier` stored in `libraries.identifier`.
+  Missing values are backfilled as `library1`, `library2`, etc. Identifiers are
+  user-renameable and enforced uniquely with a case-insensitive index. The
+  internal UUID remains the stable key for songs and playlists.
+- Libraries have a persisted enabled state. Disabling one hides its songs from
+  all content views, stops playback, and clears the global queue and History.
+  Song and playlist rows remain in SQLite for re-enable.
+- Deleting a library index is available only while disabled, requires a second
+  destructive confirmation, creates a millisecond-timestamped SQLite Online
+  Backup first, and deletes only Tracks index data.
+- The legacy `libraries.kind = 'internal'` record is removed automatically on
+  open, together with its indexed songs and playlist references. Its `Music`
+  folder and files are left untouched and are not registered automatically.
 - Paths are canonicalized with `resolvingSymlinksInPath()` on both sides.
-- Albums and artists are not isolated per library. If the same artist/album exists
-  in Internal and External libraries, rows merge and album-level editing is
-  read-only.
+- Albums and artists are not isolated per library; rows merge across libraries.
 
 ### Stable IDs
 
@@ -207,6 +209,7 @@ Sources/Audia/
 - Artist ID: `stableUUID("artist|" + lowercased(name))`.
 - Album ID: `stableUUID("album|" + artistID + "|" + lowercased(title))`.
 - Library ID: `stableUUID("library|" + path)`.
+- Library identifier: user-visible unique string, separate from the library UUID.
 - Playlist ID: random UUID.
 
 Never recompute song IDs during normal open/move/rebase operations.
@@ -221,7 +224,8 @@ songs(id TEXT PK, path TEXT UNIQUE, library_id, title, artist_id, album_id,
       genre, year TEXT, track, track_total, disc, disc_total, comments,
       duration, date_added, play_count, rating, loved, last_played,
       skip_count, mtime, file_size)
-libraries(id TEXT PK, path TEXT UNIQUE, kind TEXT, name TEXT, date_added,
+libraries(id TEXT PK, path TEXT UNIQUE, kind TEXT DEFAULT 'external', name TEXT,
+          identifier TEXT UNIQUE COLLATE NOCASE, date_added,
           enabled INTEGER NOT NULL DEFAULT 1)
 playlists(id TEXT PK, name TEXT, date_created REAL, date_modified REAL)
 playlist_items(playlist_id, song_id, position,
@@ -236,15 +240,14 @@ Important schema decisions:
 - `songs.library_id` identifies the owning source; `libraries.enabled` controls
   whether its songs appear in the normal library and playlists. Disabling does
   not delete or rewrite songs or playlist items.
-- `createSchema()` defines the only supported schema. Old library databases
-  missing current columns are not migrated.
+- `createSchema()` defines the base schema. On open, migrations add the
+  `libraries.identifier` column, backfill missing identifiers, remove legacy
+  internal records, and create the case-insensitive unique index.
 - `playlists.date_modified` is maintained for MPD `Last-Modified`.
 - `playlist_items` has a primary key on `(playlist_id, song_id)`, so a stored
   playlist cannot contain duplicate copies of the same song.
-- `date_added` is first-discovery time:
-  - Internal imports: import time.
-  - External tracks: file modification time.
-  - Existing rows preserve it across rescans and tag edits.
+- `date_added` is file modification time when available, otherwise first
+  discovery time. Existing rows preserve it across rescans.
 - Year/date values are stored as raw text in `songs.year` and `albums.year`
   (`TEXT NOT NULL DEFAULT ''`). Empty means unknown. Tags such as `2015` and
   `2015-05-01` are preserved. UI displays the text without thousands separators
@@ -264,11 +267,11 @@ Important schema decisions:
   checkpoints and switches the journal back to DELETE so `library.sqlite` is
   self-contained.
 
-### Scanning and import
+### Scanning
 
 - Supported files: FLAC, MP3, M4A, WAV, AIFF, OGG/Opus.
-- Startup Quick Scan and Settings Quick Scan share one policy: discover and import
-  new paths only; do not reparse known paths or remove missing rows.
+- Startup Quick Scan and Settings Quick Scan share one policy: discover new paths
+  only; do not reparse known paths or remove missing rows.
 - Full Scan refreshes files when `mtime` or `file_size` changes. File contents are
   never hashed. Missing rows are reviewed per track in a searchable table; only
   explicitly selected rows are removed from the Tracks index. No review sheet is
@@ -285,21 +288,12 @@ Important schema decisions:
   are deleted. The review's left action is Cancel, and it offers Select All and
   Deselect All.
 - `LibraryScanner` resolves symlinks and reads metadata concurrently.
-- Internal imports use `LibraryOrganizer`:
-  - Canonical path: `<Album Artist>/<Album>/[disc-]track.title-artist.ext`
-  - Track digits: at least 2, expand automatically for 3+ digit track numbers.
-  - Disc prefix only when present.
-- Internal tag edits write tags back to the file, then relocate/rename it to the
-  canonical path while preserving the song ID, stars, play counts, playlists,
-  and `date_added`.
-- Get Info supports Mixed values with italic placeholders; submitting empty mixed
-  fields preserves the underlying value.
-- Get Info only writes tags, relocates files, or updates album artwork when the
-  submitted values differ from the loaded values. OK with no edits closes without
-  writing; a play-count reset updates only the database.
-- Get Info Details fields use square AppKit-backed boxes. They remain selectable
-  and copyable when read-only (for example for External Library tracks); the
-  read-only state only disables editing, not text selection.
+- Scans only read files. Tracks never imports, copies, moves, renames, deletes,
+  or writes tags/artwork inside a library.
+- Get Info supports Mixed values with italic placeholders and is entirely
+  read-only. Details fields remain selectable and copyable.
+- Stars, play counts, playlists, queue, and history are app metadata stored in
+  SQLite and remain writable even though library files are not.
 
 ## 6. Playback, queue, and UI behavior
 
@@ -329,8 +323,8 @@ Important schema decisions:
   show a warning icon and are skipped; permission/decoder errors are not marked
   missing. One hundred consecutive missing tracks pauses playback with a warning.
 - Playback History lives in UserDefaults (`player.historyIDs`), currently capped
-  at 50. Disabling any External Library stops playback and clears the global queue
-  and History; the UI uses the existing “History” label.
+  at 50. Disabling any library stops playback and clears the global queue and
+  History; the UI uses the existing “History” label.
 - `SystemNowPlaying` publishes title, artist, album, duration, elapsed time,
   queue count/index, and cached album artwork to `MPNowPlayingInfoCenter`, and
   registers play/pause/toggle, next/previous, and position handlers on
@@ -436,10 +430,10 @@ Important schema decisions:
   - Dragging outside the window starts a native file drag:
     - Finder copies the files.
     - Text editors receive absolute paths.
-  - Internal playlists can receive album/song drops.
+  - User playlists can receive album/song drops.
 - Context menus include Play, Shuffle, Add to Playlist, Play Next, Play Later,
-  Get Info, and the conditional Delete item. Songs/Playlist row menus also have
-  **Go to Album**, which switches to Albums and opens that song's album detail.
+  and Get Info. Songs/Playlist row menus also have **Go to Album**, which
+  switches to Albums and opens that song's album detail.
 - Album detail keeps the underlying Albums/Recently Added grid mounted while
   the detail view is visible. Closing a card-opened detail restores the exact
   previous scroll position. Closing a detail opened through **Go to Album**
@@ -485,8 +479,8 @@ Important schema decisions:
   existing playlist names. New names auto-increment: New Playlist, New Playlist 2,
   etc.
 - Play Later appends to the bottom of the queue and sits below Play Next.
-- Get Info has Details, Artwork, and File tabs, with tag/artwork writeback for the
-  Internal Library.
+- Get Info has Details, Artwork, and File tabs. It is read-only and never writes
+  tags or artwork.
 - Settings > Shortcuts has separate In-App and System-wide tables. Use **+** to
   add an available action and **−** to remove the selected binding. In-App
   bindings are handled by the local key monitor; System-wide bindings use Carbon
@@ -680,9 +674,9 @@ to be realized or on cached frame preferences.
   bilinear draw before displaying, instead of relying on SwiftUI's live scaling.
 - Settings shows the current cache size, calculated asynchronously from the
   files under the Artwork cache directory.
-- The Internal Library header no longer shows a "Read & Write" label. The
-  External Libraries card is titled "External Libraries (Read Only)" and no
-  longer has a separate Read-Only intro row or supported-format list.
+- Settings has a Database card with the current database-folder path, a
+  Reveal action, and **Open/Create Database…** (reuses the first-launch window).
+  The Libraries card is read-only and rows show the unique identifier and path.
 - JPEG quality control:
   - Plain SwiftUI `TextField`, digits only.
   - Accepted range 15-100, default 80.
@@ -872,49 +866,21 @@ Supported areas:
 - MPD has no password and listens on all interfaces by user request. Treat it as a
   trusted-LAN service; do not expose it publicly.
 
-## 9. File deletion
+## 9. Library files and index cleanup
 
-Delete is available from:
-
-- Albums grid and Album list
-- Recently Added
-- Artists and Genres album headers
-- Song table
-- Album detail track rows
-- Playlist track rows
-
-Rules and behavior:
-
-- The menu item is **Delete...**.
-- It is enabled only when every target item is in the Internal Library.
-  External tracks, mixed albums, or any read-only target show a disabled item.
-- Confirmation is an `NSAlert`:
-  - Default button: Cancel.
-  - Destructive button: Move to Trash.
-  - Message includes the item/album count and file count.
-- On confirmation, `Library.deleteSongs`:
-  - Rechecks that every target is writable/internal.
-  - Moves each existing file to macOS Trash with
-    `FileManager.default.trashItem`.
-  - Removes the song rows and playlist references from SQLite.
-  - Removes empty albums/artists through the existing orphan cleanup.
-  - Removes deleted IDs from the current queue, base queue, and history.
-  - Reloads the library and selected views.
-- Missing files are removed from the database even though there is no file to move.
-- If some Trash moves fail, those database rows remain and an alert lists the
-  failures. Successfully moved files are still removed.
-- Current snapshot evidence: all previous Internal Library audio files are in the
-  macOS Trash and the database has zero internal songs. Do not restore them unless
-  the user asks.
-- Deletion does not remove empty directories or the artwork cache entry for a
-  deleted album. That is intentional for now.
-- There is no undo beyond the macOS Trash.
-
-External Library removal is separate from Internal file deletion: disabling
-requires confirmation and clears the global queue/History; the disabled source
-can then be deleted through a second confirmation. Tracks creates a SQLite Online
-Backup before deleting that source's songs and playlist-item associations. Empty
-user-created playlists are retained; external audio files are never touched.
+- Right-click **Delete…** for songs and albums has been removed. Tracks never
+  moves library files to the Trash.
+- Full Scan still reports missing files in the searchable review sheet. Only the
+  explicitly selected rows are removed from the SQLite index; audio files are
+  never touched, and Cancel changes nothing.
+- A library index can be removed only while disabled. Tracks creates a SQLite
+  Online Backup first, then deletes that library's songs and playlist-item
+  associations. Empty user-created playlists are retained.
+- Legacy `kind = 'internal'` library rows are cleaned automatically when the
+  database opens: their indexed songs and playlist references are removed, and
+  the old `Music` folder is left untouched on disk.
+- Removing a library index does not remove empty directories or artwork cache
+  entries. There is no undo.
 
 ## 10. Titlebar and traffic lights
 
@@ -1066,13 +1032,14 @@ by AppKit's title-bar layout pass.
    - Stared is virtual and must not be deleted/renamed/overwritten/reordered.
    - Preserve `added` and `Last-Modified` from `date_added`.
    - Do not clear user history or play counts during testing.
-9. Deletion:
-   - Only Internal Library files may be deleted.
-   - Move files to Trash, never `removeItem`.
-   - Recheck writeability immediately before deleting.
+9. Library files:
+   - Never write, move, rename, or delete files inside a music library.
+   - Index cleanup is allowed only through the missing-file review or the
+     disabled-library delete flow, both of which leave audio files untouched.
+   - Legacy internal files are ignored, not migrated or restored.
 10. Current user data:
-    - Internal files are in Trash; do not restore or rescan them.
     - Original stored playlists, queue, and stars should be preserved.
+    - The legacy internal library record is removed on first open.
 11. Testing:
     - Use temporary files/playlists and temporary databases for destructive tests.
     - Keep system output muted during playback automation.
@@ -1110,6 +1077,7 @@ sqlite3 ~/Music/Tracks/library.sqlite \
    select count(*) from playlists;
    select name from playlists order by name;
    select count(*) from songs where loved=1;
+   select identifier, path, enabled from libraries order by identifier;
    select current_index, elapsed, next_queue_id,
           json_array_length(queue_entries) from player_queue;"
 ```
@@ -1172,31 +1140,30 @@ traffic lights are custom SwiftUI controls, not standard window buttons.
   `searchplaylist`, `added-since`, mounts, channels, or partitions.
 - MPD `Stared` is read-only for delete/rename/save/reorder by design; add/remove
   map to star changes.
-- Deleting songs leaves empty folders and cached artwork behind.
+- Music libraries are read-only. A library index can be disabled/re-enabled or
+  deleted after confirmation; deleting the index never deletes audio files.
+- Removing a library index leaves empty folders and cached artwork behind.
 - The artwork cache is not automatically rebuilt when quality changes; use Rebuild
   Cache.
-- External Libraries are read-only for audio-file edits. Their Tracks index can
-  be disabled/re-enabled or deleted after confirmation; deleting the index does
-  not delete the external audio files.
 - No security-scoped bookmarks; the app is not sandboxed. Mac App Store
   distribution is not a target.
 - No per-library album isolation.
-- No undo for file deletion beyond the macOS Trash.
+- There is no file-deletion feature.
 - The project is tracked on `main`; the app icon source, generated `.icns`, and
   build-time icon handling are part of the repository.
 
 ## 15. Handoff summary
 
 Tracks is a native macOS iTunes-style player with a SQLite library, real AVPlayer
-playback, Internal/External libraries, organizer-based imports and tag edits,
-a 500x500 disk artwork cache, rich multi-selection and drag behavior, a MiniPlayer,
-queue/position persistence, macOS Now Playing/media-key integration, a bundled
-app icon, and a custom MPD server.
+playback, read-only music libraries, a 500x500 disk artwork cache, rich
+multi-selection and drag behavior, a MiniPlayer, queue/position persistence,
+macOS Now Playing/media-key integration, a bundled app icon, and a custom MPD
+server.
 
 The current MPD server is enabled on all interfaces at port 6600, supports album
 art, stored playlists, the virtual Stared playlist, and MPD 0.24 `added` timestamps.
-The current Internal Library has no songs; the previous internal files are in the
-macOS Trash and should not be restored without the user's request.
+The legacy internal library record is removed automatically; its old files on
+disk are ignored.
 
 For the next change: read this file, inspect the relevant source file, build with
 `swift build`, package with `bash scripts/build.sh` (which also signs the bundle),

@@ -13,7 +13,7 @@ enum AppLog {
     static let metadata = Logger(subsystem: subsystem, category: "metadata")
     static let artwork = Logger(subsystem: subsystem, category: "artwork")
     static let playback = Logger(subsystem: subsystem, category: "playback")
-    static let importer = Logger(subsystem: subsystem, category: "import")
+
     static let mpd = Logger(subsystem: subsystem, category: "mpd")
     static let shortcuts = Logger(subsystem: subsystem, category: "shortcuts")
 }
