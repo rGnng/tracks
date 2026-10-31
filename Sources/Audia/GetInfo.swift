@@ -164,8 +164,16 @@ struct GetInfoView: View {
     @State private var artworkRequestID = UUID()
 
     @State private var locationPath = ""
+    @State private var lastModified = "—"
     @State private var revealTarget: URL?
     @State private var revealIsFolder = false
+
+    private static let modifiedFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return formatter
+    }()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -373,12 +381,7 @@ struct GetInfoView: View {
                 fileRow("Kind", "Tracks Audio File")
                 fileRow("Duration", formatDuration(duration))
                 fileRow("Track", trackSummary)
-                fileRow("Disc", discSummary)
-                fileRow("Play count", "\(plays)")
-                fileRow("Artist", displayed(artist, field: .artist))
-                fileRow("Album Artist", displayed(albumArtist, field: .albumArtist))
-                fileRow("Album", displayed(albumTitle, field: .album))
-                fileRow("Genre", displayed(genre, field: .genre))
+                fileRow("Last Modified", lastModified)
                 locationRow
                     .padding(.top, 6)
                 Spacer(minLength: 0)
@@ -394,19 +397,6 @@ struct GetInfoView: View {
         if total.isEmpty { return number }
         if number.isEmpty { return "of \(total)" }
         return "\(number) of \(total)"
-    }
-
-    private var discSummary: String {
-        let number = mixedFields.contains(.disc) && disc.isEmpty ? "Mixed" : disc
-        let total = mixedFields.contains(.discTotal) && discTotal.isEmpty ? "Mixed" : discTotal
-        if number.isEmpty, total.isEmpty { return "—" }
-        if total.isEmpty { return number }
-        if number.isEmpty { return "of \(total)" }
-        return "\(number) of \(total)"
-    }
-
-    private func displayed(_ value: String, field: DetailField) -> String {
-        mixedFields.contains(field) && value.isEmpty ? "Mixed" : value
     }
 
     private var locationRow: some View {
@@ -450,6 +440,14 @@ struct GetInfoView: View {
         }
     }
 
+    private static func modifiedText(for url: URL) -> String {
+        guard let date = try? url.resourceValues(forKeys: [.contentModificationDateKey])
+            .contentModificationDate else {
+            return "—"
+        }
+        return modifiedFormatter.string(from: date)
+    }
+
     // MARK: Load / save
 
     private func load() {
@@ -459,6 +457,7 @@ struct GetInfoView: View {
         mixedFields = []
         uuidText = ""
         locationPath = ""
+        lastModified = "—"
         revealTarget = nil
         revealIsFolder = false
 
@@ -490,6 +489,7 @@ struct GetInfoView: View {
             if let first = songs.first?.fileURL {
                 let folder = first.deletingLastPathComponent()
                 locationPath = folder.path
+                lastModified = Self.modifiedText(for: folder)
                 revealTarget = folder
                 revealIsFolder = true
             }
@@ -519,6 +519,9 @@ struct GetInfoView: View {
             duration = song.duration
             targetAlbumID = result.album.id
             locationPath = song.fileURL?.path ?? ""
+            if let fileURL = song.fileURL {
+                lastModified = Self.modifiedText(for: fileURL)
+            }
             revealTarget = song.fileURL
             revealIsFolder = false
             artworkRequestID = UUID()
