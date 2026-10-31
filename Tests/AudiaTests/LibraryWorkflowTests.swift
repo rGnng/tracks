@@ -522,6 +522,70 @@ final class LibraryWorkflowTests: XCTestCase {
         XCTAssertThrowsError(try database.setLibraryIdentifier(second.id, identifier: "favorites"))
     }
 
+    func testLibraryIdentityValidationRejectsIdentifierAndNamespaceConflicts() throws {
+        let first = MusicLibrary(id: UUID(),
+                                 path: "/music/a",
+                                 name: "A",
+                                 identifier: "Favorites",
+                                 idNamespace: "library1")
+        let second = MusicLibrary(id: UUID(),
+                                  path: "/music/b",
+                                  name: "B",
+                                  identifier: "Second",
+                                  idNamespace: "second")
+        let renamedConflict = MusicLibrary(id: UUID(),
+                                           path: "/music/c",
+                                           name: "C",
+                                           identifier: "favorites",
+                                           idNamespace: "other")
+
+        XCTAssertThrowsError(try LibraryIdentityValidator.validateNew(
+            identifier: "favorites",
+            existing: [first]
+        ))
+        XCTAssertThrowsError(try LibraryIdentityValidator.validateNew(
+            identifier: "library1",
+            existing: [first]
+        ))
+        XCTAssertNoThrow(try LibraryIdentityValidator.validateNew(
+            identifier: "Third",
+            existing: [first, second]
+        ))
+
+        XCTAssertThrowsError(try LibraryIdentityValidator.validateRename(
+            identifier: "library1",
+            existing: [first, second],
+            excluding: second.id
+        ))
+        XCTAssertNoThrow(try LibraryIdentityValidator.validateRename(
+            identifier: "library1",
+            existing: [first],
+            excluding: first.id
+        ))
+
+        XCTAssertThrowsError(try LibraryIdentityValidator.validateRekey(
+            libraries: [first, renamedConflict]
+        ))
+        XCTAssertNoThrow(try LibraryIdentityValidator.validateRekey(
+            libraries: [first, second]
+        ))
+    }
+
+    @MainActor
+    func testGeneratedIdentifierAvoidsExistingNamespaces() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        let database = LibraryDatabase(path: fixture.appendingPathComponent("library.sqlite").path)
+        defer { database.closeForTermination() }
+
+        let library = try database.ensureLibrary(path: fixture.appendingPathComponent("media").path,
+                                                 name: "Media",
+                                                 identifier: "library1")
+        try database.setLibraryIdentifier(library.id, identifier: "Favorites")
+        XCTAssertEqual(database.loadLibraries().first?.idNamespace, "library1")
+        XCTAssertEqual(database.nextLibraryIdentifier(), "library2")
+    }
+
     @MainActor
     func testDatabaseFolderValidationOnlyChecksSQLiteFiles() throws {
         let fixture = try makeFixture()

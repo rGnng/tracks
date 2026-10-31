@@ -9,6 +9,7 @@ enum LibraryError: LocalizedError {
     case leftoverDatabaseFiles(String)
     case cannotCreateDatabaseFolder(String)
     case identifierInUse(String)
+    case namespaceInUse(String)
     case invalidIdentifier
     case scanFailed(String)
 
@@ -30,6 +31,8 @@ enum LibraryError: LocalizedError {
             return "Could not create the database folder: \(message)."
         case .identifierInUse(let identifier):
             return "The library identifier “\(identifier)” is already in use."
+        case .namespaceInUse(let namespace):
+            return "The library namespace “\(namespace)” is already in use. Choose another identifier."
         case .invalidIdentifier:
             return "A library identifier must be non-empty and contain no control characters."
         case .scanFailed(let message):
@@ -399,14 +402,14 @@ final class Library: ObservableObject {
     private func normalizedIdentifier(_ raw: String?, existing: [MusicLibrary]) throws -> String {
         let value = (raw ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         if value.isEmpty {
-            return db.nextLibraryIdentifier()
+            let generated = db.nextLibraryIdentifier()
+            try LibraryIdentityValidator.validateNew(identifier: generated, existing: existing)
+            return generated
         }
         guard !value.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else {
             throw LibraryError.invalidIdentifier
         }
-        if existing.contains(where: { $0.identifier.caseInsensitiveCompare(value) == .orderedSame }) {
-            throw LibraryError.identifierInUse(value)
-        }
+        try LibraryIdentityValidator.validateNew(identifier: value, existing: existing)
         return value
     }
 
@@ -448,8 +451,15 @@ final class Library: ObservableObject {
         guard !value.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else {
             throw LibraryError.invalidIdentifier
         }
+        try LibraryIdentityValidator.validateRename(identifier: value,
+                                                     existing: libraries,
+                                                     excluding: id)
         try db.setLibraryIdentifier(id, identifier: value)
         libraries = db.loadLibraries()
+    }
+
+    func validateRekeyNamespaces() throws {
+        try LibraryIdentityValidator.validateRekey(libraries: db.loadLibraries())
     }
 
     /// Rekeys every library from its current identifier, relative paths, and
@@ -457,6 +467,7 @@ final class Library: ObservableObject {
     /// dates, and the saved queue, but the running UI must be restarted so all
     /// in-memory song IDs are replaced.
     func rekeyAllLibraries(reporter: RekeyProgressReporter = RekeyProgressReporter()) async throws -> LibraryRekeyResult {
+        try validateRekeyNamespaces()
         scanTask?.cancel()
         let roots = enabledLibraries.map(\.scanPath)
         defer { isScanning = false }

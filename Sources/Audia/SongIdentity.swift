@@ -54,3 +54,49 @@ enum SongIdentity {
         return path.hasPrefix(root + "/")
     }
 }
+
+enum LibraryIdentityValidator {
+    static func validateNew(identifier: String, existing: [MusicLibrary]) throws {
+        let key = SongIdentity.normalizeIdentifier(identifier)
+        guard !key.isEmpty else { throw LibraryError.invalidIdentifier }
+        if existing.contains(where: {
+            SongIdentity.normalizeIdentifier($0.identifier) == key
+        }) {
+            throw LibraryError.identifierInUse(identifier)
+        }
+        if existing.contains(where: {
+            SongIdentity.normalizeIdentifier($0.idNamespace) == key
+        }) {
+            throw LibraryError.namespaceInUse(key)
+        }
+    }
+
+    static func validateRename(identifier: String,
+                               existing: [MusicLibrary],
+                               excluding id: UUID) throws {
+        let key = SongIdentity.normalizeIdentifier(identifier)
+        guard !key.isEmpty else { throw LibraryError.invalidIdentifier }
+        let others = existing.filter { $0.id != id }
+        if others.contains(where: {
+            SongIdentity.normalizeIdentifier($0.identifier) == key
+        }) {
+            throw LibraryError.identifierInUse(identifier)
+        }
+        if others.contains(where: {
+            SongIdentity.normalizeIdentifier($0.idNamespace) == key
+        }) {
+            throw LibraryError.namespaceInUse(key)
+        }
+    }
+
+    static func validateRekey(libraries: [MusicLibrary]) throws {
+        var seen = Set<String>()
+        for library in libraries {
+            let namespace = SongIdentity.normalizeIdentifier(library.identifier)
+            guard !namespace.isEmpty else { throw LibraryError.invalidIdentifier }
+            guard seen.insert(namespace).inserted else {
+                throw LibraryError.namespaceInUse(namespace)
+            }
+        }
+    }
+}

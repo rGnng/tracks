@@ -1098,6 +1098,13 @@ struct SettingsView: View {
 
         Task { @MainActor in
             defer { isRekeying = false }
+            progress.log("Validating library namespaces")
+            do {
+                try library.validateRekeyNamespaces()
+            } catch {
+                progress.fail(error.localizedDescription)
+                return
+            }
             progress.log("Stopping playback")
             PlayerState.shared.stopAndClear()
             progress.log("Cleared playback queue and history")

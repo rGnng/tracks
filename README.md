@@ -86,8 +86,10 @@ queue, and history live on this Mac.
   owns only `library.sqlite`, `library.sqlite-wal`, and `library.sqlite-shm` in
   the Database folder; it never modifies music-library files, tags, artwork, or
   folder structure.
-- Each library has a unique, user-editable identifier. New libraries default to
-  `library1`, `library2`, and so on; the identifier can be renamed later.
+- Each library has a unique, user-editable identifier and a UUID namespace. New
+  libraries default to `library1`, `library2`, and so on; both identifier and
+  namespace collisions are checked on add and rename, and ReKey preflights all
+  namespaces before making changes.
 - Song UUIDs use an internal library namespace plus the file's relative path.
   Renaming the identifier does not change song IDs until **Danger Zone > ReKey
   Database > ReKey All IDs** is run, which stops playback, clears the queue and

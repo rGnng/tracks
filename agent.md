@@ -194,6 +194,10 @@ Sources/Audia/
 - `libraries.id_namespace` is the identifier snapshot used for deterministic
   song UUIDs. Renaming an identifier leaves the namespace unchanged until an
   explicit rekey.
+- Adding a library validates both identifier uniqueness and normalized
+  namespace uniqueness. Renaming validates against other identifiers and
+  namespaces. ReKey preflights all normalized identifiers for namespace
+  collisions before stopping playback or writing the database.
 - **Danger Zone > ReKey Database > ReKey All IDs** stops playback, clears the
   queue and playback history, rescans current files, recomputes song/album/artist
   UUIDs, remaps playlist items, and moves the artwork cache. A dedicated progress

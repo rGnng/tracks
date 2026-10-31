@@ -8,6 +8,7 @@ enum LibraryDatabaseError: LocalizedError {
     case backupFailed(String)
     case transactionFailed(String)
     case identifierInUse(String)
+    case namespaceConflict(String)
 
     var errorDescription: String? {
         switch self {
@@ -19,6 +20,8 @@ enum LibraryDatabaseError: LocalizedError {
             return "Could not update the library database: \(message)"
         case .identifierInUse(let identifier):
             return "The library identifier “\(identifier)” is already in use. Choose another one."
+        case .namespaceConflict(let namespace):
+            return "ReKey aborted: the library namespace “\(namespace)” is used by more than one library."
         }
     }
 }
@@ -326,19 +329,23 @@ final class LibraryDatabase {
     func nextLibraryIdentifier() -> String {
         var used = Set<String>()
         var maxNumber = 0
-        guard let stmt = prepare("SELECT identifier FROM libraries") else { return "library1" }
+        guard let stmt = prepare("SELECT identifier, id_namespace FROM libraries") else {
+            return "library1"
+        }
         while sqlite3_step(stmt) == SQLITE_ROW {
-            let value = (text(stmt, 0) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !value.isEmpty else { continue }
-            used.insert(value.lowercased())
-            if let number = Self.libraryIdentifierNumber(value) {
-                maxNumber = max(maxNumber, number)
+            for index in 0..<2 {
+                let value = SongIdentity.normalizeIdentifier(text(stmt, Int32(index)) ?? "")
+                guard !value.isEmpty else { continue }
+                used.insert(value)
+                if let number = Self.libraryIdentifierNumber(value) {
+                    maxNumber = max(maxNumber, number)
+                }
             }
         }
         sqlite3_finalize(stmt)
         var number = maxNumber + 1
         var candidate = "library\(number)"
-        while used.contains(candidate.lowercased()) {
+        while used.contains(candidate) {
             number += 1
             candidate = "library\(number)"
         }
@@ -433,6 +440,17 @@ final class LibraryDatabase {
             return LibraryRekeyResult(songIDMap: [:], albumIDMap: [:],
                                       songCount: 0, albumCount: 0, artistCount: 0)
         }
+        var namespaceSet = Set<String>()
+        for library in libraries {
+            let namespace = SongIdentity.normalizeIdentifier(library.identifier)
+            guard !namespace.isEmpty else {
+                throw LibraryDatabaseError.namespaceConflict("empty")
+            }
+            guard namespaceSet.insert(namespace).inserted else {
+                throw LibraryDatabaseError.namespaceConflict(namespace)
+            }
+        }
+        reporter.info("Validated \(libraries.count) library namespaces")
         reporter.info("Loaded \(libraries.count) libraries")
 
         var artistNames: [String: String] = [:]
