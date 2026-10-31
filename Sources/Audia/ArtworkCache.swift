@@ -134,6 +134,38 @@ final class ArtworkCache: ObservableObject {
         NotificationCenter.default.post(name: .artworkDidChange, object: nil)
     }
 
+    /// Moves cached artwork when an album UUID changes during a rekey.
+    /// Multiple old albums may map to one new album; the first existing file
+    /// wins and leftovers are removed.
+    func remapArtwork(_ mapping: [UUID: UUID]) async {
+        let pairs = mapping.filter { $0.key != $0.value }
+        guard !pairs.isEmpty else { return }
+        let directory = Self.cacheDirectory
+        await Task.detached(priority: .utility) {
+            let fileManager = FileManager.default
+            try? fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+            for (oldID, newID) in pairs {
+                let oldURL = Self.thumbnailURL(directory: directory,
+                                               albumID: oldID.uuidString)
+                let newURL = Self.thumbnailURL(directory: directory,
+                                               albumID: newID.uuidString)
+                guard fileManager.fileExists(atPath: oldURL.path) else { continue }
+                if fileManager.fileExists(atPath: newURL.path) {
+                    try? fileManager.removeItem(at: oldURL)
+                } else {
+                    do {
+                        try fileManager.moveItem(at: oldURL, to: newURL)
+                    } catch {
+                        AppLog.artwork.warning("Could not remap artwork cache: \(error.localizedDescription, privacy: .public)")
+                    }
+                }
+            }
+        }.value
+        memory.removeAllObjects()
+        refreshCacheSize()
+        NotificationCenter.default.post(name: .artworkDidChange, object: nil)
+    }
+
     func clearCache() {
         memory.removeAllObjects()
         cacheSizeBytes = 0

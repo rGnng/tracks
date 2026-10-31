@@ -88,6 +88,13 @@ queue, and history live on this Mac.
   folder structure.
 - Each library has a unique, user-editable identifier. New libraries default to
   `library1`, `library2`, and so on; the identifier can be renamed later.
+- Song UUIDs use an internal library namespace plus the file's relative path.
+  Renaming the identifier does not change song IDs until **Danger Zone > ReKey
+  Database > ReKey All IDs** is run, which stops playback, clears the queue and
+  playback history, and recomputes song, album, and artist UUIDs while
+  preserving playlists, play counts, and stars. A progress window reports each
+  phase with timestamped INFO/ERROR entries. Tracks restarts automatically
+  afterward so in-memory IDs are reloaded.
 - The Database is located on first launch; **Settings > Library > Database >
   Open/Create Database…** can open another existing Tracks database or create a
   new one. Database and library folders are allowed to overlap.
@@ -347,8 +354,8 @@ Sources/Audia/
                         SidebarView, SidebarVisibility, WindowMode, Components
   Content views         ContentPane, ContentViews, BrowserViews, ContextMenus,
                         PlaylistActions, MarqueeSelection, ListScroll
-  Library and data      Library, LibraryDatabase, LibraryRelocationMatcher,
-                        Models
+  Library and data      Library, LibraryDatabase, SongIdentity,
+                        LibraryRelocationMatcher, Models
   Metadata and artwork  FLACLibrary, ArtworkCache, GetInfo
   Playback              PlayerState, AudioDevices, SystemVolume, SystemNowPlaying
   Input and navigation  DragController, NavigationRouter, NavigationCenter,

@@ -137,7 +137,9 @@ Sources/Audia/
   Theme.swift                Light/dark colors and layout constants
   Models.swift               Artwork, Song, Album, Playlist, MusicLibrary, sidebar models
   Library.swift              Library singleton, database location, scanning, playlists
-  LibraryDatabase.swift      SQLite schema/migrations, sync, playlists, queue, index cleanup
+  LibraryDatabase.swift      SQLite schema/migrations, sync, rekey, playlists, queue, index cleanup
+  SongIdentity.swift         Identifier/path normalization and deterministic UUID formulas
+  RekeyProgress.swift        ReKey progress window, phase/progress state, INFO/ERROR log
   FLACLibrary.swift          FLAC/AVFoundation metadata readers and LibraryScanner
   ArtworkCache.swift         500x500 JPEG disk cache, quality, size, rebuild
   MPDServer.swift            Custom MPD TCP server, queue/playlists/album art
@@ -189,8 +191,18 @@ Sources/Audia/
   tags/artwork into, or deletes files inside a library.
 - Each library has a unique `identifier` stored in `libraries.identifier`.
   Missing values are backfilled as `library1`, `library2`, etc. Identifiers are
-  user-renameable and enforced uniquely with a case-insensitive index. The
-  internal UUID remains the stable key for songs and playlists.
+  user-renameable and enforced uniquely with a case-insensitive index.
+- `libraries.id_namespace` is the identifier snapshot used for deterministic
+  song UUIDs. Renaming an identifier leaves the namespace unchanged until an
+  explicit rekey. `id_scheme_version` is 0 for legacy absolute-path IDs and 1
+  for namespace + relative-path IDs. Existing libraries stay at version 0 and
+  keep receiving legacy song IDs until they are rekeyed; new libraries start at
+  version 1.
+- **Danger Zone > ReKey Database > ReKey All IDs** stops playback, clears the
+  queue and playback history, rescans current files, recomputes song/album/artist
+  UUIDs, remaps playlist items, and moves the artwork cache. A dedicated progress
+  window shows the current phase, determinate/indeterminate progress, and
+  timestamped INFO/ERROR entries. Tracks relaunches automatically afterward.
 - Libraries have a persisted enabled state. Disabling one hides its songs from
   all content views, stops playback, and clears the global queue and History.
   Song and playlist rows remain in SQLite for re-enable.
@@ -205,9 +217,13 @@ Sources/Audia/
 
 ### Stable IDs
 
-- Song ID: `stableUUID(path)` with no prefix. This preserves old playlist history.
-- Artist ID: `stableUUID("artist|" + lowercased(name))`.
-- Album ID: `stableUUID("album|" + artistID + "|" + lowercased(title))`.
+- Legacy song ID (`id_scheme_version = 0`): `stableUUID(path)` with no prefix.
+- New song ID (`id_scheme_version = 1`):
+  `stableUUID("song|" + id_namespace + "|" + relativePath)`, where the
+  namespace is NFC-normalized and lowercased and the path is relative to the
+  library root.
+- Artist ID: `stableUUID("artist|" + NFC(lowercased(name)))`.
+- Album ID: `stableUUID("album|" + artistID + "|" + NFC(lowercased(title)))`.
 - Library ID: `stableUUID("library|" + path)`.
 - Library identifier: user-visible unique string, separate from the library UUID.
 - Playlist ID: random UUID.
@@ -225,7 +241,8 @@ songs(id TEXT PK, path TEXT UNIQUE, library_id, title, artist_id, album_id,
       duration, date_added, play_count, rating, loved, last_played,
       skip_count, mtime, file_size)
 libraries(id TEXT PK, path TEXT UNIQUE, kind TEXT DEFAULT 'external', name TEXT,
-          identifier TEXT UNIQUE COLLATE NOCASE, date_added,
+          identifier TEXT UNIQUE COLLATE NOCASE, id_namespace TEXT,
+          id_scheme_version INTEGER NOT NULL DEFAULT 0, date_added,
           enabled INTEGER NOT NULL DEFAULT 1)
 playlists(id TEXT PK, name TEXT, date_created REAL, date_modified REAL)
 playlist_items(playlist_id, song_id, position,
@@ -676,7 +693,9 @@ to be realized or on cached frame preferences.
   files under the Artwork cache directory.
 - Settings has a Database card with the current database-folder path, a
   Reveal action, and **Open/Create Database…** (reuses the first-launch window).
-  The Libraries card is read-only and rows show the unique identifier and path.
+  The Libraries card is read-only and rows show the identifier, path, and ID
+  namespace. A separate **Danger Zone** card holds **ReKey Database** with the
+  **ReKey All IDs** button.
 - JPEG quality control:
   - Plain SwiftUI `TextField`, digits only.
   - Accepted range 15-100, default 80.

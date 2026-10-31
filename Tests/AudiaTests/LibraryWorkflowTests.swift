@@ -532,6 +532,8 @@ final class LibraryWorkflowTests: XCTestCase {
             fixture.appendingPathComponent("second").path,
         ])
         XCTAssertEqual(libraries.map(\.identifier), ["library1", "library2"])
+        XCTAssertEqual(libraries.map(\.idNamespace), ["library1", "library2"])
+        XCTAssertEqual(libraries.map(\.idSchemeVersion), [0, 0])
         XCTAssertEqual(database.nextLibraryIdentifier(), "library3")
         XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.appendingPathComponent("Music").path),
                        "Legacy cleanup must not create a Music folder")
@@ -576,6 +578,8 @@ final class LibraryWorkflowTests: XCTestCase {
                                                 name: "Two",
                                                 identifier: database.nextLibraryIdentifier())
         XCTAssertEqual([first.identifier, second.identifier], ["library1", "library2"])
+        XCTAssertEqual([first.idNamespace, second.idNamespace], ["library1", "library2"])
+        XCTAssertEqual([first.idSchemeVersion, second.idSchemeVersion], [1, 1])
 
         XCTAssertThrowsError(try database.ensureLibrary(
             path: fixture.appendingPathComponent("three").path,
@@ -584,8 +588,10 @@ final class LibraryWorkflowTests: XCTestCase {
         ))
 
         try database.setLibraryIdentifier(first.id, identifier: "Favorites")
-        XCTAssertEqual(database.loadLibraries().first { $0.id == first.id }?.identifier,
-                       "Favorites")
+        let renamed = try XCTUnwrap(database.loadLibraries().first { $0.id == first.id })
+        XCTAssertEqual(renamed.identifier, "Favorites")
+        XCTAssertEqual(renamed.idNamespace, "library1",
+                       "Renaming must not change the namespace until a rekey")
         XCTAssertThrowsError(try database.setLibraryIdentifier(second.id, identifier: "favorites"))
     }
 
@@ -620,6 +626,123 @@ final class LibraryWorkflowTests: XCTestCase {
         try FileManager.default.createDirectory(at: sidecarOnly, withIntermediateDirectories: true)
         try Data().write(to: sidecarOnly.appendingPathComponent("library.sqlite-wal"))
         XCTAssertThrowsError(try Library.validateDatabaseFolder(sidecarOnly.path))
+    }
+
+    @MainActor
+    func testNewLibraryUsesNamespaceAndRelativePathForSongIDs() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        let mediaRoot = fixture.appendingPathComponent("media", isDirectory: true)
+        try FileManager.default.createDirectory(at: mediaRoot, withIntermediateDirectories: true)
+        let audioURL = mediaRoot.appendingPathComponent("song.wav")
+        try makeWaveFile().write(to: audioURL)
+        let database = LibraryDatabase(path: fixture.appendingPathComponent("library.sqlite").path)
+        defer { database.closeForTermination() }
+
+        let library = try database.ensureLibrary(path: mediaRoot.path,
+                                                 name: "Media",
+                                                 identifier: "Favorites")
+        XCTAssertEqual(library.idNamespace, "favorites")
+        XCTAssertEqual(library.idSchemeVersion, 1)
+
+        let track = makeTrack(path: audioURL.resolvingSymlinksInPath().path,
+                              title: "Song")
+        _ = database.sync(tracks: [track], libraries: [library])
+        let song = try XCTUnwrap(database.loadLibrary().albums.first?.songs.first)
+        XCTAssertEqual(song.id,
+                       SongIdentity.songID(namespace: "favorites",
+                                           relativePath: "song.wav"))
+    }
+
+    @MainActor
+    func testRekeyRecomputesIDsAndPreservesMetadata() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        let mediaRoot = fixture.appendingPathComponent("media", isDirectory: true)
+        try FileManager.default.createDirectory(at: mediaRoot, withIntermediateDirectories: true)
+        let audioURL = mediaRoot.appendingPathComponent("song.wav")
+        try makeWaveFile().write(to: audioURL)
+        let canonicalAudioPath = audioURL.resolvingSymlinksInPath().path
+        let databasePath = fixture.appendingPathComponent("library.sqlite").path
+
+        var database = LibraryDatabase(path: databasePath)
+        _ = try database.ensureLibrary(path: mediaRoot.path,
+                                       name: "Media",
+                                       identifier: "library1")
+        database.closeForTermination()
+        try runSQLite(databasePath, "UPDATE libraries SET id_scheme_version = 0;")
+        database = LibraryDatabase(path: databasePath)
+        let legacyLibrary = try XCTUnwrap(database.loadLibraries().first)
+        XCTAssertEqual(legacyLibrary.idSchemeVersion, 0)
+        XCTAssertEqual(legacyLibrary.idNamespace, "library1")
+        try database.setLibraryIdentifier(legacyLibrary.id, identifier: "Favorites")
+        XCTAssertEqual(database.loadLibraries().first?.idNamespace, "library1")
+
+        let track = makeTrack(path: canonicalAudioPath, title: "Song", album: "Test Album")
+        _ = database.sync(tracks: [track], libraries: [legacyLibrary])
+        let oldSong = try XCTUnwrap(database.loadLibrary().albums.first?.songs.first)
+        let oldSongID = LibraryScanner.stableUUID(canonicalAudioPath)
+        XCTAssertEqual(oldSong.id, oldSongID)
+
+        let dateAdded = oldSong.dateAdded
+        let playlist = database.createPlaylist(name: "Keep Me")
+        database.addSongsToPlaylist(playlist.id, songIDs: [oldSong.id])
+        database.recordPlay(oldSong.id)
+        database.recordPlay(oldSong.id)
+        database.setStarred(oldSong.id, starred: true)
+        database.savePlayerQueue(PersistedPlayerQueue(
+            entries: [PersistedQueueEntry(id: 5, songID: oldSong.id)],
+            baseEntries: [PersistedQueueEntry(id: 5, songID: oldSong.id)],
+            nextQueueID: 6,
+            currentIndex: 0,
+            elapsed: 12
+        ))
+
+        database.closeForTermination()
+        let replacementAlbumID = UUID()
+        try runSQLite(databasePath, """
+            UPDATE albums SET id = '\(replacementAlbumID.uuidString)';
+            UPDATE songs SET album_id = '\(replacementAlbumID.uuidString)';
+            """)
+        database = LibraryDatabase(path: databasePath)
+        defer { database.closeForTermination() }
+
+        var logMessages: [String] = []
+        var phases: [String] = []
+        let reporter = RekeyProgressReporter(
+            info: { logMessages.append($0) },
+            phase: { phase, _ in phases.append(phase) }
+        )
+        let rekeyed = try database.rekeyAllLibraries(reporter: reporter)
+        XCTAssertTrue(logMessages.contains { $0.contains("Loaded") })
+        XCTAssertTrue(logMessages.contains { $0.contains("Backup created") })
+        XCTAssertTrue(phases.contains("Calculating new UUIDs"))
+        let expectedSongID = SongIdentity.songID(namespace: "favorites",
+                                                 relativePath: "song.wav")
+        let expectedArtistID = SongIdentity.artistID(name: "Test Artist").uuidString
+        let expectedAlbumID = SongIdentity.albumID(artistID: expectedArtistID,
+                                                   title: "Test Album")
+        XCTAssertEqual(rekeyed.songIDMap[oldSongID], expectedSongID)
+        XCTAssertEqual(rekeyed.albumIDMap[replacementAlbumID], expectedAlbumID)
+
+        let loaded = database.loadLibrary()
+        let newSong = try XCTUnwrap(loaded.albums.flatMap(\.songs).first)
+        XCTAssertEqual(newSong.id, expectedSongID)
+        XCTAssertEqual(newSong.plays, 2)
+        XCTAssertTrue(newSong.isStarred)
+        XCTAssertEqual(newSong.dateAdded, dateAdded, accuracy: 0.001)
+        XCTAssertEqual(loaded.albums.first?.id, expectedAlbumID)
+        XCTAssertEqual(database.playlistSongIDs(playlist.id), [expectedSongID])
+
+        let queue = try XCTUnwrap(database.loadPlayerQueue())
+        XCTAssertEqual(queue.entries.map(\.songID), [expectedSongID])
+        XCTAssertEqual(queue.entries.map(\.id), [5])
+        XCTAssertEqual(queue.currentIndex, 0)
+        XCTAssertEqual(queue.elapsed, 12, accuracy: 0.001)
+        XCTAssertEqual(database.loadLibraries().first?.idSchemeVersion, 1)
+        XCTAssertEqual(database.loadLibraries().first?.idNamespace, "favorites")
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: audioURL.path))
     }
 
     private func runSQLite(_ path: String, _ sql: String) throws {

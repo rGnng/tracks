@@ -10,6 +10,7 @@ enum LibraryError: LocalizedError {
     case cannotCreateDatabaseFolder(String)
     case identifierInUse(String)
     case invalidIdentifier
+    case scanFailed(String)
 
     var errorDescription: String? {
         switch self {
@@ -31,6 +32,8 @@ enum LibraryError: LocalizedError {
             return "The library identifier “\(identifier)” is already in use."
         case .invalidIdentifier:
             return "A library identifier must be non-empty and contain no control characters."
+        case .scanFailed(let message):
+            return "Could not refresh the libraries before rekeying: \(message)"
         }
     }
 }
@@ -456,6 +459,67 @@ final class Library: ObservableObject {
         }
         try db.setLibraryIdentifier(id, identifier: value)
         libraries = db.loadLibraries()
+    }
+
+    /// Rekeys every library from its current identifier, relative paths, and
+    /// current file metadata. The database keeps playlists, play counts, stars,
+    /// dates, and the saved queue, but the running UI must be restarted so all
+    /// in-memory song IDs are replaced.
+    func rekeyAllLibraries(reporter: RekeyProgressReporter = RekeyProgressReporter()) async throws -> LibraryRekeyResult {
+        scanTask?.cancel()
+        let roots = enabledLibraries.map(\.scanPath)
+        defer { isScanning = false }
+
+        if !roots.isEmpty {
+            reporter.phase("Refreshing libraries", 0.08)
+            reporter.info("Refreshing \(roots.count) libraries")
+            for root in roots {
+                reporter.info("Scanning \(root)")
+            }
+            isScanning = true
+            scanError = nil
+            scanPhase = .findingFiles
+            scanCompleted = 0
+            scanTotal = 0
+            scanProgress = 0
+            let progress = makeProgressHandler()
+            let result = await Task.detached(priority: .userInitiated) {
+                await LibraryScanner.scan(folders: roots,
+                                          known: [:],
+                                          mode: .full,
+                                          progress: progress)
+            }.value
+            guard result.isComplete else {
+                throw LibraryError.scanFailed(result.errors.joined(separator: "\n"))
+            }
+            reporter.info("Scanned \(result.tracks.count) tracks and \(result.discoveredFiles.count) files")
+            reporter.phase("Updating library metadata", 0.15)
+            beginLibraryUpdate()
+            let artwork = db.sync(tracks: result.tracks, libraries: libraries)
+            await ArtworkCache.shared.importArtwork(artwork)
+            reporter.info("Updated library metadata and imported artwork")
+            PlayerState.shared.clearMissingFiles(foundPaths: Set(result.discoveredFiles.keys))
+        }
+
+        let rekeyed = try db.rekeyAllLibraries(reporter: reporter)
+        reporter.phase("Updating playlists, history, and artwork", 0.95)
+        remapPersistedHistory(rekeyed.songIDMap)
+        await ArtworkCache.shared.remapArtwork(rekeyed.albumIDMap)
+        libraries = db.loadLibraries()
+        scanProgress = 1
+        reporter.info("Updated playlists, persisted history, and artwork cache")
+        AppLog.library.notice("ReKey finished: \(rekeyed.songCount, privacy: .public) songs")
+        return rekeyed
+    }
+
+    private func remapPersistedHistory(_ mapping: [UUID: UUID]) {
+        let key = "player.historyIDs"
+        let values = UserDefaults.standard.stringArray(forKey: key) ?? []
+        let mapped = values.compactMap { raw -> String? in
+            guard let id = UUID(uuidString: raw) else { return nil }
+            return (mapping[id] ?? id).uuidString
+        }
+        UserDefaults.standard.set(mapped, forKey: key)
     }
 
     /// Called on app termination so the SQLite WAL is checkpointed and the

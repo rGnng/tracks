@@ -44,6 +44,52 @@ final class LibraryDatabase {
         let year: String
     }
 
+    private struct RekeyArtist {
+        let id: UUID
+        let name: String
+    }
+
+    private struct RekeyAlbum {
+        var id: UUID
+        var title: String
+        var artistID: String
+        var genre: String
+        var year: String
+        var artwork: Data?
+    }
+
+    private struct RekeySong {
+        var id: UUID
+        var path: String
+        var libraryID: UUID?
+        var title: String
+        var artistID: String
+        var albumID: String
+        var genre: String
+        var year: String
+        var track: Int
+        var trackTotal: Int
+        var disc: Int
+        var discTotal: Int
+        var comments: String
+        var duration: Double
+        var dateAdded: Double
+        var playCount: Int
+        var rating: Int
+        var loved: Int
+        var lastPlayed: Double?
+        var skipCount: Int
+        var mtime: Double
+        var fileSize: Int64
+    }
+
+    private struct RekeyPlaylistItem {
+        let playlistID: String
+        let songID: UUID
+        let position: Int
+        let addedAt: Double
+    }
+
     init(path: String) {
         self.path = path
         open()
@@ -233,6 +279,8 @@ final class LibraryDatabase {
             kind TEXT NOT NULL DEFAULT 'external',
             name TEXT NOT NULL,
             identifier TEXT NOT NULL DEFAULT '',
+            id_namespace TEXT NOT NULL DEFAULT '',
+            id_scheme_version INTEGER NOT NULL DEFAULT 0,
             date_added REAL NOT NULL,
             enabled INTEGER NOT NULL DEFAULT 1
         );
@@ -273,10 +321,47 @@ final class LibraryDatabase {
         }
         cleanupLegacyInternalLibraries()
         normalizeLibraryIdentifiers()
+        if !tableHasColumn("libraries", column: "id_namespace") {
+            exec("ALTER TABLE libraries ADD COLUMN id_namespace TEXT;")
+        }
+        if !tableHasColumn("libraries", column: "id_scheme_version") {
+            exec("ALTER TABLE libraries ADD COLUMN id_scheme_version INTEGER NOT NULL DEFAULT 0;")
+        }
+        backfillLibraryNamespaces()
         exec("""
             CREATE UNIQUE INDEX IF NOT EXISTS idx_libraries_identifier
             ON libraries(identifier COLLATE NOCASE);
             """)
+    }
+
+    /// Existing libraries keep legacy song IDs until an explicit rekey. The
+    /// namespace is still recorded so the rekey flow can use it.
+    private func backfillLibraryNamespaces() {
+        var rows: [(id: String, identifier: String, namespace: String)] = []
+        guard let stmt = prepare("""
+            SELECT id, COALESCE(identifier, ''), COALESCE(id_namespace, '')
+            FROM libraries
+            """) else { return }
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            guard let id = text(stmt, 0) else { continue }
+            rows.append((id, text(stmt, 1) ?? "", text(stmt, 2) ?? ""))
+        }
+        sqlite3_finalize(stmt)
+
+        for row in rows {
+            let namespace = SongIdentity.normalizeIdentifier(row.identifier)
+            guard !namespace.isEmpty,
+                  row.namespace.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                continue
+            }
+            guard let update = prepare("UPDATE libraries SET id_namespace = ? WHERE id = ?") else {
+                continue
+            }
+            bind(update, 1, namespace)
+            bind(update, 2, row.id)
+            sqlite3_step(update)
+            sqlite3_finalize(update)
+        }
     }
 
     private func tableHasColumn(_ table: String, column: String) -> Bool {
@@ -477,13 +562,383 @@ final class LibraryDatabase {
                 .filter { isUnder(path, root: $0.root) }
                 .max { $0.root.count < $1.root.count }
             upsertSong(track,
-                       libraryID: owner?.library.id.uuidString,
+                       ownerLibrary: owner?.library,
                        artistID: trackArtistID,
                        albumID: albumID,
                        dateAdded: added)
         }
         exec("COMMIT;")
         return artworkByAlbumID
+    }
+
+    /// Recomputes every song, album, and artist UUID from the current library
+    /// namespaces, relative paths, and stored metadata. Song rows are rebuilt
+    /// in place so play counts, stars, dates, playlists, and the saved queue
+    /// survive the ID change.
+    func rekeyAllLibraries(reporter: RekeyProgressReporter = RekeyProgressReporter()) throws -> LibraryRekeyResult {
+        reporter.phase("Reading database", 0.02)
+        let libraries = loadLibraries()
+        guard !libraries.isEmpty else {
+            reporter.info("No libraries to rekey")
+            return LibraryRekeyResult(songIDMap: [:], albumIDMap: [:],
+                                      songCount: 0, albumCount: 0, artistCount: 0)
+        }
+        reporter.info("Loaded \(libraries.count) libraries")
+
+        var artistNames: [String: String] = [:]
+        if let stmt = prepare("SELECT id, name FROM artists") {
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                if let id = text(stmt, 0), let name = text(stmt, 1) {
+                    artistNames[id] = name
+                }
+            }
+            sqlite3_finalize(stmt)
+        }
+
+        var oldAlbums: [String: RekeyAlbum] = [:]
+        if let stmt = prepare("""
+            SELECT id, title, artist_id, genre, year, artwork FROM albums
+            """) {
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                guard let id = text(stmt, 0), let uuid = UUID(uuidString: id) else { continue }
+                oldAlbums[id] = RekeyAlbum(id: uuid,
+                                           title: text(stmt, 1) ?? "",
+                                           artistID: text(stmt, 2) ?? "",
+                                           genre: text(stmt, 3) ?? "",
+                                           year: text(stmt, 4) ?? "",
+                                           artwork: blob(stmt, 5))
+            }
+            sqlite3_finalize(stmt)
+        }
+
+        var songs: [RekeySong] = []
+        if let stmt = prepare("""
+            SELECT id, path, library_id, title, artist_id, album_id, genre, year,
+                   track, track_total, disc, disc_total, comments, duration,
+                   date_added, play_count, rating, loved, last_played,
+                   skip_count, mtime, file_size
+            FROM songs
+            """) {
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                guard let idString = text(stmt, 0),
+                      let id = UUID(uuidString: idString) else { continue }
+                songs.append(RekeySong(
+                    id: id,
+                    path: text(stmt, 1) ?? "",
+                    libraryID: text(stmt, 2).flatMap(UUID.init(uuidString:)),
+                    title: text(stmt, 3) ?? "",
+                    artistID: text(stmt, 4) ?? "",
+                    albumID: text(stmt, 5) ?? "",
+                    genre: text(stmt, 6) ?? "",
+                    year: text(stmt, 7) ?? "",
+                    track: int(stmt, 8),
+                    trackTotal: int(stmt, 9),
+                    disc: int(stmt, 10),
+                    discTotal: int(stmt, 11),
+                    comments: text(stmt, 12) ?? "",
+                    duration: double(stmt, 13),
+                    dateAdded: double(stmt, 14),
+                    playCount: int(stmt, 15),
+                    rating: int(stmt, 16),
+                    loved: int(stmt, 17),
+                    lastPlayed: optionalDouble(stmt, 18),
+                    skipCount: int(stmt, 19),
+                    mtime: double(stmt, 20),
+                    fileSize: Int64(int(stmt, 21))
+                ))
+            }
+            sqlite3_finalize(stmt)
+        }
+
+        var playlistItems: [RekeyPlaylistItem] = []
+        if let stmt = prepare("""
+            SELECT playlist_id, song_id, position, added_at FROM playlist_items
+            """) {
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                guard let playlistID = text(stmt, 0),
+                      let songIDString = text(stmt, 1),
+                      let songID = UUID(uuidString: songIDString) else { continue }
+                playlistItems.append(RekeyPlaylistItem(
+                    playlistID: playlistID,
+                    songID: songID,
+                    position: int(stmt, 2),
+                    addedAt: double(stmt, 3)
+                ))
+            }
+            sqlite3_finalize(stmt)
+        }
+
+        let savedQueue = loadPlayerQueue()
+        reporter.info("Loaded \(songs.count) songs, \(oldAlbums.count) albums, \(artistNames.count) artists, and \(playlistItems.count) playlist items")
+        reporter.phase("Calculating new UUIDs", 0.2)
+        let libraryByID = Dictionary(uniqueKeysWithValues: libraries.map { ($0.id, $0) })
+        let newNamespaceByLibraryID = Dictionary(uniqueKeysWithValues: libraries.map {
+            ($0.id, SongIdentity.normalizeIdentifier($0.identifier))
+        })
+        let sortedLibraries = libraries.sorted { $0.path.count > $1.path.count }
+
+        func ownerLibrary(for song: RekeySong) -> MusicLibrary? {
+            if let libraryID = song.libraryID, let library = libraryByID[libraryID] {
+                return library
+            }
+            let path = canonicalPath(song.path)
+            return sortedLibraries.first { isUnder(path, root: canonicalPath($0.path)) }
+        }
+
+        var newArtists: [String: RekeyArtist] = [:]
+        func ensureNewArtist(name: String) -> String {
+            let id = SongIdentity.artistID(name: name).uuidString
+            if newArtists[id] == nil {
+                newArtists[id] = RekeyArtist(id: UUID(uuidString: id) ?? UUID(), name: name)
+            }
+            return id
+        }
+
+        var newAlbums: [String: RekeyAlbum] = [:]
+        var oldToNewAlbum: [String: String] = [:]
+        for oldAlbum in oldAlbums.values {
+            let albumArtistName = artistNames[oldAlbum.artistID] ?? ""
+            let albumArtistID = ensureNewArtist(name: albumArtistName)
+            let newID = SongIdentity.albumID(artistID: albumArtistID,
+                                             title: oldAlbum.title).uuidString
+            oldToNewAlbum[oldAlbum.id.uuidString] = newID
+            if var existing = newAlbums[newID] {
+                if existing.genre.isEmpty { existing.genre = oldAlbum.genre }
+                if existing.year.isEmpty { existing.year = oldAlbum.year }
+                if existing.artwork == nil { existing.artwork = oldAlbum.artwork }
+                newAlbums[newID] = existing
+            } else {
+                newAlbums[newID] = RekeyAlbum(id: UUID(uuidString: newID) ?? oldAlbum.id,
+                                              title: oldAlbum.title,
+                                              artistID: albumArtistID,
+                                              genre: oldAlbum.genre,
+                                              year: oldAlbum.year,
+                                              artwork: oldAlbum.artwork)
+            }
+        }
+
+        var oldToNewSong: [UUID: UUID] = [:]
+        var newToOldSong: [UUID: UUID] = [:]
+        var rekeyedSongs: [RekeySong] = []
+        rekeyedSongs.reserveCapacity(songs.count)
+
+        for var song in songs {
+            let owner = ownerLibrary(for: song)
+            let newSongID: UUID
+            if let owner,
+               let relative = SongIdentity.relativePath(filePath: song.path,
+                                                        libraryRoot: owner.path) {
+                let namespace = newNamespaceByLibraryID[owner.id] ?? owner.idNamespace
+                newSongID = SongIdentity.songID(namespace: namespace,
+                                                relativePath: relative)
+            } else {
+                newSongID = song.id
+                AppLog.library.warning("Rekey kept a legacy song ID because no library namespace matched: \(song.path, privacy: .public)")
+            }
+            if let existing = newToOldSong[newSongID], existing != song.id {
+                throw LibraryDatabaseError.transactionFailed(
+                    "Rekey produced a duplicate song ID for \(song.path)."
+                )
+            }
+            newToOldSong[newSongID] = song.id
+            oldToNewSong[song.id] = newSongID
+
+            let trackArtistName = artistNames[song.artistID] ?? ""
+            let newTrackArtistID = ensureNewArtist(name: trackArtistName)
+
+            let oldAlbum = oldAlbums[song.albumID]
+            let albumArtistName = oldAlbum.flatMap { artistNames[$0.artistID] } ?? ""
+            let albumArtistID = ensureNewArtist(name: albumArtistName)
+            let newAlbumID: String
+            if let mapped = oldToNewAlbum[song.albumID] {
+                newAlbumID = mapped
+            } else {
+                newAlbumID = SongIdentity.albumID(artistID: albumArtistID,
+                                                  title: oldAlbum?.title ?? "").uuidString
+                oldToNewAlbum[song.albumID] = newAlbumID
+                if newAlbums[newAlbumID] == nil {
+                    newAlbums[newAlbumID] = RekeyAlbum(
+                        id: UUID(uuidString: newAlbumID) ?? UUID(),
+                        title: oldAlbum?.title ?? "",
+                        artistID: albumArtistID,
+                        genre: oldAlbum?.genre ?? "",
+                        year: oldAlbum?.year ?? "",
+                        artwork: oldAlbum?.artwork
+                    )
+                }
+            }
+
+            song.id = newSongID
+            song.libraryID = owner?.id ?? song.libraryID
+            song.artistID = newTrackArtistID
+            song.albumID = newAlbumID
+            rekeyedSongs.append(song)
+        }
+
+        reporter.info("Mapped \(oldToNewSong.count) songs and \(oldToNewAlbum.count) albums")
+        reporter.phase("Writing database", 0.45)
+        let backupURL = try backup()
+        reporter.info("Backup created: \(backupURL.lastPathComponent)")
+        try executeThrowing("BEGIN IMMEDIATE;")
+        do {
+            try executeThrowing("DELETE FROM playlist_items;")
+            try executeThrowing("DELETE FROM songs;")
+            try executeThrowing("DELETE FROM albums;")
+            try executeThrowing("DELETE FROM artists;")
+
+            for artist in newArtists.values {
+                guard let stmt = prepare("INSERT INTO artists(id, name) VALUES(?, ?)") else {
+                    throw LibraryDatabaseError.transactionFailed("Could not prepare artist insert")
+                }
+                bind(stmt, 1, artist.id.uuidString)
+                bind(stmt, 2, artist.name)
+                let result = sqlite3_step(stmt)
+                sqlite3_finalize(stmt)
+                guard result == SQLITE_DONE else {
+                    throw LibraryDatabaseError.transactionFailed(databaseErrorMessage)
+                }
+            }
+
+            let referencedAlbumIDs = Set(rekeyedSongs.map(\.albumID))
+            for album in newAlbums.values where referencedAlbumIDs.contains(album.id.uuidString) {
+                guard let stmt = prepare("""
+                    INSERT INTO albums(id, title, artist_id, genre, year, artwork)
+                    VALUES(?, ?, ?, ?, ?, ?)
+                    """) else {
+                    throw LibraryDatabaseError.transactionFailed("Could not prepare album insert")
+                }
+                bind(stmt, 1, album.id.uuidString)
+                bind(stmt, 2, album.title)
+                bind(stmt, 3, album.artistID)
+                bind(stmt, 4, album.genre)
+                bind(stmt, 5, album.year)
+                bind(stmt, 6, album.artwork)
+                let result = sqlite3_step(stmt)
+                sqlite3_finalize(stmt)
+                guard result == SQLITE_DONE else {
+                    throw LibraryDatabaseError.transactionFailed(databaseErrorMessage)
+                }
+            }
+
+            for song in rekeyedSongs {
+                guard let stmt = prepare("""
+                    INSERT INTO songs(id, path, library_id, title, artist_id, album_id,
+                                      genre, year, track, track_total, disc, disc_total,
+                                      comments, duration, date_added, play_count, rating,
+                                      loved, last_played, skip_count, mtime, file_size)
+                    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """) else {
+                    throw LibraryDatabaseError.transactionFailed("Could not prepare song insert")
+                }
+                bind(stmt, 1, song.id.uuidString)
+                bind(stmt, 2, song.path)
+                bind(stmt, 3, song.libraryID?.uuidString)
+                bind(stmt, 4, song.title)
+                bind(stmt, 5, song.artistID)
+                bind(stmt, 6, song.albumID)
+                bind(stmt, 7, song.genre)
+                bind(stmt, 8, song.year)
+                bind(stmt, 9, song.track)
+                bind(stmt, 10, song.trackTotal)
+                bind(stmt, 11, song.disc)
+                bind(stmt, 12, song.discTotal)
+                bind(stmt, 13, song.comments)
+                bind(stmt, 14, song.duration)
+                bind(stmt, 15, song.dateAdded)
+                bind(stmt, 16, song.playCount)
+                bind(stmt, 17, song.rating)
+                bind(stmt, 18, song.loved)
+                if let lastPlayed = song.lastPlayed {
+                    bind(stmt, 19, lastPlayed)
+                } else {
+                    sqlite3_bind_null(stmt, 19)
+                }
+                bind(stmt, 20, song.skipCount)
+                bind(stmt, 21, song.mtime)
+                bind(stmt, 22, Int(song.fileSize))
+                let result = sqlite3_step(stmt)
+                sqlite3_finalize(stmt)
+                guard result == SQLITE_DONE else {
+                    throw LibraryDatabaseError.transactionFailed(databaseErrorMessage)
+                }
+            }
+
+            for item in playlistItems {
+                guard let stmt = prepare("""
+                    INSERT OR IGNORE INTO playlist_items(playlist_id, song_id, position, added_at)
+                    VALUES(?, ?, ?, ?)
+                    """) else {
+                    throw LibraryDatabaseError.transactionFailed("Could not prepare playlist item insert")
+                }
+                let songID = oldToNewSong[item.songID] ?? item.songID
+                bind(stmt, 1, item.playlistID)
+                bind(stmt, 2, songID.uuidString)
+                bind(stmt, 3, item.position)
+                bind(stmt, 4, item.addedAt)
+                let result = sqlite3_step(stmt)
+                sqlite3_finalize(stmt)
+                guard result == SQLITE_DONE else {
+                    throw LibraryDatabaseError.transactionFailed(databaseErrorMessage)
+                }
+            }
+
+            if let savedQueue {
+                let entries = savedQueue.entries.map {
+                    PersistedQueueEntry(id: $0.id, songID: oldToNewSong[$0.songID] ?? $0.songID)
+                }
+                let baseEntries = savedQueue.baseEntries.map {
+                    PersistedQueueEntry(id: $0.id, songID: oldToNewSong[$0.songID] ?? $0.songID)
+                }
+                savePlayerQueue(PersistedPlayerQueue(
+                    entries: entries,
+                    baseEntries: baseEntries,
+                    nextQueueID: savedQueue.nextQueueID,
+                    currentIndex: savedQueue.currentIndex,
+                    elapsed: savedQueue.elapsed
+                ))
+            }
+
+            for library in libraries {
+                guard let stmt = prepare("""
+                    UPDATE libraries SET id_namespace = ?, id_scheme_version = 1 WHERE id = ?
+                    """) else {
+                    throw LibraryDatabaseError.transactionFailed("Could not prepare library rekey update")
+                }
+                bind(stmt, 1, SongIdentity.normalizeIdentifier(library.identifier))
+                bind(stmt, 2, library.id.uuidString)
+                let result = sqlite3_step(stmt)
+                sqlite3_finalize(stmt)
+                guard result == SQLITE_DONE else {
+                    throw LibraryDatabaseError.transactionFailed(databaseErrorMessage)
+                }
+            }
+
+            cleanupOrphans()
+            try executeThrowing("COMMIT;")
+        } catch {
+            exec("ROLLBACK;")
+            throw error
+        }
+
+        reporter.phase("Finalizing", 0.9)
+        reporter.info("Rebuilt songs, albums, artists, playlists, and the saved queue")
+        let referencedOldAlbumIDs = Set(songs.map(\.albumID))
+        var albumIDMap: [UUID: UUID] = [:]
+        for (old, new) in oldToNewAlbum where referencedOldAlbumIDs.contains(old) {
+            guard let oldID = UUID(uuidString: old),
+                  let newID = UUID(uuidString: new) else { continue }
+            albumIDMap[oldID] = newID
+        }
+        let insertedAlbumIDs = Set(rekeyedSongs.map(\.albumID))
+        let insertedAlbums = newAlbums.filter { insertedAlbumIDs.contains($0.key) }
+        let insertedArtistIDs = Set(rekeyedSongs.map(\.artistID))
+            .union(insertedAlbums.values.map(\.artistID))
+        AppLog.library.notice("Rekeyed \(rekeyedSongs.count, privacy: .public) songs and \(insertedAlbums.count, privacy: .public) albums")
+        return LibraryRekeyResult(songIDMap: oldToNewSong,
+                                  albumIDMap: albumIDMap,
+                                  songCount: rekeyedSongs.count,
+                                  albumCount: insertedAlbums.count,
+                                  artistCount: insertedArtistIDs.count)
     }
 
     private func canonicalPath(_ path: String) -> String {
@@ -501,7 +956,8 @@ final class LibraryDatabase {
     func loadLibraries() -> [MusicLibrary] {
         var result: [MusicLibrary] = []
         guard let stmt = prepare("""
-            SELECT id, path, name, identifier, enabled FROM libraries
+            SELECT id, path, name, identifier, id_namespace, id_scheme_version, enabled
+            FROM libraries
             ORDER BY identifier COLLATE NOCASE, name COLLATE NOCASE
             """) else { return result }
         while sqlite3_step(stmt) == SQLITE_ROW {
@@ -514,7 +970,9 @@ final class LibraryDatabase {
                                        path: path,
                                        name: name,
                                        identifier: identifier,
-                                       isEnabled: int(stmt, 4) != 0))
+                                       idNamespace: text(stmt, 4) ?? "",
+                                       idSchemeVersion: int(stmt, 5),
+                                       isEnabled: int(stmt, 6) != 0))
         }
         sqlite3_finalize(stmt)
         return result
@@ -523,9 +981,11 @@ final class LibraryDatabase {
     @discardableResult
     func ensureLibrary(path: String, name: String, identifier: String) throws -> MusicLibrary {
         let libraryID = LibraryScanner.stableUUID("library|" + path).uuidString
+        let namespace = SongIdentity.normalizeIdentifier(identifier)
         guard let stmt = prepare("""
-            INSERT INTO libraries(id, path, kind, name, identifier, date_added)
-            VALUES(?, ?, 'external', ?, ?, ?)
+            INSERT INTO libraries(id, path, kind, name, identifier, id_namespace,
+                                  id_scheme_version, date_added)
+            VALUES(?, ?, 'external', ?, ?, ?, 1, ?)
             ON CONFLICT(path) DO UPDATE SET kind = 'external', name = excluded.name
             """) else {
             throw LibraryDatabaseError.transactionFailed("Could not prepare library insert")
@@ -534,7 +994,8 @@ final class LibraryDatabase {
         bind(stmt, 2, path)
         bind(stmt, 3, name)
         bind(stmt, 4, identifier)
-        bind(stmt, 5, Date().timeIntervalSince1970)
+        bind(stmt, 5, namespace)
+        bind(stmt, 6, Date().timeIntervalSince1970)
         let result = sqlite3_step(stmt)
         sqlite3_finalize(stmt)
         if result == SQLITE_CONSTRAINT {
@@ -543,7 +1004,10 @@ final class LibraryDatabase {
         guard result == SQLITE_DONE else {
             throw LibraryDatabaseError.transactionFailed(databaseErrorMessage)
         }
-        if let select = prepare("SELECT id, path, name, identifier, enabled FROM libraries WHERE path = ?") {
+        if let select = prepare("""
+            SELECT id, path, name, identifier, id_namespace, id_scheme_version, enabled
+            FROM libraries WHERE path = ?
+            """) {
             bind(select, 1, path)
             if sqlite3_step(select) == SQLITE_ROW,
                let idString = text(select, 0),
@@ -551,12 +1015,16 @@ final class LibraryDatabase {
                let storedName = text(select, 2),
                let storedIdentifier = text(select, 3) {
                 let id = UUID(uuidString: idString) ?? LibraryScanner.stableUUID("library|" + storedPath)
-                let isEnabled = int(select, 4) != 0
+                let storedNamespace = text(select, 4) ?? namespace
+                let schemeVersion = int(select, 5)
+                let isEnabled = int(select, 6) != 0
                 sqlite3_finalize(select)
                 return MusicLibrary(id: id,
                                     path: storedPath,
                                     name: storedName,
                                     identifier: storedIdentifier,
+                                    idNamespace: storedNamespace,
+                                    idSchemeVersion: schemeVersion,
                                     isEnabled: isEnabled)
             }
             sqlite3_finalize(select)
@@ -565,6 +1033,8 @@ final class LibraryDatabase {
                             path: path,
                             name: name,
                             identifier: identifier,
+                            idNamespace: namespace,
+                            idSchemeVersion: 1,
                             isEnabled: true)
     }
 
@@ -815,7 +1285,7 @@ final class LibraryDatabase {
     }
 
     private func ensureArtist(_ name: String) -> String {
-        let fallbackID = LibraryScanner.stableUUID("artist|" + name.lowercased()).uuidString
+        let fallbackID = SongIdentity.artistID(name: name).uuidString
         if let stmt = prepare("INSERT OR IGNORE INTO artists(id, name) VALUES(?, ?)") {
             bind(stmt, 1, fallbackID)
             bind(stmt, 2, name)
@@ -832,7 +1302,7 @@ final class LibraryDatabase {
     }
 
     private func ensureAlbum(title: String, artistID: String, genre: String, year: String, artwork: Data?) -> String {
-        let fallbackID = LibraryScanner.stableUUID("album|" + artistID + "|" + title.lowercased()).uuidString
+        let fallbackID = SongIdentity.albumID(artistID: artistID, title: title).uuidString
         if let stmt = prepare("""
             INSERT INTO albums(id, title, artist_id, genre, year, artwork)
             VALUES(?, ?, ?, ?, ?, ?)
@@ -861,11 +1331,21 @@ final class LibraryDatabase {
     }
 
     private func upsertSong(_ track: ScannedTrack,
-                            libraryID: String?,
+                            ownerLibrary: MusicLibrary?,
                             artistID: String,
                             albumID: String,
                             dateAdded: TimeInterval) {
-        let songID = LibraryScanner.stableUUID(track.path).uuidString
+        let songID: String
+        if let ownerLibrary,
+           ownerLibrary.idSchemeVersion >= 1,
+           let relative = SongIdentity.relativePath(filePath: track.path,
+                                                    libraryRoot: ownerLibrary.path) {
+            songID = SongIdentity.songID(namespace: ownerLibrary.idNamespace,
+                                         relativePath: relative).uuidString
+        } else {
+            songID = LibraryScanner.stableUUID(track.path).uuidString
+        }
+        let libraryID = ownerLibrary?.id.uuidString
         guard let stmt = prepare("""
             INSERT INTO songs(id, path, library_id, title, artist_id, album_id, genre, year, track,
                               track_total, disc, disc_total, comments,
@@ -1410,6 +1890,17 @@ final class LibraryDatabase {
 
     private func double(_ stmt: OpaquePointer?, _ index: Int32) -> Double {
         sqlite3_column_double(stmt, index)
+    }
+
+    private func optionalDouble(_ stmt: OpaquePointer?, _ index: Int32) -> Double? {
+        guard sqlite3_column_type(stmt, index) != SQLITE_NULL else { return nil }
+        return sqlite3_column_double(stmt, index)
+    }
+
+    private func blob(_ stmt: OpaquePointer?, _ index: Int32) -> Data? {
+        guard let pointer = sqlite3_column_blob(stmt, index) else { return nil }
+        let count = Int(sqlite3_column_bytes(stmt, index))
+        return Data(bytes: pointer, count: count)
     }
 
 }

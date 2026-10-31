@@ -251,13 +251,26 @@ struct MusicLibrary: Identifiable, Hashable {
     var path: String
     var name: String
     var identifier: String
+    /// The identifier snapshot used for deterministic song UUIDs. It changes
+    /// only when the library is explicitly rekeyed.
+    var idNamespace: String
+    /// 0 = legacy absolute-path song IDs, 1 = namespace + relative-path IDs.
+    var idSchemeVersion: Int
     var isEnabled: Bool
 
-    init(id: UUID, path: String, name: String, identifier: String, isEnabled: Bool = true) {
+    init(id: UUID,
+         path: String,
+         name: String,
+         identifier: String,
+         idNamespace: String,
+         idSchemeVersion: Int,
+         isEnabled: Bool = true) {
         self.id = id
         self.path = path
         self.name = name
         self.identifier = identifier
+        self.idNamespace = idNamespace
+        self.idSchemeVersion = idSchemeVersion
         self.isEnabled = isEnabled
     }
 
@@ -267,6 +280,14 @@ struct MusicLibrary: Identifiable, Hashable {
 struct LibraryAddition {
     let path: String
     let identifier: String?
+}
+
+struct LibraryRekeyResult {
+    let songIDMap: [UUID: UUID]
+    let albumIDMap: [UUID: UUID]
+    let songCount: Int
+    let albumCount: Int
+    let artistCount: Int
 }
 
 struct ArtistSummary: Identifiable, Hashable {

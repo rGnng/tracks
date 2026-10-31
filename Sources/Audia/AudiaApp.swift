@@ -126,6 +126,15 @@ struct AudiaApp: App {
         }
         .defaultSize(width: 540, height: 360)
         .windowResizability(.contentSize)
+
+        Window("ReKey Database", id: "rekey-progress") {
+            RekeyProgressView()
+                .accentColor(highlightColor)
+        }
+        .defaultSize(width: 680, height: 460)
+        .windowResizability(.contentSize)
+        .defaultLaunchBehavior(.suppressed)
+        .restorationBehavior(.disabled)
     }
 }
 
@@ -134,6 +143,7 @@ private enum SettingsAlert: Identifiable {
     case shortcutConflict(String)
     case confirmDisable(MusicLibrary)
     case confirmDelete(MusicLibrary)
+    case confirmRekey
     case notice(title: String, message: String)
 
     var id: String {
@@ -142,6 +152,7 @@ private enum SettingsAlert: Identifiable {
         case .shortcutConflict(let message): return "shortcut-conflict:\(message)"
         case .confirmDisable(let library): return "disable:\(library.id)"
         case .confirmDelete(let library): return "delete:\(library.id)"
+        case .confirmRekey: return "rekey"
         case .notice(let title, let message): return "notice:\(title):\(message)"
         }
     }
@@ -173,7 +184,10 @@ struct SettingsView: View {
     @ObservedObject private var mpd = MPDServer.shared
     @Environment(\.openWindow) private var openWindow
 
+    private static var relaunchProcess: Process?
+
     @State private var alert: SettingsAlert?
+    @State private var isRekeying = false
     @State private var mpdApplyTask: Task<Void, Never>?
     @State private var artworkQualityText = "80"
     @State private var selectedSection: SettingsSection? = .general
@@ -266,6 +280,15 @@ struct SettingsView: View {
                         } catch {
                             self.alert = .error(error.localizedDescription)
                         }
+                    },
+                    secondaryButton: .cancel()
+                )
+            case .confirmRekey:
+                return Alert(
+                    title: Text("ReKey Database?"),
+                    message: Text("Tracks will stop playback, clear the queue and playback history, refresh all libraries, and recalculate all song/album/artist UUIDs from the current identifiers and files. Playlists, play counts, and stars are preserved. A database backup is created first. Tracks will restart automatically afterward."),
+                    primaryButton: .destructive(Text("ReKey")) {
+                        performRekey()
                     },
                     secondaryButton: .cancel()
                 )
@@ -436,6 +459,7 @@ struct SettingsView: View {
             databaseSection
             librariesSection
             artworkCacheSection
+            dangerZoneSection
         }
     }
 
@@ -820,6 +844,23 @@ struct SettingsView: View {
         }
     }
 
+    // MARK: Danger Zone
+
+    private var dangerZoneSection: some View {
+        SettingsCard(title: "Danger Zone") {
+            SettingsRow(
+                title: "ReKey Database",
+                subtitle: "Recalculate all song/album/artist UUIDs and update playlists.\nAll libraries' namespace will be updated."
+            ) {
+                Button("ReKey All IDs", role: .destructive) {
+                    alert = .confirmRekey
+                }
+                .controlSize(.small)
+                .disabled(library.isScanning || isRekeying)
+            }
+        }
+    }
+
     // MARK: Database
 
     private var databaseSection: some View {
@@ -866,13 +907,38 @@ struct SettingsView: View {
                     if index > 0 {
                         SettingsDivider()
                     }
-                    SettingsRow(title: mediaLibrary.identifier,
-                                subtitle: mediaLibrary.path) {
+                    HStack(alignment: .center, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack(spacing: 6) {
+                                Text(mediaLibrary.identifier)
+                                    .font(SettingsTypography.body)
+                                    .foregroundColor(Theme.primaryText)
+                                    .lineLimit(1)
+                                Text("Current Namespace:")
+                                    .font(SettingsTypography.caption)
+                                    .foregroundColor(Theme.secondaryText)
+                                    .fixedSize()
+                                Text(mediaLibrary.idNamespace)
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundColor(Theme.secondaryText)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                                    .textSelection(.enabled)
+                            }
+                            Text(mediaLibrary.path)
+                                .font(SettingsTypography.help)
+                                .foregroundColor(Theme.secondaryText)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: 12)
                         Toggle("", isOn: libraryEnabledBinding(mediaLibrary))
                             .labelsHidden()
                             .toggleStyle(.switch)
                             .controlSize(.small)
                     }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 9)
+                    .frame(minHeight: 40)
 
                     HStack(spacing: 8) {
                         Button("Quick Scan") {
@@ -917,7 +983,7 @@ struct SettingsView: View {
                     library.rescanAll()
                 }
                 .controlSize(.small)
-                .disabled(library.isScanning)
+                .disabled(library.isScanning || isRekeying)
                 Button("Add Library…") {
                     addLibraries()
                 }
@@ -1019,6 +1085,58 @@ struct SettingsView: View {
                     missingFileReport = report
                 }
             }
+        }
+    }
+
+    private func performRekey() {
+        guard !isRekeying else { return }
+        isRekeying = true
+        let progress = RekeyProgressCenter.shared
+        progress.begin()
+        openWindow(id: "rekey-progress")
+        NSApp.activate(ignoringOtherApps: true)
+
+        Task { @MainActor in
+            defer { isRekeying = false }
+            progress.log("Stopping playback")
+            PlayerState.shared.stopAndClear()
+            progress.log("Cleared playback queue and history")
+            PlayerState.shared.clearHistory()
+            do {
+                let result = try await library.rekeyAllLibraries(reporter: progress.reporter)
+                progress.finish(
+                    summary: "ReKey complete: \(result.songCount) songs, \(result.albumCount) albums, \(result.artistCount) artists"
+                )
+                AppLog.app.notice("ReKey finished: \(result.songCount, privacy: .public) songs; relaunching")
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                if !relaunchApplication() {
+                    progress.log("Could not relaunch Tracks automatically. Quit and reopen manually.", level: .error)
+                }
+            } catch {
+                progress.fail(error.localizedDescription)
+            }
+        }
+    }
+
+    private func relaunchApplication() -> Bool {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = [
+            "-c",
+            "sleep 1; exec /usr/bin/open -n \"$1\"",
+            "tracks-relaunch",
+            Bundle.main.bundlePath,
+        ]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+            Self.relaunchProcess = process
+            NSApp.terminate(nil)
+            return true
+        } catch {
+            AppLog.app.error("Could not relaunch Tracks: \(error.localizedDescription, privacy: .public)")
+            return false
         }
     }
 
