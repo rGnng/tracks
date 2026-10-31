@@ -1,5 +1,9 @@
 # Tracks
 
+![Albums grid while a song is playing](docs/screenshots/albums.png)
+
+![Album detail while a song is playing](docs/screenshots/album-detail.png)
+
 Tracks is a native macOS music player for a local music library. Its information
 architecture and density are modeled on iTunes 12, but the implementation is
 modern: SwiftUI and targeted AppKit, real `AVPlayer` playback, a SQLite-backed
@@ -31,12 +35,6 @@ queue, and history live on this Mac.
 - **Non-destructive management.** Music libraries are read-only. Missing tracks
   are reviewed, not silently deleted. Removing a library index creates a
   database backup and never touches its audio files.
-
-## Screenshots
-
-![Albums grid while a song is playing](docs/screenshots/albums.png)
-
-![Album detail while a song is playing](docs/screenshots/album-detail.png)
 
 ## Library
 
