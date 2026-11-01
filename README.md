@@ -82,7 +82,9 @@ separate project; Tracks itself still has no web view.
 - macOS **Now Playing** publishes title, artist, album, duration, elapsed time,
   queue position, and cached artwork. Hardware media keys and Control Center
   use `MPRemoteCommandCenter`; Control Center shows previous/next, not
-  skip-by-15-second buttons.
+  skip-by-15-second buttons. Holding the previous/next buttons in the toolbar
+  or mini player rewinds/fast-forwards at 10x; the fast-forward/rewind media
+  keys and Control Center seek gestures use the same hold-to-seek path.
 - The output menu offers plain **System Default**, **System Default with Volume
   Control**, and every real Core Audio device. The volume-control option locks
   player attenuation and routes the app volume controls to the macOS output.

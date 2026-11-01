@@ -11,7 +11,7 @@ struct MiniPlayerView: View {
     @State private var showRemaining = false
     @State private var queueResizeStart: CGFloat?
 
-    private var showControls: Bool { hovering || showVolume }
+    private var showControls: Bool { hovering || showVolume || player.isSeekHoldActive }
 
     var body: some View {
         GeometryReader { geo in
@@ -132,8 +132,14 @@ struct MiniPlayerView: View {
             }
 
             HStack(spacing: 16) {
-                transportButton("backward.fill", size: 14,
-                                disabled: player.currentSong == nil) {
+                HoldSeekButton(icon: "backward.fill",
+                               help: "Previous (hold to rewind)",
+                               direction: .backward,
+                               iconSize: 14,
+                               weight: .semibold,
+                               width: 34,
+                               height: 32,
+                               disabled: player.currentSong == nil) {
                     player.previous()
                 }
                 transportButton(player.isPlaying ? "pause.fill" : "play.fill",
@@ -141,8 +147,14 @@ struct MiniPlayerView: View {
                                 disabled: player.currentSong == nil) {
                     player.togglePlayPause()
                 }
-                transportButton("forward.fill", size: 14,
-                                disabled: player.currentSong == nil) {
+                HoldSeekButton(icon: "forward.fill",
+                               help: "Next (hold to fast-forward)",
+                               direction: .forward,
+                               iconSize: 14,
+                               weight: .semibold,
+                               width: 34,
+                               height: 32,
+                               disabled: player.currentSong == nil) {
                     player.next()
                 }
             }

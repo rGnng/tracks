@@ -337,11 +337,18 @@ Important schema decisions:
   History; the UI uses the existing “History” label.
 - `SystemNowPlaying` publishes title, artist, album, duration, elapsed time,
   queue count/index, and cached album artwork to `MPNowPlayingInfoCenter`, and
-  registers play/pause/toggle, next/previous, and position handlers on
-  `MPRemoteCommandCenter`. Control Center shows previous/next track controls
-  (not 15-second skip buttons). Hardware media keys and Control Center
-  transport controls use that path. macOS MediaRemote only accepts a fully
-  sealed code-signed bundle; `scripts/build.sh` ad-hoc signs the app.
+  registers play/pause/toggle, next/previous, seek-forward/backward, and
+  position handlers on `MPRemoteCommandCenter`. Control Center shows
+  previous/next track controls (not 15-second skip buttons). Hardware media
+  keys and Control Center transport controls use that path. macOS MediaRemote
+  only accepts a fully sealed code-signed bundle; `scripts/build.sh` ad-hoc
+  signs the app.
+- Previous/next in the toolbar and mini player are hold-to-seek buttons: a
+  short click changes tracks, while holding for 450 ms starts a continuous 10x
+  seek and suppresses the click. `PlayerState.beginSeekHold` / `endSeekHold`
+  own the timer and clamping. `seekForwardCommand` / `seekBackwardCommand`
+  begin/end events (the macOS fast-forward and rewind media keys, plus
+  Control Center press-and-hold) drive the same methods.
 - Shuffle/random covers the unplayed queue: enabling it while stopped shuffles
   the whole queue, enabling it while playing keeps the current track and shuffles
   the remainder, and tracks appended while shuffle is active are randomized too.

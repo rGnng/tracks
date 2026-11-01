@@ -254,6 +254,97 @@ struct AlbumArtwork: View {
     }
 }
 
+// MARK: - Hold-to-seek transport button
+
+/// A transport button whose long press becomes a continuous seek. A normal
+/// click on release still runs `action`; once the hold threshold is reached,
+/// the button drives `PlayerState.beginSeekHold` until the mouse is released,
+/// and the click is suppressed.
+struct HoldSeekButton: View {
+    let icon: String
+    let help: String
+    let direction: SeekDirection
+    var iconSize: CGFloat = 11
+    var weight: Font.Weight = .medium
+    var width: CGFloat = 26
+    var height: CGFloat = 26
+    var disabled = false
+    let action: () -> Void
+
+    @EnvironmentObject private var player: PlayerState
+    @State private var holdTask: Task<Void, Never>?
+    @State private var isPressing = false
+    @State private var isSeeking = false
+
+    private static let holdDelay: UInt64 = 450_000_000
+
+    var body: some View {
+        Image(systemName: icon)
+            .font(.system(size: iconSize, weight: weight))
+            .foregroundColor(foregroundColor)
+            .frame(width: width, height: height)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0, coordinateSpace: .local)
+                    .onChanged { _ in beginPress() }
+                    .onEnded { value in
+                        let inside = value.location.x >= 0 && value.location.x <= width
+                            && value.location.y >= 0 && value.location.y <= height
+                        endPress(releasedInside: inside)
+                    }
+            )
+            .allowsHitTesting(!disabled)
+            .help(help)
+            .accessibilityLabel(help)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { if !disabled { action() } }
+            .onDisappear(perform: cancelPress)
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
+                cancelPress()
+            }
+    }
+
+    private var foregroundColor: Color {
+        if disabled { return Theme.secondaryText.opacity(0.4) }
+        return isSeeking ? Theme.highlight : Theme.primaryText
+    }
+
+    private func beginPress() {
+        guard !disabled, !isPressing else { return }
+        isPressing = true
+        isSeeking = false
+        holdTask?.cancel()
+        holdTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: Self.holdDelay)
+            guard !Task.isCancelled, isPressing else { return }
+            isSeeking = player.beginSeekHold(direction)
+        }
+    }
+
+    private func endPress(releasedInside: Bool) {
+        guard isPressing else { return }
+        isPressing = false
+        holdTask?.cancel()
+        holdTask = nil
+        if isSeeking {
+            isSeeking = false
+            player.endSeekHold()
+        } else if releasedInside {
+            action()
+        }
+    }
+
+    private func cancelPress() {
+        isPressing = false
+        holdTask?.cancel()
+        holdTask = nil
+        if isSeeking {
+            isSeeking = false
+            player.endSeekHold()
+        }
+    }
+}
+
 // MARK: - Helpers
 
 func formatTime(_ t: TimeInterval) -> String {

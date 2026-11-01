@@ -8,6 +8,15 @@ enum RepeatMode: String, CaseIterable {
     case one
 }
 
+enum SeekDirection {
+    case backward
+    case forward
+
+    var timeMultiplier: TimeInterval {
+        self == .forward ? 1 : -1
+    }
+}
+
 /// Explicit transport actions, used by the menu-bar icon feedback. Automatic
 /// state changes (for example a restored paused queue) do not emit these.
 enum PlayerTransportAction: Sendable {
@@ -99,6 +108,8 @@ final class PlayerState: ObservableObject {
     private static let volumeBeforeSystemControlKey = "player.volumeBeforeSystemControl"
     private static let systemVolumeStep = 1.0 / 16.0
     private static let historyLimit = 50
+    private static let seekHoldRate: TimeInterval = 10
+    private static let seekHoldInterval: TimeInterval = 0.1
 
     private var avPlayer: AVPlayer?
     private var endObserver: NSObjectProtocol?
@@ -111,6 +122,14 @@ final class PlayerState: ObservableObject {
     /// While the seek bar is being dragged, don't let the timer overwrite the
     /// dragged position with AVPlayer's still-old current time.
     private var seekGraceUntil: Date?
+    private var seekHoldTimer: Timer?
+    private var seekHoldDirection: SeekDirection = .forward
+    private var seekHoldAnchorPosition: TimeInterval = 0
+    private var seekHoldAnchorDate = Date()
+    private var seekHoldTarget: TimeInterval = 0
+    /// True while a transport button or a system fast-forward/rewind command
+    /// is driving `beginSeekHold`.
+    @Published private(set) var isSeekHoldActive = false
     private var missingFileStreak = MissingFileStreak()
     private var pendingPlayCountSongID: UUID?
     private var didRecordPendingPlay = false
@@ -779,6 +798,7 @@ final class PlayerState: ObservableObject {
     }
 
     func seek(toSeconds seconds: TimeInterval) {
+        stopSeekHold()
         seek(toTime: max(0, min(seconds, duration)))
     }
 
@@ -989,6 +1009,7 @@ final class PlayerState: ObservableObject {
     }
 
     func seek(to fraction: Double) {
+        stopSeekHold()
         let total = duration
         guard total > 0 else { return }
         let position = min(max(fraction, 0), 1) * total
@@ -996,10 +1017,57 @@ final class PlayerState: ObservableObject {
     }
 
     func seek(by delta: TimeInterval) {
+        stopSeekHold()
         let total = duration
         guard total > 0 else { return }
         let position = min(max(elapsed + delta, 0), total)
         seek(toTime: position)
+    }
+
+    /// Starts a press-and-hold seek. Returns false when there is nothing to
+    /// seek, so a held button can fall back to its normal click action.
+    @discardableResult
+    func beginSeekHold(_ direction: SeekDirection) -> Bool {
+        guard currentSong != nil, duration > 0 else { return false }
+        if isSeekHoldActive { endSeekHold() }
+
+        isSeekHoldActive = true
+        seekHoldDirection = direction
+        seekHoldAnchorPosition = min(max(elapsed, 0), duration)
+        seekHoldAnchorDate = Date()
+        seekHoldTarget = seekHoldAnchorPosition
+
+        let timer = Timer(timeInterval: Self.seekHoldInterval, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.advanceSeekHold() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        seekHoldTimer = timer
+        return true
+    }
+
+    /// Ends a press-and-hold seek and leaves playback at the last seek
+    /// position. Call this when the transport button or media key is released.
+    func endSeekHold() {
+        guard isSeekHoldActive else { return }
+        stopSeekHold()
+        seek(toTime: seekHoldTarget)
+    }
+
+    private func stopSeekHold() {
+        isSeekHoldActive = false
+        seekHoldTimer?.invalidate()
+        seekHoldTimer = nil
+    }
+
+    private func advanceSeekHold() {
+        guard isSeekHoldActive else { return }
+        let heldFor = Date().timeIntervalSince(seekHoldAnchorDate)
+        let target = seekHoldAnchorPosition
+            + heldFor * Self.seekHoldRate * seekHoldDirection.timeMultiplier
+        let clamped = min(max(target, 0), duration)
+        guard abs(clamped - seekHoldTarget) >= 0.01 else { return }
+        seekHoldTarget = clamped
+        seek(toTime: clamped)
     }
 
     private func seek(toTime position: TimeInterval) {
@@ -1201,6 +1269,7 @@ final class PlayerState: ObservableObject {
     }
 
     private func releasePlayer() {
+        stopSeekHold()
         avPlayer?.pause()
         avPlayer = nil
         if let endObserver {

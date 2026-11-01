@@ -172,6 +172,8 @@ final class SystemNowPlaying {
         center.togglePlayPauseCommand.isEnabled = true
         center.nextTrackCommand.isEnabled = true
         center.previousTrackCommand.isEnabled = true
+        center.seekForwardCommand.isEnabled = true
+        center.seekBackwardCommand.isEnabled = true
         center.changePlaybackPositionCommand.isEnabled = true
 
         center.playCommand.addTarget { [weak self] _ in
@@ -194,12 +196,42 @@ final class SystemNowPlaying {
             Task { @MainActor in self?.player?.previous() }
             return .success
         }
+        center.seekForwardCommand.addTarget { [weak self] event in
+            Task { @MainActor in self?.handleSeekCommand(event, direction: .forward) }
+            return .success
+        }
+        center.seekBackwardCommand.addTarget { [weak self] event in
+            Task { @MainActor in self?.handleSeekCommand(event, direction: .backward) }
+            return .success
+        }
         center.changePlaybackPositionCommand.addTarget { [weak self] event in
             guard let event = event as? MPChangePlaybackPositionCommandEvent else {
                 return .commandFailed
             }
             Task { @MainActor in self?.player?.seek(toSeconds: event.positionTime) }
             return .success
+        }
+    }
+
+    private func handleSeekCommand(_ event: MPRemoteCommandEvent, direction: SeekDirection) {
+        guard let player else { return }
+        // macOS delivers hardware fast-forward/rewind as begin/end seek events.
+        // Fall back to a toggle if a remote sends an untyped seek command.
+        guard let seekEvent = event as? MPSeekCommandEvent else {
+            if player.isSeekHoldActive {
+                player.endSeekHold()
+            } else {
+                player.beginSeekHold(direction)
+            }
+            return
+        }
+        switch seekEvent.type {
+        case .beginSeeking:
+            player.beginSeekHold(direction)
+        case .endSeeking:
+            player.endSeekHold()
+        @unknown default:
+            break
         }
     }
 

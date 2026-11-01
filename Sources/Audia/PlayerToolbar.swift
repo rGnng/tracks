@@ -508,11 +508,15 @@ private struct TransportControls: View {
 
     var body: some View {
         HStack(spacing: 2) {
-            TransportButton(icon: "backward.fill", help: "Previous") { player.previous() }
+            HoldSeekButton(icon: "backward.fill",
+                           help: "Previous (hold to rewind)",
+                           direction: .backward) { player.previous() }
             TransportButton(icon: player.isPlaying ? "pause.fill" : "play.fill",
                             help: player.isPlaying ? "Pause" : "Play",
                             prominent: true) { player.togglePlayPause() }
-            TransportButton(icon: "forward.fill", help: "Next") { player.next() }
+            HoldSeekButton(icon: "forward.fill",
+                           help: "Next (hold to fast-forward)",
+                           direction: .forward) { player.next() }
         }
     }
 }
