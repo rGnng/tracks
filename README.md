@@ -22,6 +22,7 @@ separate project; Tracks itself still has no web view.
 - **App icon:** `Resources/AppIcon.icns` (source: `design/app-icon.svg` / `design/app-icon.png`)
 - **Companion web player:** [`../webtracks`](../webtracks), optional and
   separate; shares the database schema and stable UUIDs
+- **License:** GNU General Public License v3.0 or later (see [License](#license))
 
 ## Design principles
 
@@ -457,3 +458,20 @@ scripts/make-icon.sh          Icon regeneration
   clients; it is not a complete MPD 0.24 implementation.
 - MediaRemote and Now Playing require the signed bundle produced by
   `scripts/build.sh`.
+
+## License
+
+Tracks is free software: you can redistribute it and/or modify it under the
+terms of the GNU General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later
+version.
+
+Tracks is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with
+Tracks. If not, see <https://www.gnu.org/licenses/>.
+
+The full text is in [`LICENSE`](LICENSE). Third-party code copied or vendored
+into Tracks must be GPL-3.0-or-later compatible.
