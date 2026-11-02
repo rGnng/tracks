@@ -109,7 +109,10 @@ final class PlayerState: ObservableObject {
     private static let systemVolumeStep = 1.0 / 16.0
     private static let historyLimit = 50
     private static let seekHoldRate: TimeInterval = 10
-    private static let seekHoldInterval: TimeInterval = 0.1
+    /// Five seek updates per second. `endSeekHold` resolves the final target
+    /// from wall-clock time, so a coarse tick cannot leave the release position
+    /// one step behind.
+    private static let seekHoldInterval: TimeInterval = 0.2
 
     private var avPlayer: AVPlayer?
     private var endObserver: NSObjectProtocol?
@@ -1049,6 +1052,10 @@ final class PlayerState: ObservableObject {
     /// position. Call this when the transport button or media key is released.
     func endSeekHold() {
         guard isSeekHoldActive else { return }
+        // Resolve the target at release time instead of using the last timer
+        // tick, so a longer tick (for example 200 ms) cannot leave the final
+        // position behind by one step.
+        seekHoldTarget = targetPosition(at: Date())
         stopSeekHold()
         seek(toTime: seekHoldTarget)
     }
@@ -1059,15 +1066,19 @@ final class PlayerState: ObservableObject {
         seekHoldTimer = nil
     }
 
-    private func advanceSeekHold() {
-        guard isSeekHoldActive else { return }
-        let heldFor = Date().timeIntervalSince(seekHoldAnchorDate)
+    private func targetPosition(at date: Date) -> TimeInterval {
+        let heldFor = max(0, date.timeIntervalSince(seekHoldAnchorDate))
         let target = seekHoldAnchorPosition
             + heldFor * Self.seekHoldRate * seekHoldDirection.timeMultiplier
-        let clamped = min(max(target, 0), duration)
-        guard abs(clamped - seekHoldTarget) >= 0.01 else { return }
-        seekHoldTarget = clamped
-        seek(toTime: clamped)
+        return min(max(target, 0), duration)
+    }
+
+    private func advanceSeekHold() {
+        guard isSeekHoldActive else { return }
+        let target = targetPosition(at: Date())
+        guard abs(target - seekHoldTarget) >= 0.01 else { return }
+        seekHoldTarget = target
+        seek(toTime: target)
     }
 
     private func seek(toTime position: TimeInterval) {
