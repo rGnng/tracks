@@ -91,6 +91,17 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
             .sink { [weak self] _ in self?.broadcastIdle("stored_playlist") }
             .store(in: &idleCancellables)
 
+        // Star changes only touch `playlists` when the song also appears in a
+        // stored playlist. Observe membership directly so starring from the app
+        // UI always wakes idle clients, including for songs that are only in
+        // albums or the queue.
+        Library.shared.$starredSongIDs
+            .dropFirst()
+            .removeDuplicates()
+            .debounce(for: .milliseconds(80), scheduler: RunLoop.main)
+            .sink { [weak self] _ in self?.broadcastIdle("stored_playlist") }
+            .store(in: &idleCancellables)
+
         AudioDevices.shared.$selectedID
             .dropFirst()
             .removeDuplicates()
