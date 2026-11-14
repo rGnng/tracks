@@ -131,6 +131,12 @@ final class CatalogAndMPDTests: XCTestCase {
         XCTAssertNil(buffer.append(Data((maxLine + "x").utf8)))
     }
 
+    func testStaredPlaylistExposesAddSequenceColumns() {
+        XCTAssertTrue(SongTableContext.starred.showsPlaylistColumns)
+        XCTAssertTrue(SongTableContext.playlist(UUID()).showsPlaylistColumns)
+        XCTAssertFalse(SongTableContext.songs.showsPlaylistColumns)
+    }
+
     func testMPDConnectionLimiterCapsConcurrentClients() {
         let limiter = MPDConnectionLimiter(limit: 2)
 

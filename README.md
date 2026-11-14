@@ -53,9 +53,10 @@ separate project; Tracks itself still has no web view.
   at the bottom of the Genres list.
 - The **Songs** table has adjustable column visibility and order, including
   Track, Name, Time, Artist, Album Artist, Album, Genre, and Plays.
-- Playlist tables add **Add Seq** and **Add Time**. Add Seq appears after Genre
-  by default; Add Time is hidden by default and renders with the system
-  date/time format.
+- Playlist tables add **Add Seq** and **Add Time**, including the virtual
+  **Stared** playlist. Add Seq appears after Genre and is visible by default;
+  Add Time is hidden by default and renders with the system date/time format.
+  Stared order uses each song's star timestamp.
 - Double-clicking a sidebar playlist, Albums, or Recently Added plays it in the
   current content-view sort order.
 - Context menus provide Play, Shuffle, Add to Playlist, Play Next, Play Later,

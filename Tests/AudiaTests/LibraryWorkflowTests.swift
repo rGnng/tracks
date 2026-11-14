@@ -670,11 +670,12 @@ final class LibraryWorkflowTests: XCTestCase {
         XCTAssertEqual(oldSong.id, oldSongID)
 
         let dateAdded = oldSong.dateAdded
+        let starredAt: TimeInterval = 1_234_567.89
         let playlist = database.createPlaylist(name: "Keep Me")
         database.addSongsToPlaylist(playlist.id, songIDs: [oldSong.id])
         database.recordPlay(oldSong.id)
         database.recordPlay(oldSong.id)
-        database.setStarred(oldSong.id, starred: true)
+        database.setStarred(oldSong.id, starred: true, timestamp: starredAt)
         database.savePlayerQueue(PersistedPlayerQueue(
             entries: [PersistedQueueEntry(id: 5, songID: oldSong.id)],
             baseEntries: [PersistedQueueEntry(id: 5, songID: oldSong.id)],
@@ -715,6 +716,7 @@ final class LibraryWorkflowTests: XCTestCase {
         XCTAssertEqual(newSong.id, expectedSongID)
         XCTAssertEqual(newSong.plays, 2)
         XCTAssertTrue(newSong.isStarred)
+        XCTAssertEqual(newSong.starredAt, starredAt, accuracy: 0.001)
         XCTAssertEqual(newSong.dateAdded, dateAdded, accuracy: 0.001)
         XCTAssertEqual(loaded.albums.first?.id, expectedAlbumID)
         XCTAssertEqual(database.playlistSongIDs(playlist.id), [expectedSongID])
@@ -727,6 +729,36 @@ final class LibraryWorkflowTests: XCTestCase {
         XCTAssertEqual(database.loadLibraries().first?.idNamespace, "favorites")
 
         XCTAssertTrue(FileManager.default.fileExists(atPath: audioURL.path))
+    }
+
+    @MainActor
+    func testStarTimestampMigrationBackfillsExistingStars() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        let mediaRoot = fixture.appendingPathComponent("media", isDirectory: true)
+        try FileManager.default.createDirectory(at: mediaRoot, withIntermediateDirectories: true)
+        let audioURL = mediaRoot.appendingPathComponent("song.wav")
+        try makeWaveFile().write(to: audioURL)
+        let databasePath = fixture.appendingPathComponent("library.sqlite").path
+
+        let database = LibraryDatabase(path: databasePath)
+        let library = try database.ensureLibrary(path: mediaRoot.path,
+                                                 name: "Migration",
+                                                 identifier: "library1")
+        _ = database.sync(tracks: [makeTrack(path: audioURL.path, title: "Old Star")],
+                          libraries: [library])
+        let song = try XCTUnwrap(database.loadLibrary().albums.first?.songs.first)
+        database.setStarred(song.id, starred: true, timestamp: 1_234_567.89)
+        database.closeForTermination()
+
+        // Simulate a database created before per-song star timestamps existed.
+        try runSQLite(databasePath, "ALTER TABLE songs DROP COLUMN starred_at;")
+
+        let migrated = LibraryDatabase(path: databasePath)
+        defer { migrated.closeForTermination() }
+        let loaded = try XCTUnwrap(migrated.loadLibrary().albums.first?.songs.first)
+        XCTAssertTrue(loaded.isStarred)
+        XCTAssertEqual(loaded.starredAt, loaded.dateAdded, accuracy: 0.001)
     }
 
     private func runSQLite(_ path: String, _ sql: String) throws {

@@ -80,6 +80,7 @@ final class LibraryDatabase {
         var playCount: Int
         var rating: Int
         var loved: Int
+        var starredAt: Double
         var lastPlayed: Double?
         var skipCount: Int
         var mtime: Double
@@ -272,6 +273,7 @@ final class LibraryDatabase {
             play_count INTEGER NOT NULL DEFAULT 0,
             rating INTEGER NOT NULL DEFAULT 0,
             loved INTEGER NOT NULL DEFAULT 0,
+            starred_at REAL NOT NULL DEFAULT 0,
             last_played REAL,
             skip_count INTEGER NOT NULL DEFAULT 0,
             mtime REAL NOT NULL DEFAULT 0,
@@ -316,6 +318,29 @@ final class LibraryDatabase {
         CREATE UNIQUE INDEX IF NOT EXISTS idx_libraries_identifier
             ON libraries(identifier COLLATE NOCASE);
         """)
+        migrateSchema()
+    }
+
+    /// Adds columns introduced after the original database was created. The
+    /// base schema uses `CREATE TABLE IF NOT EXISTS`, so existing databases
+    /// need an explicit `ALTER TABLE` for each new column.
+    private func migrateSchema() {
+        var songColumns = Set<String>()
+        if let stmt = prepare("PRAGMA table_info(songs)") {
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                if let name = text(stmt, 1) {
+                    songColumns.insert(name)
+                }
+            }
+            sqlite3_finalize(stmt)
+        }
+
+        if !songColumns.contains("starred_at") {
+            exec("ALTER TABLE songs ADD COLUMN starred_at REAL NOT NULL DEFAULT 0;")
+            // Existing stars have no stored timestamp. First discovery is the
+            // best stable approximation until a song is starred again.
+            exec("UPDATE songs SET starred_at = date_added WHERE loved = 1;")
+        }
     }
 
     private static func libraryIdentifierNumber(_ identifier: String) -> Int? {
@@ -483,7 +508,7 @@ final class LibraryDatabase {
         if let stmt = prepare("""
             SELECT id, path, library_id, title, artist_id, album_id, genre, year,
                    track, track_total, disc, disc_total, comments, duration,
-                   date_added, play_count, rating, loved, last_played,
+                   date_added, play_count, rating, loved, starred_at, last_played,
                    skip_count, mtime, file_size
             FROM songs
             """) {
@@ -509,10 +534,11 @@ final class LibraryDatabase {
                     playCount: int(stmt, 15),
                     rating: int(stmt, 16),
                     loved: int(stmt, 17),
-                    lastPlayed: optionalDouble(stmt, 18),
-                    skipCount: int(stmt, 19),
-                    mtime: double(stmt, 20),
-                    fileSize: Int64(int(stmt, 21))
+                    starredAt: double(stmt, 18),
+                    lastPlayed: optionalDouble(stmt, 19),
+                    skipCount: int(stmt, 20),
+                    mtime: double(stmt, 21),
+                    fileSize: Int64(int(stmt, 22))
                 ))
             }
             sqlite3_finalize(stmt)
@@ -693,8 +719,9 @@ final class LibraryDatabase {
                     INSERT INTO songs(id, path, library_id, title, artist_id, album_id,
                                       genre, year, track, track_total, disc, disc_total,
                                       comments, duration, date_added, play_count, rating,
-                                      loved, last_played, skip_count, mtime, file_size)
-                    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                      loved, starred_at, last_played, skip_count, mtime,
+                                      file_size)
+                    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """) else {
                     throw LibraryDatabaseError.transactionFailed("Could not prepare song insert")
                 }
@@ -716,14 +743,15 @@ final class LibraryDatabase {
                 bind(stmt, 16, song.playCount)
                 bind(stmt, 17, song.rating)
                 bind(stmt, 18, song.loved)
+                bind(stmt, 19, song.starredAt)
                 if let lastPlayed = song.lastPlayed {
-                    bind(stmt, 19, lastPlayed)
+                    bind(stmt, 20, lastPlayed)
                 } else {
-                    sqlite3_bind_null(stmt, 19)
+                    sqlite3_bind_null(stmt, 20)
                 }
-                bind(stmt, 20, song.skipCount)
-                bind(stmt, 21, song.mtime)
-                bind(stmt, 22, Int(song.fileSize))
+                bind(stmt, 21, song.skipCount)
+                bind(stmt, 22, song.mtime)
+                bind(stmt, 23, Int(song.fileSize))
                 let result = sqlite3_step(stmt)
                 sqlite3_finalize(stmt)
                 guard result == SQLITE_DONE else {
@@ -1260,7 +1288,7 @@ final class LibraryDatabase {
         if let stmt = prepare("""
             SELECT s.id, s.title, s.path, s.genre, s.year, s.track, s.duration, s.play_count,
                    a.id, a.title, a.genre, a.year, ar.name, sar.name, s.file_size, s.loved,
-                   s.date_added, s.track_total, s.disc, s.disc_total, s.comments
+                   s.date_added, s.track_total, s.disc, s.disc_total, s.comments, s.starred_at
             FROM songs s
             JOIN albums a ON a.id = s.album_id
             JOIN artists ar ON ar.id = a.artist_id
@@ -1295,7 +1323,8 @@ final class LibraryDatabase {
                                 dateAdded: double(stmt, 16),
                                 fileURL: URL(fileURLWithPath: text(stmt, 2) ?? ""),
                                 fileSize: Int64(int(stmt, 14)),
-                                isStarred: int(stmt, 15) != 0)
+                                isStarred: int(stmt, 15) != 0,
+                                starredAt: double(stmt, 21))
 
                 albumSongs[albumIDString, default: []].append(song)
                 songsByID[idString] = song
@@ -1396,23 +1425,29 @@ final class LibraryDatabase {
         sqlite3_finalize(stmt)
     }
 
-    /// Persists the star flag in the existing `songs.loved` column. Starring is
-    /// app metadata, so it is allowed for external-library tracks too.
-    func setStarred(_ songIDs: [UUID], starred: Bool) {
+    /// Persists the star flag and its per-song timestamp. Starring is app
+    /// metadata, so it is allowed for external-library tracks too. Unstarring
+    /// clears the timestamp so a later star starts a new add-order entry.
+    func setStarred(_ songIDs: [UUID], starred: Bool,
+                    timestamp: TimeInterval = Date().timeIntervalSince1970) {
         guard !songIDs.isEmpty else { return }
         exec("BEGIN;")
         for songID in songIDs {
-            guard let stmt = prepare("UPDATE songs SET loved = ? WHERE id = ?") else { continue }
+            guard let stmt = prepare("""
+                UPDATE songs SET loved = ?, starred_at = ? WHERE id = ?
+                """) else { continue }
             bind(stmt, 1, starred ? 1 : 0)
-            bind(stmt, 2, songID.uuidString)
+            bind(stmt, 2, starred ? timestamp : 0)
+            bind(stmt, 3, songID.uuidString)
             sqlite3_step(stmt)
             sqlite3_finalize(stmt)
         }
         exec("COMMIT;")
     }
 
-    func setStarred(_ songID: UUID, starred: Bool) {
-        setStarred([songID], starred: starred)
+    func setStarred(_ songID: UUID, starred: Bool,
+                    timestamp: TimeInterval = Date().timeIntervalSince1970) {
+        setStarred([songID], starred: starred, timestamp: timestamp)
     }
 
     // MARK: Playlists

@@ -52,6 +52,9 @@ struct Song: Identifiable, Hashable {
     /// Mirrors the track table's `loved` column. It powers the built-in
     /// "Stared" playlist and the star buttons on every track list.
     let isStarred: Bool
+    /// UNIX timestamp for when the song was starred. Zero means unknown, which
+    /// can happen for stars that predate per-song star timestamps.
+    let starredAt: TimeInterval
 
     init(id: UUID = UUID(), title: String, artist: String, album: String,
          albumArtist: String? = nil, genre: String,
@@ -60,7 +63,8 @@ struct Song: Identifiable, Hashable {
          comments: String = "",
          year: String = "", plays: Int,
          dateAdded: TimeInterval = 0,
-         fileURL: URL? = nil, fileSize: Int64? = nil, isStarred: Bool = false) {
+         fileURL: URL? = nil, fileSize: Int64? = nil,
+         isStarred: Bool = false, starredAt: TimeInterval = 0) {
         self.id = id
         self.title = title
         self.artist = artist
@@ -79,6 +83,7 @@ struct Song: Identifiable, Hashable {
         self.fileURL = fileURL
         self.fileSize = fileSize
         self.isStarred = isStarred
+        self.starredAt = starredAt
     }
 
     var yearNumber: Int { Self.yearNumber(from: year) }

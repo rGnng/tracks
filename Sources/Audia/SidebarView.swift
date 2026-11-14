@@ -25,7 +25,12 @@ struct SidebarView: View {
                     title: section.rawValue,
                     isSelected: selection == .library(section)
                 ) {
-                    selection = .library(section)
+                    if selection == .library(section) {
+                        NotificationCenter.default.post(name: .goBackRequested, object: nil)
+                    } else {
+                        selection = .library(section)
+                    }
+                    NavigationRouter.shared.setFocus(NavigationRouter.shared.focus(for: selection))
                 }
                 .simultaneousGesture(TapGesture(count: 2).onEnded {
                     guard section == .albums || section == .recentlyAdded else { return }
@@ -71,9 +76,12 @@ struct SidebarView: View {
                 isDropTarget: drag.targetPlaylistID == Library.starredPlaylistID
             ) {
                 selection = .starred
+                NavigationRouter.shared.setFocus(NavigationRouter.shared.focus(for: selection))
             }
             .simultaneousGesture(TapGesture(count: 2).onEnded {
-                player.play(SongSortStore.sorted(library.starredSongs, for: .starred))
+                player.play(SongSortStore.sorted(library.starredSongs,
+                                                 for: .starred,
+                                                 playlistInfo: library.starredPlaylist.itemInfo))
             })
             .background(
                 GeometryReader { proxy in
@@ -108,6 +116,7 @@ struct SidebarView: View {
                         isDropTarget: drag.targetPlaylistID == playlist.id
                     ) {
                         selection = .playlist(playlist.id)
+                        NavigationRouter.shared.setFocus(NavigationRouter.shared.focus(for: selection))
                     }
                     .simultaneousGesture(TapGesture(count: 2).onEnded {
                         player.play(SongSortStore.sorted(playlist.songs,

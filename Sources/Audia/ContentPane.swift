@@ -45,7 +45,9 @@ struct ContentPane: View {
             GenresBrowser(genres: filteredGenres)
                 .id(selection)
         case .starred:
-            SongTable(songs: filteredStarredSongs, context: .starred)
+            SongTable(songs: filteredStarredSongs,
+                      context: .starred,
+                      playlistInfo: library.starredPlaylist.itemInfo)
                 .id(selection)
         case .playlist(let id):
             SongTable(songs: playlistSongs(id),

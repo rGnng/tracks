@@ -1437,6 +1437,15 @@ enum SongTableContext: Hashable {
         if case .playlist(let id) = self { return id }
         return nil
     }
+
+    /// The virtual Stared playlist behaves like a stored playlist for the
+    /// add-order columns, but it has no removable membership.
+    var showsPlaylistColumns: Bool {
+        switch self {
+        case .songs: return false
+        case .starred, .playlist: return true
+        }
+    }
 }
 
 enum SongColumn: String, CaseIterable, Hashable {
@@ -1600,9 +1609,9 @@ struct SongTable: View {
     // MARK: Column metadata
 
     private var availableColumns: [SongColumn] {
-        context.playlistID == nil
-            ? SongColumn.allCases.filter { !$0.isPlaylistOnly }
-            : SongColumn.allCases
+        context.showsPlaylistColumns
+            ? SongColumn.allCases
+            : SongColumn.allCases.filter { !$0.isPlaylistOnly }
     }
 
     private var columnOrder: [SongColumn] {
@@ -1612,7 +1621,7 @@ struct SongTable: View {
             .filter { available.contains($0) }
         let missing = available.filter { !parsed.contains($0) }
         var result = parsed + missing.filter { !$0.isPlaylistOnly }
-        guard context.playlistID != nil else { return result }
+        guard context.showsPlaylistColumns else { return result }
 
         let playlistMissing = missing.filter(\.isPlaylistOnly)
         guard !playlistMissing.isEmpty else { return result }
@@ -1635,8 +1644,8 @@ struct SongTable: View {
         case .album: return showAlbum
         case .genre: return showGenre
         case .plays: return showPlays
-        case .addSequence: return context.playlistID != nil && showAddSequence
-        case .addTime: return context.playlistID != nil && showAddTime
+        case .addSequence: return context.showsPlaylistColumns && showAddSequence
+        case .addTime: return context.showsPlaylistColumns && showAddTime
         }
     }
 
@@ -1863,7 +1872,7 @@ struct SongTable: View {
         }
         .frame(height: 26)
         .contextMenu {
-            if context.playlistID != nil {
+            if context.showsPlaylistColumns {
                 Toggle("Add Seq", isOn: $showAddSequence)
                 Toggle("Add Time", isOn: $showAddTime)
                 Divider()

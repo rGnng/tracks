@@ -299,11 +299,20 @@ final class Library: ObservableObject {
     var starredSongs: [Song] { allSongs.filter(\.isStarred) }
 
     /// The built-in playlist is virtual: its contents come from the star flags.
+    /// Songs starred before per-song timestamps existed fall back to their
+    /// library add time so Add Seq/Add Time still have a stable order.
     var starredPlaylist: Playlist {
-        Playlist(id: Self.starredPlaylistID,
-                 name: Self.starredPlaylistName,
-                 songs: starredSongs,
-                 dateModified: starredPlaylistModified)
+        let songs = starredSongs
+        var addedAtBySongID: [UUID: TimeInterval] = [:]
+        addedAtBySongID.reserveCapacity(songs.count)
+        for song in songs {
+            addedAtBySongID[song.id] = song.starredAt > 0 ? song.starredAt : song.dateAdded
+        }
+        return Playlist(id: Self.starredPlaylistID,
+                        name: Self.starredPlaylistName,
+                        songs: songs,
+                        addedAtBySongID: addedAtBySongID,
+                        dateModified: starredPlaylistModified)
     }
 
     func isStarred(songID: UUID) -> Bool { starredSongIDs.contains(songID) }
@@ -895,8 +904,9 @@ final class Library: ObservableObject {
         }
         guard !targets.isEmpty else { return }
 
-        db.setStarred(targets, starred: starred)
-        starredPlaylistModified = Date().timeIntervalSince1970
+        let timestamp = Date().timeIntervalSince1970
+        db.setStarred(targets, starred: starred, timestamp: timestamp)
+        starredPlaylistModified = timestamp
         UserDefaults.standard.set(starredPlaylistModified, forKey: Self.starredModifiedKey)
         let targetSet = Set(targets)
 
@@ -904,7 +914,7 @@ final class Library: ObservableObject {
             var songs = albums[index].songs
             var changed = false
             for songIndex in songs.indices where targetSet.contains(songs[songIndex].id) {
-                songs[songIndex] = songs[songIndex].settingStarred(starred)
+                songs[songIndex] = songs[songIndex].settingStarred(starred, at: timestamp)
                 changed = true
             }
             if changed {
@@ -923,7 +933,7 @@ final class Library: ObservableObject {
             var songs = playlists[index].songs
             var changed = false
             for songIndex in songs.indices where targetSet.contains(songs[songIndex].id) {
-                songs[songIndex] = songs[songIndex].settingStarred(starred)
+                songs[songIndex] = songs[songIndex].settingStarred(starred, at: timestamp)
                 changed = true
             }
             if changed {
@@ -1057,11 +1067,13 @@ final class Library: ObservableObject {
     }
 
     func playlistSongs(_ id: UUID) -> [Song] {
-        playlists.first { $0.id == id }?.songs ?? []
+        if id == Self.starredPlaylistID { return starredSongs }
+        return playlists.first { $0.id == id }?.songs ?? []
     }
 
     func playlistItemInfo(_ id: UUID) -> [UUID: PlaylistItemInfo] {
-        playlists.first { $0.id == id }?.itemInfo ?? [:]
+        if id == Self.starredPlaylistID { return starredPlaylist.itemInfo }
+        return playlists.first { $0.id == id }?.itemInfo ?? [:]
     }
 
     func savePlayerQueue(_ state: PersistedPlayerQueue) {
@@ -1123,10 +1135,11 @@ private extension Song {
              dateAdded: dateAdded,
              fileURL: fileURL,
              fileSize: fileSize,
-             isStarred: isStarred)
+             isStarred: isStarred,
+             starredAt: starredAt)
     }
 
-    func settingStarred(_ value: Bool) -> Song {
+    func settingStarred(_ value: Bool, at timestamp: TimeInterval) -> Song {
         Song(id: id,
              title: title,
              artist: artist,
@@ -1144,6 +1157,7 @@ private extension Song {
              dateAdded: dateAdded,
              fileURL: fileURL,
              fileSize: fileSize,
-             isStarred: value)
+             isStarred: value,
+             starredAt: value ? timestamp : 0)
     }
 }

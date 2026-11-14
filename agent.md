@@ -93,6 +93,10 @@ and its `-wal`/`-shm` sidecars in that folder.
 - `playlist_items.added_at` stores the per-playlist addition time as a UNIX
   timestamp (REAL seconds); Add Seq is derived from it. Existing rows were
   backfilled from `playlists.date_created + position`.
+- `songs.starred_at` stores when a song was starred (REAL UNIX seconds; 0 for
+  unknown). The Stared playlist uses it for Add Seq/Add Time. The column is
+  added automatically to older databases and existing stars are backfilled
+  from `date_added`.
 - `player_queue` is a singleton table (`id = 1`). `queue_entries` and
   `base_queue_entries` store JSON arrays of `{id, songID}` queue-entry records;
   `next_queue_id` persists the monotonic MPD-ID allocator. Older queue columns
@@ -487,10 +491,12 @@ Important schema decisions:
 - Sidebar **Albums** and **Recently Added** have Play and Shuffle context menus.
   Albums uses the full library sorted by the current album sort; Recently Added
   uses the same order as its content view.
-- Playlist song tables expose `Add Seq` and `Add Time` columns. Add Seq is
-  visible by default immediately after Genre; Add Time is hidden by default.
-  Add times are stored per playlist item, survive reorder/removal, and are
-  assigned at addition time. Sorting by either column is supported and sidebar
+- Playlist song tables expose `Add Seq` and `Add Time` columns, including the
+  virtual **Stared** playlist. Add Seq is visible by default immediately after
+  Genre; Add Time is hidden by default. Add times are stored per playlist item,
+  survive reorder/removal, and are assigned at addition time. Stared derives
+  its add order from `songs.starred_at` (falling back to `date_added` for stars
+  that predate the column). Sorting by either column is supported and sidebar
   double-click playback follows the current table sort.
 - Add-to-Playlist submenu starts with **New Playlist**, then a divider, then the
   existing playlist names. New names auto-increment: New Playlist, New Playlist 2,
