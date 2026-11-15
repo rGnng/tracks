@@ -15,7 +15,7 @@ private struct PlayerIdleSnapshot: Equatable {
     var queueIDs: [UInt32]
     var currentSongID: UUID?
     var isPlaying: Bool
-    var displayVolume: Int
+    var volumeLevel: Int
     var isMuted: Bool
     var isShuffleOn: Bool
     var repeatMode: String
@@ -117,7 +117,7 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
             queueIDs: player.queueEntries.map(\.id),
             currentSongID: player.currentSong?.id,
             isPlaying: player.isPlaying,
-            displayVolume: Int((player.displayVolume * 100).rounded()),
+            volumeLevel: Self.volumeLevel(player.displayVolume),
             isMuted: player.isMutedForUI,
             isShuffleOn: player.isShuffleOn,
             repeatMode: player.repeatMode.rawValue
@@ -142,7 +142,7 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
             || previous.isPlaying != current.isPlaying {
             changed.insert("player")
         }
-        if previous.displayVolume != current.displayVolume
+        if previous.volumeLevel != current.volumeLevel
             || previous.isMuted != current.isMuted {
             changed.insert("mixer")
         }
@@ -555,12 +555,12 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
             broadcastIdle("player")
             return ok()
         case "getvol":
-            return lines(["volume: \(reportedVolume)"])
+            return lines(["volume: \(Self.formatVolumePercent(reportedVolume))"])
 
         case "setvol", "volume":
-            guard let rawValue = args.first, let value = Int(rawValue) else {
+            guard let rawValue = args.first, let value = Self.parseVolume(rawValue) else {
                 if command == "volume" {
-                    return lines(["volume: \(reportedVolume)"])
+                    return lines(["volume: \(Self.formatVolumePercent(reportedVolume))"])
                 }
                 return ack(2, command, "wrong number of arguments")
             }
@@ -575,8 +575,7 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
                 || rawValue.hasPrefix("+")
                 || rawValue.hasPrefix("-"))
             let target = isMuteRequest ? 0 : (isRelative ? reportedVolume + value : value)
-            let percent = min(max(target, 0), 100)
-            let fraction = Double(percent) / 100
+            let fraction = min(max(target, 0), 100) / 100
             if PlayerState.shared.isVolumeLocked {
                 PlayerState.shared.setSystemVolume(fraction)
             } else {
@@ -897,12 +896,45 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
         return .stop
     }
 
-    private var reportedVolume: Int {
+    /// MPD reports volume as a percentage. Remote controllers may use the
+    /// macOS output grid, which has 1/16 and 1/64 steps, so both directions
+    /// keep fractional percentages instead of rounding to whole integers.
+    private var reportedVolume: Double {
         let player = PlayerState.shared
         let value = player.isVolumeLocked
             ? (SystemVolume.current(deviceID: AudioDevices.shared.effectiveDeviceID) ?? 1)
             : player.volume
-        return Int((min(max(value, 0), 1) * 100).rounded())
+        return min(max(value, 0), 1) * 100
+    }
+
+    /// Parses the numeric argument of `setvol`/`volume`. Fractional values are
+    /// accepted because remote clients may send 1/16 or 1/64 volume steps
+    /// (6.25% and 1.5625% respectively).
+    nonisolated static func parseVolume(_ raw: String) -> Double? {
+        guard let value = Double(raw), value.isFinite else { return nil }
+        return value
+    }
+
+    /// Formats a percentage for `status`, `getvol`, and the `volume` query.
+    /// Up to four fractional digits preserve every 1/64 step exactly while
+    /// whole percentages remain plain integers for older clients.
+    nonisolated static func formatVolumePercent(_ percent: Double) -> String {
+        let clamped = min(max(percent, 0), 100)
+        let units = Int((clamped * 10_000).rounded())
+        let whole = units / 10_000
+        var fraction = String(units % 10_000)
+        fraction = String(repeating: "0", count: 4 - fraction.count) + fraction
+        while fraction.hasSuffix("0") {
+            fraction.removeLast()
+        }
+        return fraction.isEmpty ? String(whole) : "\(whole).\(fraction)"
+    }
+
+    /// Quantizes the 0...1 player volume for idle change detection. Six
+    /// fractional digits match the four fractional digits exposed to MPD
+    /// (1/64 of the full range is 1.5625%).
+    nonisolated static func volumeLevel(_ fraction: Double) -> Int {
+        Int((min(max(fraction, 0), 1) * 1_000_000).rounded())
     }
 
     private var outputEntries: [AudioOutputDevice] {
@@ -969,7 +1001,7 @@ final class MPDServer: ObservableObject, @unchecked Sendable {
             singleValue = singleMode ? 1 : 0
         }
         var lines = [
-            "volume: \(reportedVolume)",
+            "volume: \(Self.formatVolumePercent(reportedVolume))",
             "repeat: \(player.repeatMode != .off ? 1 : 0)",
             "random: \(player.isShuffleOn ? 1 : 0)",
             "single: \(singleValue)",

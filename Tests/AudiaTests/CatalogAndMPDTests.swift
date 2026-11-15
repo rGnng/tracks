@@ -131,6 +131,34 @@ final class CatalogAndMPDTests: XCTestCase {
         XCTAssertNil(buffer.append(Data((maxLine + "x").utf8)))
     }
 
+    func testMPDVolumeParsingAcceptsFractionalPercentages() {
+        XCTAssertEqual(MPDServer.parseVolume("43.75"), 43.75)
+        XCTAssertEqual(MPDServer.parseVolume("+1.5625"), 1.5625)
+        XCTAssertEqual(MPDServer.parseVolume("-1.5625"), -1.5625)
+        XCTAssertEqual(MPDServer.parseVolume("0"), 0)
+        XCTAssertNil(MPDServer.parseVolume("nan"))
+        XCTAssertNil(MPDServer.parseVolume("loud"))
+    }
+
+    func testMPDVolumeFormattingKeepsSixteenthAndSixtyFourthSteps() {
+        XCTAssertEqual(MPDServer.formatVolumePercent(0), "0")
+        XCTAssertEqual(MPDServer.formatVolumePercent(50), "50")
+        XCTAssertEqual(MPDServer.formatVolumePercent(100), "100")
+        XCTAssertEqual(MPDServer.formatVolumePercent(56.25), "56.25")
+        XCTAssertEqual(MPDServer.formatVolumePercent(43.75), "43.75")
+        XCTAssertEqual(MPDServer.formatVolumePercent(1.5625), "1.5625")
+        XCTAssertEqual(MPDServer.formatVolumePercent(33.333333), "33.3333")
+    }
+
+    func testMPDVolumeLevelTracksSubPercentChanges() {
+        XCTAssertEqual(MPDServer.volumeLevel(0), 0)
+        XCTAssertEqual(MPDServer.volumeLevel(0.5), 500_000)
+        XCTAssertEqual(MPDServer.volumeLevel(1.0 / 64.0), 15_625)
+        XCTAssertEqual(MPDServer.volumeLevel(2.0 / 64.0), 31_250)
+        XCTAssertNotEqual(MPDServer.volumeLevel(1.0 / 64.0),
+                          MPDServer.volumeLevel(2.0 / 64.0))
+    }
+
     func testStaredPlaylistExposesAddSequenceColumns() {
         XCTAssertTrue(SongTableContext.starred.showsPlaylistColumns)
         XCTAssertTrue(SongTableContext.playlist(UUID()).showsPlaylistColumns)

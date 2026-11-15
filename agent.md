@@ -793,6 +793,11 @@ volume toggle in Settings.
 - `status`, `getvol`, and the `volume` query report the live system volume while
   system mode is active. `setvol`/`volume` changes broadcast `changed: mixer`
   to idle clients.
+- MPD volume is a fractional percentage in both directions. `setvol 43.75` and
+  relative values such as `volume -1.5625` preserve the 1/64 steps used by
+  remotes. Replies use up to four fractional digits and omit them for whole
+  values (`volume: 50`), so 1/16 steps (6.25%) and 1/64 steps (1.5625%) round-trip
+  without loss.
 - The remote system volume control does not use AVPlayer attenuation.
 
 Supported areas:
