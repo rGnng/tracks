@@ -1516,6 +1516,7 @@ final class MPDListener: @unchecked Sendable {
             var one: Int32 = 1
             setsockopt(client, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout<Int32>.size))
             setsockopt(client, IPPROTO_TCP, TCP_NODELAY, &one, socklen_t(MemoryLayout<Int32>.size))
+            Self.enableKeepAlive(on: client)
             let flags = fcntl(client, F_GETFL, 0)
             if flags >= 0 { _ = fcntl(client, F_SETFL, flags | O_NONBLOCK) }
             let session = MPDClientSession(fd: client, server: server) {
@@ -1530,6 +1531,21 @@ final class MPDListener: @unchecked Sendable {
         }
     }
 
+    /// Detects clients that disappear without a FIN (Wi-Fi drop, sleep, cable
+    /// pull). Without keepalive their accepted socket can occupy one of the 32
+    /// connection slots until the kernel's TCP timeout expires.
+    private static func enableKeepAlive(on fd: Int32) {
+        var one: Int32 = 1
+        let size = socklen_t(MemoryLayout<Int32>.size)
+        guard setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &one, size) == 0 else { return }
+        var idle: Int32 = 60
+        setsockopt(fd, IPPROTO_TCP, TCP_KEEPALIVE, &idle, size)
+        var interval: Int32 = 10
+        setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &interval, size)
+        var count: Int32 = 3
+        setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &count, size)
+    }
+
     deinit {
         source?.cancel()
         close(fd)
@@ -1540,13 +1556,23 @@ final class MPDListener: @unchecked Sendable {
 
 final class MPDClientSession: @unchecked Sendable {
     private static let maxCommandListBytes = 64 * 1024
-    private static let maxCommandListCommands = 1024
+    private static let maxCommandListCommands = 1_024
+    /// Standard MPD's connection timeout is 60 seconds. `idle` clients are
+    /// exempt because they may legitimately wait indefinitely; keepalive
+    /// handles peers that vanish while idle.
+    private static let inactivityTimeout: TimeInterval = 60
+    private static let activityCheckInterval: TimeInterval = 15
+    /// A client that stops reading a response must not block the session queue
+    /// (and its connection slot) forever.
+    private static let writeStallTimeout: TimeInterval = 30
 
     private let fd: Int32
     private weak var server: MPDServer?
     private let onClose: (@Sendable () -> Void)?
     private let queue: DispatchQueue
     private var source: DispatchSourceRead?
+    private var activityTimer: DispatchSourceTimer?
+    private var lastActivity = Date()
     private var buffer = MPDLineBuffer()
     private var authenticated = false
     private var isClosed = false
@@ -1566,11 +1592,30 @@ final class MPDClientSession: @unchecked Sendable {
     }
 
     func start() {
-        send("OK MPD 0.24.0\n")
-        let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: queue)
-        source.setEventHandler { [weak self] in self?.readAvailable() }
-        source.resume()
-        self.source = source
+        queue.async { [weak self] in
+            guard let self, !self.isClosed else { return }
+            self.send("OK MPD 0.24.0\n")
+            let source = DispatchSource.makeReadSource(fileDescriptor: self.fd, queue: self.queue)
+            source.setEventHandler { [weak self] in self?.readAvailable() }
+            source.resume()
+            self.source = source
+            self.lastActivity = Date()
+            self.startActivityTimer()
+        }
+    }
+
+    private func startActivityTimer() {
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now() + Self.activityCheckInterval,
+                       repeating: Self.activityCheckInterval)
+        timer.setEventHandler { [weak self] in
+            guard let self, !self.isClosed, !self.isIdle else { return }
+            guard Date().timeIntervalSince(self.lastActivity) >= Self.inactivityTimeout else { return }
+            AppLog.mpd.notice("Closing MPD client after \(Int(Self.inactivityTimeout))s of inactivity")
+            self.close()
+        }
+        timer.resume()
+        activityTimer = timer
     }
 
     func close() {
@@ -1578,6 +1623,8 @@ final class MPDClientSession: @unchecked Sendable {
             guard let self, !self.isClosed else { return }
             self.isClosed = true
             self.onClose?()
+            self.activityTimer?.cancel()
+            self.activityTimer = nil
             self.source?.cancel()
             self.source = nil
             Darwin.close(self.fd)
@@ -1596,6 +1643,7 @@ final class MPDClientSession: @unchecked Sendable {
             guard !changes.isEmpty else { return }
             if self.isIdle {
                 self.isIdle = false
+                self.lastActivity = Date()
                 self.send(changes.sorted().map { "changed: \($0)\n" }.joined() + "OK\n")
             } else {
                 self.pendingChanges.formUnion(changes)
@@ -1609,6 +1657,7 @@ final class MPDClientSession: @unchecked Sendable {
         guard !changes.isEmpty else { return }
         pendingChanges.subtract(changes)
         isIdle = false
+        lastActivity = Date()
         let text = changes.sorted().map { "changed: \($0)\n" }.joined() + "OK\n"
         send(text)
     }
@@ -1626,6 +1675,7 @@ final class MPDClientSession: @unchecked Sendable {
             close()
             return
         }
+        lastActivity = Date()
         guard let lines = buffer.append(Data(bytes[0..<count])) else {
             AppLog.mpd.warning("Closing MPD client: command line exceeded 64 KiB")
             close()
@@ -1674,6 +1724,7 @@ final class MPDClientSession: @unchecked Sendable {
             let changes = idleFilter.map { pendingChanges.intersection($0) } ?? pendingChanges
             pendingChanges.subtract(changes)
             isIdle = false
+            lastActivity = Date()
             idleFilter = nil
             let text = changes.isEmpty
                 ? "OK\n"
@@ -1743,19 +1794,36 @@ final class MPDClientSession: @unchecked Sendable {
     private func sendData(_ data: Data) {
         guard !isClosed, !data.isEmpty else { return }
         var offset = 0
+        var stalledSince: Date?
         while offset < data.count {
             let written = data.withUnsafeBytes { buffer -> Int in
                 guard let base = buffer.baseAddress else { return 0 }
                 return Darwin.write(fd, base.advanced(by: offset), data.count - offset)
             }
             if written > 0 {
+                stalledSince = nil
                 offset += written
                 continue
             }
             if written < 0, errno == EINTR { continue }
             if written < 0, errno == EAGAIN || errno == EWOULDBLOCK {
+                let stallStart = stalledSince ?? Date()
+                stalledSince = stallStart
+                if Date().timeIntervalSince(stallStart) >= Self.writeStallTimeout {
+                    AppLog.mpd.warning("Closing MPD client: response write stalled")
+                    close()
+                    return
+                }
                 var descriptor = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
-                if Darwin.poll(&descriptor, 1, 1000) >= 0 { continue }
+                let result = Darwin.poll(&descriptor, 1, 1000)
+                if result > 0 {
+                    if descriptor.revents & Int16(POLLERR | POLLHUP | POLLNVAL) != 0 {
+                        close()
+                        return
+                    }
+                    continue
+                }
+                if result == 0 || errno == EINTR { continue }
             }
             close()
             return

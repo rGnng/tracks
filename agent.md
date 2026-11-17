@@ -765,6 +765,10 @@ Current configuration:
 - Input limits: command lines are capped at 64 KiB and command lists at
   64 KiB/1,024 commands; at most 32 concurrent client sessions are accepted.
   Oversized lines, oversized command lists, and excess connections are closed.
+  Accepted sockets use TCP keepalive (60 s idle, 10 s interval, 3 probes).
+  Non-`idle` sessions close after 60 seconds without activity, and a response
+  write that stalls for 30 seconds is aborted, so dead or unresponsive clients
+  cannot hold connection slots indefinitely.
 
 Do not disable or reconfigure MPD without an explicit user request. Remote clients
 may be connected.

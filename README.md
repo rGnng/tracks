@@ -338,7 +338,11 @@ Volume is reported and accepted as a fractional percentage, preserving the
 
 The server caps command lines at 64 KiB, command lists at 64 KiB/1,024 commands,
 and accepts at most 32 concurrent client sessions. Oversized input and excess
-connections are closed.
+connections are closed. Accepted sockets enable TCP keepalive (60 s idle,
+10 s interval, 3 probes); sessions that are not in `idle` are closed after
+60 seconds without activity, and a response write that stalls for 30 seconds
+is aborted. This releases connection slots held by dead or unresponsive
+clients.
 
 The server is not a complete MPD 0.24 implementation. `playlistsearch`,
 stickers, channels, mounts, and partitions are not implemented; stored playlists
